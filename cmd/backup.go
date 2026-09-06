@@ -35,13 +35,15 @@ deterministic time between 02:00 and 04:59).`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
-		if _, err := backup.Run(cfg, backup.Options{Interactive: false}); err != nil {
-			return err
-		}
-		if flagBackupSchedule {
-			return backup.Schedule(cfg)
-		}
-		return nil
+		return withLock("backup", func() error {
+			if _, err := backup.Run(cfg, backup.Options{Interactive: false}); err != nil {
+				return err
+			}
+			if flagBackupSchedule {
+				return backup.Schedule(cfg)
+			}
+			return nil
+		})
 	},
 }
 
@@ -70,7 +72,7 @@ When omitted on a terminal, an interactive picker is shown.`,
 		} else {
 			file = restore.Resolve(cfg, file)
 		}
-		return restore.Run(cfg, file)
+		return withLock("restore", func() error { return restore.Run(cfg, file) })
 	},
 }
 
@@ -84,7 +86,9 @@ running. The wallet and config.json are preserved.
 This command does not ask for confirmation; the interactive menu does.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
-	RunE:        func(*cobra.Command, []string) error { return resync.Run(cfg) },
+	RunE: func(*cobra.Command, []string) error {
+		return withLock("resync", func() error { return resync.Run(cfg) })
+	},
 }
 
 // applyBackupFlags copies backup flags over the environment and validates.

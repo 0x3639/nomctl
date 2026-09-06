@@ -14,6 +14,7 @@ import (
 
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/execx"
+	"github.com/0x3639/nomctl/internal/lock"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/preflight"
 	"github.com/0x3639/nomctl/internal/service"
@@ -154,6 +155,17 @@ func setup(cmd *cobra.Command) error {
 		logx.Success("Pre-flight checks complete. Systems nominal. Go for launch.")
 	}
 	return nil
+}
+
+// withLock runs fn while holding the node-data lock, so backup, restore,
+// resync and deploy never overlap each other or the scheduled backup timer.
+func withLock(operation string, fn func() error) error {
+	l, err := lock.Acquire(lock.DefaultPath, operation)
+	if err != nil {
+		return err
+	}
+	defer l.Release()
+	return fn()
 }
 
 // rootOnly returns the annotation map marking a command as privileged.

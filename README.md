@@ -67,6 +67,10 @@ A backup stops the node while the data directories are copied, restarts it, and 
 
 `nomctl backup --schedule --cadence 7 --max-backups 5` writes `nomctl-backup.service` and `nomctl-backup.timer` under `/etc/systemd/system` and enables the timer. It fires daily at `--hour` (or, when omitted, at a minute and hour between 02:00 and 04:59 derived from the hostname so many nodes do not back up simultaneously); the cadence check then decides whether a backup actually runs. Inspect it with `systemctl list-timers nomctl-backup.timer`.
 
+### Concurrency
+
+Backup, restore, resync and deploy take an exclusive lock on `/run/nomctl.lock` for their duration, whether started from the menu, the command line or the backup timer. A second operation that would overlap fails immediately with a message naming the running one; nothing queues.
+
 ### Logging
 
 Every run logs to the terminal and appends a plain-text copy, including the output of `apt-get`, `git`, `go build` and so on, to `/var/log/nomctl.log`. With `--debug` that output is shown on the terminal instead of hidden behind spinners.
@@ -142,6 +146,7 @@ The Go module path is declared in `go.mod`; the Makefile and goreleaser read it 
 - The analytics success message no longer prints the Grafana password.
 - Interactive prompt inputs are trimmed of surrounding whitespace before validation.
 - Out-of-range environment values are rejected when used, so a valid flag can override them; the bash version had no validation at all.
+- Backup, restore, resync and deploy are mutually exclusive via a lock file; the bash version let a scheduled backup overlap a manual operation.
 
 ## License
 

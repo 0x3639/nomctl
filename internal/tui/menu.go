@@ -15,6 +15,7 @@ import (
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/deploy"
+	"github.com/0x3639/nomctl/internal/lock"
 	"github.com/0x3639/nomctl/internal/restore"
 	"github.com/0x3639/nomctl/internal/resync"
 	"github.com/0x3639/nomctl/internal/service"
@@ -106,7 +107,7 @@ func printBanner() {
 func Dispatch(cfg *config.Config, action Action) error {
 	switch action {
 	case ActionDeploy:
-		return Deploy(*cfg)
+		return withLock("deploy", func() error { return Deploy(*cfg) })
 	case ActionRestart:
 		return service.Restart(cfg.ServiceName)
 	case ActionStop:
@@ -116,17 +117,28 @@ func Dispatch(cfg *config.Config, action Action) error {
 	case ActionMonitor:
 		return Monitor(*cfg, true, 20)
 	case ActionResync:
-		return Resync(*cfg)
+		return withLock("resync", func() error { return Resync(*cfg) })
 	case ActionBackup:
-		return Backup(cfg)
+		return withLock("backup", func() error { return Backup(cfg) })
 	case ActionRestore:
-		return Restore(*cfg)
+		return withLock("restore", func() error { return Restore(*cfg) })
 	case ActionAnalytics:
 		return analytics.Install(*cfg)
 	case ActionExit:
 		return nil
 	}
 	return fmt.Errorf("unknown action %q", action)
+}
+
+// withLock serialises node-data operations with the CLI commands and the
+// scheduled backup timer.
+func withLock(operation string, fn func() error) error {
+	l, err := lock.Acquire(lock.DefaultPath, operation)
+	if err != nil {
+		return err
+	}
+	defer l.Release()
+	return fn()
 }
 
 // Monitor ports monitor.sh: follow the journal, or show the last lines with

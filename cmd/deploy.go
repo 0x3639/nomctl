@@ -20,7 +20,7 @@ and starts the service.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
-		return deploy.Run(cfg, flagDeployRepo, flagDeployBranch)
+		return withLock("deploy", func() error { return deploy.Run(cfg, flagDeployRepo, flagDeployBranch) })
 	},
 }
 
