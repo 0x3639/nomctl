@@ -20,6 +20,8 @@ const DefaultURL = "http://127.0.0.1:35997"
 type Client struct {
 	URL  string
 	HTTP *http.Client
+	// PillarName, when set, makes Snapshot also look up that pillar.
+	PillarName string
 }
 
 // New returns a client with a 3 s per-call timeout.
@@ -91,6 +93,23 @@ type Momentum struct {
 	Hash      string `json:"hash"`
 }
 
+// PillarStats is the current-epoch production of a pillar.
+type PillarStats struct {
+	ProducedMomentums uint64 `json:"producedMomentums"`
+	ExpectedMomentums uint64 `json:"expectedMomentums"`
+}
+
+// PillarInfo is the part of embedded.pillar.getByName nomctl uses. Field
+// names mirror znn-sdk-go's embedded.PillarInfo.
+type PillarInfo struct {
+	Name            string       `json:"name"`
+	Rank            int          `json:"rank"`
+	OwnerAddress    string       `json:"ownerAddress"`
+	ProducerAddress string       `json:"producerAddress"`
+	CurrentStats    *PillarStats `json:"currentStats"`
+	Weight          string       `json:"weight"`
+}
+
 // Time converts the momentum timestamp.
 func (m *Momentum) Time() time.Time { return time.Unix(int64(m.Timestamp), 0) } //nolint:gosec // unix seconds fit
 
@@ -109,8 +128,11 @@ type rpcResponse struct {
 	} `json:"error"`
 }
 
-func (c *Client) call(ctx context.Context, method string, out any) error {
-	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: 1, Method: method, Params: []any{}})
+func (c *Client) call(ctx context.Context, method string, out any, params ...any) error {
+	if params == nil {
+		params = []any{}
+	}
+	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: 1, Method: method, Params: params})
 	if err != nil {
 		return err
 	}
@@ -138,10 +160,29 @@ func (c *Client) call(ctx context.Context, method string, out any) error {
 	if r.Error != nil {
 		return fmt.Errorf("rpc %s: %s (%d)", method, r.Error.Message, r.Error.Code)
 	}
+	if string(r.Result) == "null" {
+		return errNullResult
+	}
 	if err := json.Unmarshal(r.Result, out); err != nil {
 		return fmt.Errorf("rpc %s: bad result: %w", method, err)
 	}
 	return nil
+}
+
+var errNullResult = fmt.Errorf("null result")
+
+// PillarByName calls embedded.pillar.getByName. It returns (nil, nil) when
+// no pillar has that name.
+func (c *Client) PillarByName(ctx context.Context, name string) (*PillarInfo, error) {
+	var v PillarInfo
+	err := c.call(ctx, "embedded.pillar.getByName", &v, name)
+	if err == errNullResult { //nolint:errorlint // sentinel returned directly
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 // SyncInfo calls stats.syncInfo.
@@ -181,6 +222,10 @@ type Snapshot struct {
 	Process  *ProcessInfo
 	Os       *OsInfo
 	Frontier *Momentum
+	// Pillar is set when Client.PillarName is configured and the pillar
+	// exists; PillarErr records a lookup failure without failing Snapshot.
+	Pillar    *PillarInfo
+	PillarErr error
 	// Err is the first failure; the other fields may still be partially set.
 	Err error
 }
@@ -247,6 +292,16 @@ func (c *Client) Snapshot(ctx context.Context) Snapshot {
 		}
 		return err
 	})
+	if c.PillarName != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p, err := c.PillarByName(ctx, c.PillarName)
+			mu.Lock()
+			snap.Pillar, snap.PillarErr = p, err
+			mu.Unlock()
+		}()
+	}
 	wg.Wait()
 	return snap
 }
