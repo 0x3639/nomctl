@@ -1,5 +1,6 @@
 ---
 title: Pairing a node
+description: "Pair a node with the nomctl Telegram bot, name it after your pillar, and manage alerts on the node."
 ---
 
 ## 1. Get a code

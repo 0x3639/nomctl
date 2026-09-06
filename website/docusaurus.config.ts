@@ -27,7 +27,13 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
           editUrl: 'https://github.com/0x3639/nomctl/tree/main/website/',
-          showLastUpdateTime: false,
+          showLastUpdateTime: true,
+        },
+        sitemap: {
+          changefreq: 'weekly',
+          priority: 0.6,
+          ignorePatterns: ['/tags/**'],
+          filename: 'sitemap.xml',
         },
         blog: false,
         theme: {customCss: './src/css/custom.css'},
@@ -35,8 +41,38 @@ const config: Config = {
     ],
   ],
 
+  plugins: ['./plugins/llms-txt.js'],
+
+  headTags: [
+    {tagName: 'meta', attributes: {property: 'og:type', content: 'website'}},
+    {tagName: 'meta', attributes: {property: 'og:site_name', content: 'nomctl'}},
+    {tagName: 'meta', attributes: {property: 'og:image:width', content: '1200'}},
+    {tagName: 'meta', attributes: {property: 'og:image:height', content: '630'}},
+    {tagName: 'meta', attributes: {name: 'twitter:card', content: 'summary_large_image'}},
+    {tagName: 'link', attributes: {rel: 'alternate', type: 'text/plain', href: 'https://nomctl.0x3639.com/llms.txt', title: 'llms.txt'}},
+  ],
+
+  themes: [
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        // Local index built at deploy time; queries never leave the browser.
+        hashed: true,
+        docsRouteBasePath: '/',
+        indexBlog: false,
+        highlightSearchTermsOnTargetPage: true,
+        searchResultLimits: 8,
+        searchBarShortcutHint: true,
+      },
+    ],
+  ],
+
   themeConfig: {
-    image: 'img/logo.png',
+    image: 'img/og-card.png',
+    metadata: [
+      {name: 'description', content: 'Deploy, back up, watch and get Telegram alerts for Zenon Network (NoM) nodes from one static binary. Docs, command reference and troubleshooting.'},
+      {name: 'keywords', content: 'zenon, network of momentum, znnd, pillar, node, nomctl, deploy, backup, alerts, telegram'},
+    ],
     colorMode: {defaultMode: 'dark', respectPrefersColorScheme: false},
     navbar: {
       title: 'nomctl',

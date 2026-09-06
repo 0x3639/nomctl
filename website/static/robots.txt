@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://nomctl.0x3639.com/sitemap.xml

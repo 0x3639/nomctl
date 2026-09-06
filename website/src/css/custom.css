@@ -245,3 +245,16 @@ h1 {
 a:hover .feature {
   border-color: var(--zenon-green);
 }
+
+/* Search box in the navbar: same chrome as inputs elsewhere. */
+.navbar__search-input {
+  font-family: var(--font-sans);
+  border-radius: var(--radius);
+  border: 1px solid var(--ifm-color-emphasis-300);
+  background-color: var(--ifm-background-color);
+  color: var(--ifm-font-color-base);
+}
+.navbar__search-input:focus {
+  border-color: var(--zenon-green);
+  outline: none;
+}

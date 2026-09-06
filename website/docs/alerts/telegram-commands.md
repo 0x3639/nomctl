@@ -1,5 +1,6 @@
 ---
 title: Telegram commands
+description: "Bot commands: /start, /nodes, /mute, /unmute, /unpair."
 ---
 
 Send these to the bot in the chat your nodes are paired to. Names are matched within your chat only.

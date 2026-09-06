@@ -1,5 +1,6 @@
 ---
 title: First look
+description: "How to read nomctl status and nomctl top: service, sync, frontier, pillar, process and host lines."
 ---
 
 ```bash

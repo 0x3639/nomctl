@@ -1,5 +1,6 @@
 ---
 title: Backups and restore
+description: "Chain-data backups with checksums and retention, a systemd timer for scheduled backups, and restoring from an archive."
 ---
 
 ## Taking a backup

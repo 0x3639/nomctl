@@ -1,5 +1,6 @@
 ---
 title: Support bundle
+description: "What nomctl support-bundle collects, what it never collects, and how --watch captures the moments before a restart."
 ---
 
 ```bash

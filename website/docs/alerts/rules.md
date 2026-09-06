@@ -1,5 +1,6 @@
 ---
 title: Alert rules
+description: "Every alert rule, its threshold, which failure it covers, and how retries and reminders behave."
 ---
 
 The daemon samples every 30 seconds and keeps 30 minutes of history. Each rule is evaluated over that history, so "for 5 minutes" means five minutes of consecutive evidence, not one bad sample.

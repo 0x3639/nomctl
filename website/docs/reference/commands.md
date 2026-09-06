@@ -1,5 +1,6 @@
 ---
 title: Commands
+description: "Every nomctl subcommand and flag."
 ---
 
 Every menu action is a subcommand. All require root except `--help`, `--version`, `env` and `completion`.

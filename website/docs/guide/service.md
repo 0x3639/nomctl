@@ -1,5 +1,6 @@
 ---
 title: Service control and logs
+description: "Start, stop, restart, follow logs, resync from genesis, and how nomctl locks node-data operations."
 ---
 
 ## start, stop, restart

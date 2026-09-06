@@ -1,5 +1,6 @@
 ---
 title: The interactive menu
+description: "The interactive menu that wraps every nomctl command."
 ---
 
 ```bash
