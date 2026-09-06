@@ -10,7 +10,7 @@ progress), **in progress** (plan being executed), **done** (released).
 
 ## v0.3.0
 
-### 1. Alerting — designing
+### 1. Alerting — done (v0.3.0)
 
 Notify the operator when the node needs attention, and again when it
 recovers. Signals come from the existing metrics sampler:
@@ -24,12 +24,13 @@ recovers. Signals come from the existing metrics sampler:
 - pillar missed momentums (once item 2 lands)
 - backup timer failed or has not run within its cadence
 
-Delivery: Telegram bot (token + chat id, as MyTonCtrl does) and a generic
-webhook (JSON POST) so Discord, Slack, ntfy or a pager can be wired in.
-Each alert has an "ok" counterpart, a cooldown so it does not repeat, and a
-per-alert enable/disable. Runs as a small systemd service or timer
-installed by nomctl. Commands: `nomctl alerts setup`, `list`, `enable`,
-`disable`, `test`, `status`.
+Delivery: one shared Telegram bot behind a relay (`nomctl-relay`, a
+container with SQLite, hosted on Coolify) so operators never create a bot;
+pairing by code. Each alert has an "ok" counterpart, a 10 minute reminder,
+per-alert enable/disable and thresholds, and Telegram-side mutes. The
+relay raises `node_silent` when heartbeats stop. Spec:
+`docs/superpowers/specs/2026-09-06-alerting-design.md`. A generic webhook
+output remains a possible follow-up.
 
 MyTonCtrl equivalent: `setup_alert_bot`, `list_alerts`, `enable_alert`,
 `disable_alert`, `test_alert`.
