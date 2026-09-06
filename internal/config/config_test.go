@@ -124,7 +124,7 @@ func TestVarsCoverEveryField(t *testing.T) {
 		}
 		names[v.Name] = true
 	}
-	if len(names) != 25 {
-		t.Errorf("expected 25 documented variables, got %d", len(names))
+	if len(names) != 26 {
+		t.Errorf("expected 26 documented variables, got %d", len(names))
 	}
 }

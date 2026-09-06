@@ -113,11 +113,15 @@ MyTonCtrl equivalent: `benchmark`.
 the README "common signatures" table and print the diagnosis and suggested
 fix. Turns the troubleshooting section into a command.
 
-### 10. Bootstrap sync — planned
+### 10. Bootstrap sync — done (v0.6.0)
 
-`nomctl bootstrap`: download a trusted chain snapshot, verify its hash,
-extract it, so a fresh node syncs in minutes. Blocked on a maintained
-snapshot source with published hashes.
+`nomctl bootstrap [URL] [--discard]`: download the snapshot zip and its
+`.hash` sidecar, verify the SHA-256, inspect the layout
+(`backup/{nom,network,consensus}.bak/`), extract into staging, stop the
+service, keep the previous data under the restore directory (or delete it
+with `--discard`), rename into place, start. Default URL baked in and
+overridable with `NOMCTL_BOOTSTRAP_URL`; the menu asks for the URL, whether
+to keep the old data, and confirms.
 
 ### 11. Analytics dashboard refresh — planned
 

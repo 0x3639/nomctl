@@ -23,6 +23,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl resync` | wipe chain data, keep wallet and config |
 | `nomctl backup [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | [Backups](/guide/backups) |
 | `nomctl restore [--file FILE]` | picker when `--file` is omitted |
+| `nomctl bootstrap [URL] [--discard]` | [Bootstrap](/guide/bootstrap): verified snapshot instead of syncing from genesis |
 | `nomctl analytics install` | [Analytics stack](/guide/analytics) |
 | `nomctl upgrade [--check] [--version TAG] [--rollback]` | [Upgrading](/guide/upgrading) |
 

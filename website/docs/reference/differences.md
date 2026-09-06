@@ -25,6 +25,7 @@ nomctl reproduces the behaviour of [hypercore-one/deployment](https://github.com
 - Archives are published atomically with their sha256 sidecar; archives without one are ignored.
 - Before a restore, the safety move of current data must succeed or the restore aborts.
 - `resync` fails when a directory cannot be deleted instead of reporting success.
+- `bootstrap` verifies the hash and inspects the archive before stopping the node, keeps the previous data (the script left it in `~/.znn` as `nom_<date>` and friends) and extracts with Go's zip reader, so `unzip` and `wget` are not needed.
 - Destructive operations abort when `systemctl` cannot report the service state, and are mutually exclusive through a lock file.
 - The Grafana dashboard import references the Infinity datasource by its real UID; the bash version bound panels to a non-existent datasource.
 - The node unit no longer runs `pkill -9 znnd` on stop; systemd terminates the service's own cgroup, and `deploy` rewrites a unit that differs from the current definition.

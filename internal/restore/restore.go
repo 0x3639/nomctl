@@ -53,6 +53,31 @@ func Verify(archive string) error {
 	return nil
 }
 
+// MoveAside moves the node's data folders into the restore directory as
+// <folder>.bak.<unix>, keeping a safety copy of what is about to be replaced.
+// It returns the directory holding the copies. Folders already moved when an
+// error occurs stay in the restore directory.
+func MoveAside(cfg config.Config, now time.Time) (string, error) {
+	restoreDir := backup.RestoreDir(cfg)
+	if err := os.MkdirAll(restoreDir, 0o755); err != nil {
+		return "", err
+	}
+	slog.Info("Backing up existing node directory (safety snapshot)")
+	stamp := fmt.Sprint(now.Unix())
+	for _, folder := range backup.Folders {
+		src := filepath.Join(cfg.ZnnDir, folder)
+		if !fsx.IsDir(src) {
+			continue
+		}
+		dst := filepath.Join(restoreDir, folder+".bak."+stamp)
+		// mv handles the backup directory living on another filesystem.
+		if err := execx.Run("mv", src, dst); err != nil {
+			return "", fmt.Errorf("failed to move %s aside; aborting before touching data: %w", folder, err)
+		}
+	}
+	return restoreDir, nil
+}
+
 // Run restores archive into the node data directory.
 func Run(cfg config.Config, archive string) error {
 	restoreDir := backup.RestoreDir(cfg)
@@ -66,20 +91,9 @@ func Run(cfg config.Config, archive string) error {
 		return err
 	}
 
-	slog.Info("Backing up existing node directory (safety snapshot)")
-	stamp := fmt.Sprint(time.Now().Unix())
-	for _, folder := range backup.Folders {
-		src := filepath.Join(cfg.ZnnDir, folder)
-		if !fsx.IsDir(src) {
-			continue
-		}
-		dst := filepath.Join(restoreDir, folder+".bak."+stamp)
-		// mv handles the backup directory living on another filesystem.
-		if err := execx.Run("mv", src, dst); err != nil {
-			return fmt.Errorf("failed to move %s aside; aborting restore before touching data: %w", folder, err)
-		}
+	if _, err := MoveAside(cfg, time.Now()); err != nil {
+		return err
 	}
-
 	if err := os.MkdirAll(cfg.ZnnDir, 0o755); err != nil {
 		return err
 	}

@@ -10,6 +10,7 @@ Planned features in priority order. Each gets a design spec in the repository un
 - **Alerting** (v0.3.0): Telegram through a shared relay, pairing by code, per-alert thresholds, mutes, `node_silent`.
 - **Pillar awareness** (v0.4.0): the node name doubles as the pillar name; `status` and `top` show production; `pillar_missed` and `momentums_stalled` alerts.
 - **Self-update** (v0.5.0): `nomctl upgrade` with verified download, atomic replace and rollback; update lines in `status`/`top`; opt-in `update_available` alert.
+- **Bootstrap sync** (v0.6.0): `nomctl bootstrap` downloads a verified chain snapshot and swaps it in, keeping the previous data unless `--discard`.
 
 ## Next
 
@@ -22,7 +23,6 @@ Planned features in priority order. Each gets a design spec in the repository un
 
 - **Benchmark**: disk, memory and CPU against node requirements before deploying.
 - **Doctor**: run the sampler and crash-marker grep and print the matching diagnosis from the signatures table.
-- **Bootstrap sync**: download a trusted chain snapshot with a published hash so a fresh node syncs in minutes.
 - **`nomctl pillars`**: list all pillars with weight and momentum stats.
 - A generic webhook output for alerts, alongside Telegram.
 

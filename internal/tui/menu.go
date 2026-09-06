@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/huh"
 
 	"github.com/0x3639/nomctl/internal/analytics"
 	"github.com/0x3639/nomctl/internal/backup"
+	"github.com/0x3639/nomctl/internal/bootstrap"
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/deploy"
 	"github.com/0x3639/nomctl/internal/lock"
@@ -41,6 +44,7 @@ const (
 	ActionResync    Action = "resync"
 	ActionBackup    Action = "backup"
 	ActionRestore   Action = "restore"
+	ActionBootstrap Action = "bootstrap"
 	ActionAnalytics Action = "analytics"
 	ActionExit      Action = "exit"
 )
@@ -62,6 +66,7 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 		{ActionResync, "Resync the " + cfg.BinaryName + " node"},
 		{ActionBackup, "Backup " + cfg.BinaryName + " data"},
 		{ActionRestore, "Restore Zenon from a backup"},
+		{ActionBootstrap, "Restore Zenon from a bootstrap snapshot"},
 		{ActionAnalytics, "Set up a Grafana dashboard"},
 		{ActionExit, ""},
 	}
@@ -137,6 +142,8 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return withLock("backup", func() error { return Backup(cfg) })
 	case ActionRestore:
 		return withLock("restore", func() error { return Restore(*cfg) })
+	case ActionBootstrap:
+		return withLock("bootstrap", func() error { return Bootstrap(*cfg) })
 	case ActionAnalytics:
 		return analytics.Install(*cfg)
 	case ActionExit:
@@ -271,6 +278,37 @@ func Resync(cfg config.Config) error {
 		return nil
 	}
 	return resync.Run(cfg)
+}
+
+// Bootstrap asks for the snapshot URL and whether to keep the previous
+// data, confirms, then installs the snapshot.
+func Bootstrap(cfg config.Config) error {
+	url, err := Input("Snapshot URL (.zip; a .hash sidecar must sit next to it)", cfg.BootstrapURL)
+	if err != nil {
+		return err
+	}
+	url = strings.TrimSpace(url)
+	if url == "" {
+		url = cfg.BootstrapURL
+	}
+	if err := bootstrap.ValidateURL(url); err != nil {
+		return err
+	}
+	keep, err := Confirm("Keep a copy of the current chain data under " + backup.RestoreDir(cfg) + "?\n(Answer No on a disk too small for both copies.)")
+	if err != nil {
+		return err
+	}
+	ok, err := Confirm(bootstrap.ConfirmText)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		slog.Warn("Bootstrap cancelled by user")
+		return nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return bootstrap.Run(ctx, cfg, bootstrap.Options{URL: url, Discard: !keep})
 }
 
 // Restore lets the user pick an archive and restores it.
