@@ -47,6 +47,8 @@ func AllRules() []Rule {
 		ruleFunc{"fds_high", fdsHigh},
 		ruleFunc{"backup_stale", backupStale},
 		ruleFunc{"rpc_unreachable", rpcUnreachable},
+		ruleFunc{"momentums_stalled", momentumsStalled},
+		ruleFunc{"pillar_missed", pillarMissed},
 	}
 }
 
@@ -272,4 +274,62 @@ func rpcUnreachable(h []metrics.Sample, cfg RuleConfig) Result {
 	}
 	n := win[len(win)-1].Node
 	return Result{Firing: true, Detail: fmt.Sprintf("service active but %s not answering for %s: %s", n.URL, metrics.HumanDuration(d), n.Error)}
+}
+
+// momentumsStalled fires when the frontier height has not moved across the
+// window while the service is up and RPC answers, whatever sync state the
+// node claims. This catches a running node that silently stopped syncing.
+func momentumsStalled(h []metrics.Sample, cfg RuleConfig) Result {
+	d := minutes(cfg, "momentums_stalled", "minutes")
+	win := since(h, d)
+	if !covers(win, d) {
+		return Result{}
+	}
+	first := win[0].Node.FrontierHeight
+	for _, s := range win {
+		if s.Service.ActiveState != "active" || !s.Node.Reachable {
+			return Result{}
+		}
+		if s.Node.FrontierHeight != first {
+			return Result{}
+		}
+	}
+	n := win[len(win)-1].Node
+	return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s, frontier %s old (state: %s)", metrics.Commas(n.FrontierHeight), metrics.HumanDuration(d), metrics.HumanDuration(n.FrontierAge), n.StateText)}
+}
+
+// pillarMissed fires when, over the window, the pillar's expected momentums
+// grew by at least `missed` more than its produced count did. A decrease in
+// expected (epoch rollover) restarts the comparison from that sample.
+func pillarMissed(h []metrics.Sample, cfg RuleConfig) Result {
+	d := minutes(cfg, "pillar_missed", "minutes")
+	minMissed := uint64(cfg.Threshold("pillar_missed", "missed"))
+	win := since(h, d)
+	if !covers(win, d) {
+		return Result{}
+	}
+	// Restart after an epoch rollover: keep the samples from the last decrease.
+	start := 0
+	for i := 1; i < len(win); i++ {
+		if win[i].Node.Pillar.Expected < win[i-1].Node.Pillar.Expected {
+			start = i
+		}
+	}
+	win = win[start:]
+	if len(win) < 2 {
+		return Result{}
+	}
+	for _, s := range win {
+		if !s.Node.Reachable || !s.Node.Pillar.Configured || !s.Node.Pillar.Found {
+			return Result{}
+		}
+	}
+	first, last := win[0].Node.Pillar, win[len(win)-1].Node.Pillar
+	expected := last.Expected - first.Expected
+	produced := last.Produced - first.Produced
+	if expected > produced && expected-produced >= minMissed {
+		return Result{Firing: true, Detail: fmt.Sprintf("%s missed %d of %d expected momentums in the last %s (%d / %d this epoch)",
+			last.Name, expected-produced, expected, metrics.HumanDuration(d), last.Produced, last.Expected)}
+	}
+	return Result{}
 }

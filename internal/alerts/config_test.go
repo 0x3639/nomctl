@@ -9,7 +9,7 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	c := DefaultConfig()
-	if len(c.Rules) != 10 || c.Interval != 30*time.Second || c.RelayURL != DefaultRelayURL || c.Paired() {
+	if len(c.Rules) != 12 || c.Interval != 30*time.Second || c.RelayURL != DefaultRelayURL || c.Paired() {
 		t.Errorf("defaults: %+v", c)
 	}
 	for _, name := range RuleNames() {
@@ -41,6 +41,16 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := c.Set("pillar.name", " MyPillar "); err != nil || c.PillarName != "MyPillar" {
+		t.Fatalf("pillar.name: %v %q", err, c.PillarName)
+	}
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err = Load(path)
+	if err != nil || got.PillarName != "MyPillar" {
+		t.Fatalf("pillar name lost: %+v %v", got, err)
+	}
 	if got.NodeID != "n_1" || got.Secret != "c2VjcmV0" || got.Name != "pillar-1" || got.Interval != 45*time.Second || !got.Paired() {
 		t.Errorf("round trip: %+v", got)
 	}
@@ -58,7 +68,7 @@ func TestLoadFillsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Rules) != 10 || c.Rules["disk_low"].Enabled || c.Rules["disk_low"].Threshold("disk_low", "min_free_gb") != 15 || !c.Rules["service_down"].Enabled || c.Interval != DefaultInterval {
+	if len(c.Rules) != 12 || c.Rules["disk_low"].Enabled || c.Rules["disk_low"].Threshold("disk_low", "min_free_gb") != 15 || !c.Rules["service_down"].Enabled || c.Interval != DefaultInterval {
 		t.Errorf("fill defaults: %+v", c.Rules)
 	}
 	if err := os.WriteFile(path, []byte(`{"interval":"1s"}`), 0o600); err != nil {

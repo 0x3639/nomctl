@@ -36,12 +36,14 @@ type RuleConfig struct {
 
 // Config is /etc/nomctl/alerts.json.
 type Config struct {
-	RelayURL string                `json:"relay_url"`
-	NodeID   string                `json:"node_id"`
-	Secret   string                `json:"secret"`
-	Name     string                `json:"name"`
-	Interval time.Duration         `json:"-"`
-	Rules    map[string]RuleConfig `json:"alerts"`
+	RelayURL string `json:"relay_url"`
+	NodeID   string `json:"node_id"`
+	Secret   string `json:"secret"`
+	Name     string `json:"name"`
+	// PillarName is the pillar this node produces for; empty for a plain node.
+	PillarName string                `json:"pillar_name,omitempty"`
+	Interval   time.Duration         `json:"-"`
+	Rules      map[string]RuleConfig `json:"alerts"`
 }
 
 // configJSON is Config with the interval as a duration string.
@@ -52,16 +54,18 @@ type configJSON struct {
 
 // defaultThresholds lists the tunable keys of each rule with their default.
 var defaultThresholds = map[string]map[string]float64{
-	"service_down":     {},
-	"crash_loop":       {"window_minutes": 10, "count": 2},
-	"sync_stalled":     {},
-	"sync_behind":      {"minutes": 10},
-	"not_enough_peers": {"min_peers": 3, "minutes": 5},
-	"disk_low":         {"min_free_gb": 15},
-	"memory_high":      {"pct": 85},
-	"fds_high":         {"pct": 80},
-	"backup_stale":     {},
-	"rpc_unreachable":  {"minutes": 5},
+	"service_down":      {},
+	"crash_loop":        {"window_minutes": 10, "count": 2},
+	"sync_stalled":      {},
+	"sync_behind":       {"minutes": 10},
+	"not_enough_peers":  {"min_peers": 3, "minutes": 5},
+	"disk_low":          {"min_free_gb": 15},
+	"memory_high":       {"pct": 85},
+	"fds_high":          {"pct": 80},
+	"backup_stale":      {},
+	"rpc_unreachable":   {"minutes": 5},
+	"momentums_stalled": {"minutes": 5},
+	"pillar_missed":     {"minutes": 30, "missed": 2},
 }
 
 // DefaultConfig returns every node-raised alert enabled with spec defaults.
@@ -162,6 +166,11 @@ func (c *Config) Set(key, value string) error {
 	alert, field, ok := strings.Cut(key, ".")
 	if !ok {
 		return errors.New("key must be <alert>.<setting>, e.g. disk_low.min_free_gb")
+	}
+	if alert == "pillar" && field == "name" {
+		// Validated against the node by the command; empty clears it.
+		c.PillarName = strings.TrimSpace(value)
+		return nil
 	}
 	defaults, known := defaultThresholds[alert]
 	if !known {
