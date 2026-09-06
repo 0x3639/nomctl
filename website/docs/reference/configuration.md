@@ -28,7 +28,8 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_PROMETHEUS_VERSION` | `2.47.0` | Prometheus version |
 | `NOMCTL_INFINITY_PLUGIN_VERSION` | `2.10.0` | Grafana Infinity datasource plugin version |
 | `NOMCTL_GRAFANA_ADMIN_USER` | `admin` | Grafana admin user |
-| `NOMCTL_GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin password |
+| `NOMCTL_GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin password; a non-default value is applied to Grafana on install |
+| `NOMCTL_GRAFANA_HTTP_ADDR` | `127.0.0.1` | Address Grafana listens on (`0.0.0.0` to expose it) |
 | `NOMCTL_RELAY_URL` | built in | Alerts relay used by `alerts setup` when `--relay` is not given |
 
 ## Files nomctl writes

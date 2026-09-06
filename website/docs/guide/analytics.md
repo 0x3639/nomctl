@@ -18,15 +18,18 @@ Every step checks its own precondition, so an interrupted run is completed by ru
 
 ## Reaching Grafana safely
 
-Grafana listens on all interfaces on port 3000, over plain HTTP, and starts with the credentials `admin` / `admin`. nomctl uses `NOMCTL_GRAFANA_ADMIN_USER` / `NOMCTL_GRAFANA_ADMIN_PASSWORD` to talk to the API; it does not change Grafana's password. So before opening port 3000 to the Internet:
+By default nomctl binds Grafana to `127.0.0.1:3000` (a systemd drop-in sets `GF_SERVER_HTTP_ADDR`), so it is not reachable from the network. From your workstation:
 
-1. Change the password in Grafana (Administration, Users) and set `NOMCTL_GRAFANA_ADMIN_PASSWORD` to match so future `analytics install` runs can still configure datasources.
-2. Prefer not to expose the port at all. From your workstation:
+```bash
+ssh -L 3000:127.0.0.1:3000 root@<host>
+```
 
-   ```bash
-   ssh -L 3000:127.0.0.1:3000 root@<host>
-   ```
+then open `http://localhost:3000`. To expose it, set `NOMCTL_GRAFANA_HTTP_ADDR=0.0.0.0` before `analytics install` and put an HTTPS reverse proxy in front.
 
-   then open `http://localhost:3000`. If you need it reachable, put an HTTPS reverse proxy in front and firewall port 3000.
+Grafana ships with the credentials `admin` / `admin`. If `NOMCTL_GRAFANA_ADMIN_PASSWORD` is set to anything else when you run `analytics install`, nomctl applies it to Grafana through the API on first install (and keeps using it for datasource setup afterwards). With the default value it warns and leaves the password unchanged, which is only acceptable while Grafana is bound to localhost.
+
+```bash
+sudo NOMCTL_GRAFANA_ADMIN_PASSWORD='a long passphrase' nomctl analytics install
+```
 
 For a quick look without a browser, `nomctl status` and `nomctl top` cover the same signals from the terminal.

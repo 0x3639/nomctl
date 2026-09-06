@@ -39,6 +39,7 @@ const (
 	DefaultInfinityPluginVersion = "2.10.0"
 	DefaultGrafanaAdminUser      = "admin"
 	DefaultGrafanaAdminPassword  = "admin"
+	DefaultGrafanaHTTPAddr       = "127.0.0.1"
 )
 
 // Config holds every setting nomctl needs at runtime.
@@ -94,6 +95,10 @@ type Config struct {
 	InfinityPluginVersion string
 	GrafanaAdminUser      string
 	GrafanaAdminPassword  string
+	// GrafanaHTTPAddr is the address Grafana binds to; 127.0.0.1 keeps it
+	// reachable only through an SSH tunnel or a local reverse proxy.
+	// Env: NOMCTL_GRAFANA_HTTP_ADDR.
+	GrafanaHTTPAddr string
 }
 
 // Default returns a Config populated with built-in defaults only.
@@ -118,6 +123,7 @@ func Default() Config {
 		InfinityPluginVersion: DefaultInfinityPluginVersion,
 		GrafanaAdminUser:      DefaultGrafanaAdminUser,
 		GrafanaAdminPassword:  DefaultGrafanaAdminPassword,
+		GrafanaHTTPAddr:       DefaultGrafanaHTTPAddr,
 	}
 }
 
@@ -195,6 +201,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("INFINITY_PLUGIN_VERSION", &c.InfinityPluginVersion)
 	str("GRAFANA_ADMIN_USER", &c.GrafanaAdminUser)
 	str("GRAFANA_ADMIN_PASSWORD", &c.GrafanaAdminPassword)
+	str("GRAFANA_HTTP_ADDR", &c.GrafanaHTTPAddr)
 
 	if len(errs) > 0 {
 		return c, fmt.Errorf("invalid configuration: %s", strings.Join(errs, "; "))
@@ -296,6 +303,7 @@ func Vars() []Var {
 		{"NOMCTL_PROMETHEUS_VERSION", DefaultPrometheusVersion, "Prometheus version"},
 		{"NOMCTL_INFINITY_PLUGIN_VERSION", DefaultInfinityPluginVersion, "Grafana Infinity datasource plugin version"},
 		{"NOMCTL_GRAFANA_ADMIN_USER", DefaultGrafanaAdminUser, "Grafana admin user"},
-		{"NOMCTL_GRAFANA_ADMIN_PASSWORD", DefaultGrafanaAdminPassword, "Grafana admin password"},
+		{"NOMCTL_GRAFANA_ADMIN_PASSWORD", DefaultGrafanaAdminPassword, "Grafana admin password; a non-default value is applied to Grafana on install"},
+		{"NOMCTL_GRAFANA_HTTP_ADDR", DefaultGrafanaHTTPAddr, "Address Grafana listens on (0.0.0.0 to expose it)"},
 	}
 }

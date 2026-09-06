@@ -74,6 +74,22 @@ func (g *Grafana) WaitReady(timeout time.Duration) error {
 	}
 }
 
+// Authenticated reports whether the client's credentials are accepted.
+func (g *Grafana) Authenticated() (bool, error) {
+	code, _, err := g.do(http.MethodGet, "/api/user", nil)
+	if err != nil {
+		return false, err
+	}
+	switch code {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusUnauthorized:
+		return false, nil
+	default:
+		return false, fmt.Errorf("check credentials: HTTP %d", code)
+	}
+}
+
 // DatasourceExists checks /api/datasources/name/<name>.
 func (g *Grafana) DatasourceExists(name string) (bool, error) {
 	uid, err := g.DatasourceUID(name)
@@ -120,6 +136,23 @@ func (g *Grafana) CreateDatasource(def map[string]any) error {
 	}
 	if code < 200 || code > 299 {
 		return fmt.Errorf("create datasource: HTTP %d: %s", code, bytes.TrimSpace(data))
+	}
+	return nil
+}
+
+// ChangePassword sets the current user's password via PUT /api/user/password,
+// authenticating with the client's current credentials.
+func (g *Grafana) ChangePassword(oldPassword, newPassword string) error {
+	body, err := json.Marshal(map[string]string{"oldPassword": oldPassword, "newPassword": newPassword, "confirmNew": newPassword})
+	if err != nil {
+		return err
+	}
+	code, data, err := g.do(http.MethodPut, "/api/user/password", body)
+	if err != nil {
+		return err
+	}
+	if code < 200 || code > 299 {
+		return fmt.Errorf("change password: HTTP %d: %s", code, bytes.TrimSpace(data))
 	}
 	return nil
 }

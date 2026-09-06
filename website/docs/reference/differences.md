@@ -27,6 +27,8 @@ nomctl reproduces the behaviour of [hypercore-one/deployment](https://github.com
 - `resync` fails when a directory cannot be deleted instead of reporting success.
 - Destructive operations abort when `systemctl` cannot report the service state, and are mutually exclusive through a lock file.
 - The Grafana dashboard import references the Infinity datasource by its real UID; the bash version bound panels to a non-existent datasource.
+- The node unit no longer runs `pkill -9 znnd` on stop; systemd terminates the service's own cgroup, and `deploy` rewrites a unit that differs from the current definition.
+- Grafana is bound to localhost by default and a non-default `NOMCTL_GRAFANA_ADMIN_PASSWORD` is applied to Grafana on install.
 - `analytics install` converges: every step checks its own precondition, so an interrupted run is completed on the next run.
 - The pre-flight Internet check uses a TCP connection to `1.1.1.1:443` instead of ICMP `ping`.
 - The restore picker lists the 20 newest archives.
