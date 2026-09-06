@@ -15,4 +15,4 @@ func TestDiagnosticCommandsSkipPreflight(t *testing.T) {
 }
 
 // diagnosticCommands grows as the commands are added.
-var diagnosticCommands = []string{"status"}
+var diagnosticCommands = []string{"status", "top"}
