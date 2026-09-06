@@ -16,8 +16,10 @@ import (
 // ErrCancelled is returned when the user aborts a prompt.
 var ErrCancelled = errors.New("cancelled")
 
-// maxPickerEntries bounds the restore picker like `head -n 50` did.
-const maxPickerEntries = 50
+// maxPickerEntries bounds the restore picker. The list is rendered without a
+// scrolling viewport (see Select), so it is kept small enough to fit a
+// typical terminal; retention is at most 30 archives anyway.
+const maxPickerEntries = 20
 
 // PickBackup lists the newest archives and returns the chosen path.
 func PickBackup(cfg config.Config) (string, error) {
@@ -39,7 +41,6 @@ func PickBackup(cfg config.Config) (string, error) {
 	sel := huh.NewSelect[string]().
 		Title(ui.StyleHeader.Render("SELECT BACKUP TO RESTORE:")).
 		Options(opts...).
-		Height(15).
 		Value(&chosen)
 	if err := runForm(sel); err != nil {
 		return "", err
@@ -67,10 +68,13 @@ func Input(title, placeholder string) (string, error) {
 	return v, nil
 }
 
-// Select asks the user to choose one of the labelled values.
+// Select asks the user to choose one of the labelled values. No fixed height
+// is set on purpose: with one, huh scrolls the options inside a viewport so
+// the cursor stays put and the list moves, which reads badly. Without it the
+// viewport is sized to the options, the list stays still and the cursor moves.
 func Select(title string, options []huh.Option[string]) (string, error) {
 	var v string
-	sel := huh.NewSelect[string]().Title(ui.StyleHeader.Render(title)).Options(options...).Height(15).Value(&v)
+	sel := huh.NewSelect[string]().Title(ui.StyleHeader.Render(title)).Options(options...).Value(&v)
 	if err := runForm(sel); err != nil {
 		return "", err
 	}
