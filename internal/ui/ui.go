@@ -14,7 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"golang.org/x/term"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/0x3639/nomctl/internal/logx"
 )
@@ -61,13 +61,13 @@ func SetDebug(on bool) {
 
 // IsTerminal reports whether stderr (where UI is drawn) is a TTY.
 func IsTerminal() bool {
-	return term.IsTerminal(int(os.Stderr.Fd()))
+	return term.IsTerminal(os.Stderr.Fd())
 }
 
 // Interactive reports whether both stdin and stderr are TTYs, i.e. prompts
 // can be shown.
 func Interactive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd())) && IsTerminal()
+	return term.IsTerminal(os.Stdin.Fd()) && IsTerminal()
 }
 
 // Section prints a bordered section title such as "==== BUILD ====".
