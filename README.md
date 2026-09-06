@@ -2,44 +2,53 @@
 
 `nomctl` is a single static binary for deploying and operating [Zenon Network](https://zenon.network) (NoM) nodes on Debian/Ubuntu. It is a Go port of the bash toolkit at [hypercore-one/deployment](https://github.com/hypercore-one/deployment): the same interactive menu, the same non-interactive commands for automation, no dependency on `gum`, `jq` or any other helper.
 
+## Quick start
+
+One command installs nomctl on a fresh Debian/Ubuntu server (amd64 or arm64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
+```
+
+Then:
+
+1. Deploy a node. This installs the Go toolchain, builds `znnd` from source, installs it to `/usr/local/bin`, and creates and starts the `go-zenon` systemd service:
+
+   ```bash
+   sudo nomctl deploy
+   ```
+
+2. Watch it sync:
+
+   ```bash
+   sudo nomctl logs -f
+   ```
+
+3. For everything else, open the interactive menu. It covers deploy, start/stop/restart, logs, resync, backup, restore and the Grafana analytics stack:
+
+   ```bash
+   sudo nomctl
+   ```
+
+Every menu action is also a subcommand (see [Commands](#commands)), so the same steps can be scripted:
+
+```bash
+sudo nomctl deploy && sudo nomctl backup --schedule --cadence 7
+```
+
+The installer downloads the latest GitHub release for your architecture, verifies its sha256 against `checksums.txt` and installs the binary to `/usr/local/bin`. It honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` (default `/usr/local/bin`) and `NOMCTL_REPO` (default `0x3639/nomctl`). To build from source instead, with Go 1.24 or newer:
+
+```bash
+go install github.com/0x3639/nomctl@latest
+```
+
 ## Requirements
 
 - Debian or Ubuntu (systemd + apt); tested target is Ubuntu 24.04
 - `amd64` or `arm64`
 - root (every command except `--help`, `--version`, `env` and `completion`)
 - at least 4 CPU cores and 4 GiB RAM (checked at startup)
-- for `install.sh`: `curl`, `tar` and `sha256sum` (all present on a stock Ubuntu install)
-- for building from source: Go 1.24 or newer
-
-## Quick start
-
-Install the latest release:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
-```
-
-`install.sh` honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` (default `/usr/local/bin`) and `NOMCTL_REPO` (default `0x3639/nomctl`).
-
-Or build from source with Go 1.24+:
-
-```bash
-go install github.com/0x3639/nomctl@latest
-```
-
-Then deploy and start a node:
-
-```bash
-sudo nomctl deploy   # installs Go, builds znnd, creates the go-zenon service
-sudo nomctl start
-sudo nomctl logs -f
-```
-
-Or open the interactive menu, which covers everything below:
-
-```bash
-sudo nomctl
-```
+- for the installer: `curl`, `tar` and `sha256sum` (all present on a stock Ubuntu install)
 
 ## Commands
 
