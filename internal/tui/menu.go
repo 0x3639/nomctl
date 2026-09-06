@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/0x3639/nomctl/internal/restore"
 	"github.com/0x3639/nomctl/internal/resync"
 	"github.com/0x3639/nomctl/internal/service"
+	"github.com/0x3639/nomctl/internal/support"
 	"github.com/0x3639/nomctl/internal/ui"
 )
 
@@ -32,6 +35,8 @@ const (
 	ActionStop      Action = "stop"
 	ActionStart     Action = "start"
 	ActionMonitor   Action = "monitor"
+	ActionStatus    Action = "status"
+	ActionSupport   Action = "support"
 	ActionResync    Action = "resync"
 	ActionBackup    Action = "backup"
 	ActionRestore   Action = "restore"
@@ -50,6 +55,8 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 		{ActionStop, "Stop the " + cfg.ServiceName + " service"},
 		{ActionStart, "Start the " + cfg.ServiceName + " service"},
 		{ActionMonitor, "View " + cfg.BinaryName + " logs in real-time"},
+		{ActionStatus, "Live node dashboard (sync, CPU, memory)"},
+		{ActionSupport, "Create a support bundle for troubleshooting"},
 		{ActionResync, "Resync the " + cfg.BinaryName + " node"},
 		{ActionBackup, "Backup " + cfg.BinaryName + " data"},
 		{ActionRestore, "Restore Zenon from a backup"},
@@ -116,6 +123,10 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return service.Start(cfg.ServiceName)
 	case ActionMonitor:
 		return Monitor(*cfg, true, 20)
+	case ActionStatus:
+		return Top(*cfg, 2*time.Second)
+	case ActionSupport:
+		return SupportBundle(*cfg)
 	case ActionResync:
 		return withLock("resync", func() error { return Resync(*cfg) })
 	case ActionBackup:
@@ -128,6 +139,21 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return nil
 	}
 	return fmt.Errorf("unknown action %q", action)
+}
+
+// Version is the nomctl version string recorded in support bundles; the cmd
+// package sets it at startup.
+var Version = "dev"
+
+// SupportBundle collects a bundle with defaults and prints where it went.
+func SupportBundle(cfg config.Config) error {
+	res, err := support.Collect(context.Background(), cfg, support.Options{Version: Version})
+	if err != nil {
+		return err
+	}
+	ui.Success("Support bundle created")
+	fmt.Fprintf(os.Stderr, "\nDiagnostics directory: %s\nBundle:                %s\nCrash markers:         %s\n\nReview the bundle before sharing; configuration contents are never collected.\n", res.Dir, res.Archive, res.Markers)
+	return nil
 }
 
 // withLock serialises node-data operations with the CLI commands and the
