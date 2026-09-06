@@ -1,0 +1,130 @@
+# nomctl
+
+`nomctl` is a single static binary for deploying and operating [Zenon Network](https://zenon.network) (NoM) nodes on Debian/Ubuntu. It is a Go port of the bash toolkit at [hypercore-one/deployment](https://github.com/hypercore-one/deployment): the same interactive menu, the same non-interactive commands for automation, no dependency on `gum`, `jq` or any other helper.
+
+## Requirements
+
+- Debian or Ubuntu (systemd + apt); tested target is Ubuntu 24.04
+- `amd64` or `arm64`
+- root (every command except `--help`, `--version` and `env`)
+- at least 4 CPU cores and 4 GiB RAM (checked at startup)
+
+## Quick start
+
+Install the latest release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
+```
+
+Or build from source with Go 1.23+:
+
+```bash
+go install github.com/0x3639/nomctl@latest
+```
+
+Then deploy and start a node:
+
+```bash
+sudo nomctl deploy   # installs Go, builds znnd, creates the go-zenon service
+sudo nomctl start
+sudo nomctl logs -f
+```
+
+Or open the interactive menu, which covers everything below:
+
+```bash
+sudo nomctl
+```
+
+## Commands
+
+Every menu action has a subcommand so it can be scripted.
+
+| Command | What it does |
+|---|---|
+| `nomctl` | Open the interactive menu |
+| `nomctl deploy [--repo URL] [--branch NAME]` | Install build dependencies and the Go toolchain, clone the repository, build `znnd`, install it to `/usr/local/bin`, create and enable the `go-zenon` systemd unit, start it |
+| `nomctl start` / `stop` / `restart` | Control the `go-zenon` service |
+| `nomctl logs [-f] [-n LINES]` | Show the last 20 journal lines, or follow the journal with `-f` |
+| `nomctl resync` | Stop the node, delete `network`, `nom`, `consensus` and `log` under the data directory (wallet and `config.json` are kept), start it again |
+| `nomctl backup [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | Snapshot `nom`, `network`, `consensus` and `cache` from `/root/.znn` into `/backup/go-zenon_backup_<timestamp>.tar.gz` with a sha256 sidecar, prune archives beyond `N`. `--cadence` skips the run if the newest archive is younger than `DAYS`. `--schedule` installs a daily systemd timer |
+| `nomctl restore [--file FILE]` | Verify the archive checksum, stop the node, move the current data into `/backup/restore`, extract, start. Without `--file` an interactive picker is shown |
+| `nomctl analytics install` | Install node_exporter, Prometheus and Grafana, configure the datasources and import the Node Exporter Full dashboard plus the embedded `znnd` dashboard. Grafana listens on port 3000 |
+| `nomctl env` | Print every configuration variable with its default |
+| `nomctl --help`, `nomctl --version` | Help and build information |
+
+Global flags: `--debug` (verbose logging, external command output shown on the terminal), `--log-file PATH`, `--skip-preflight`.
+
+### Backups and scheduling
+
+A backup stops the node while the data directories are copied, restarts it, and only then compresses the copy. The backup directory must have at least 15 GB free; if it does not, old archives are pruned first.
+
+`nomctl backup --schedule --cadence 7 --max-backups 5` writes `nomctl-backup.service` and `nomctl-backup.timer` under `/etc/systemd/system` and enables the timer. It fires daily at `--hour` (or, when omitted, at a minute and hour between 02:00 and 04:59 derived from the hostname so many nodes do not back up simultaneously); the cadence check then decides whether a backup actually runs. Inspect it with `systemctl list-timers nomctl-backup.timer`.
+
+### Logging
+
+Every run logs to the terminal and appends a plain-text copy, including the output of `apt-get`, `git`, `go build` and so on, to `/var/log/nomctl.log`. With `--debug` that output is shown on the terminal instead of hidden behind spinners.
+
+## Configuration
+
+Settings come from `NOMCTL_*` environment variables; command-line flags override them.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NOMCTL_DEBUG` | `false` | Verbose logging; stream external command output to the terminal |
+| `NOMCTL_LOG_FILE` | `/var/log/nomctl.log` | Plain-text log file (also receives external command output) |
+| `NOMCTL_SKIP_PREFLIGHT` | `false` | Skip the CPU/RAM/NTP/Internet pre-flight checks |
+| `NOMCTL_WORK_DIR` | `/opt/nomctl` | Where the Go toolchain and source checkout are kept |
+| `NOMCTL_INSTALL_DIR` | `/usr/local/bin` | Where the node binary is installed |
+| `NOMCTL_ZNN_DIR` | `/root/.znn` | Node data directory |
+| `NOMCTL_REPO_URL` | `https://github.com/zenon-network/go-zenon.git` | Git repository to build |
+| `NOMCTL_BRANCH_NAME` | `master` | Git branch to build |
+| `NOMCTL_BINARY_NAME` | `znnd` | Node binary name (also the `cmd/` package built) |
+| `NOMCTL_SERVICE_NAME` | `go-zenon` | systemd service name |
+| `NOMCTL_GO_VERSION` | `1.23.0` | Go toolchain version used to build the node |
+| `NOMCTL_BACKUP_DIR` | `/backup` | Directory that stores backup archives |
+| `NOMCTL_MAX_BACKUPS` | `7` | Number of backups to retain |
+| `NOMCTL_BACKUP_CADENCE_DAYS` | `0` | Days between scheduled backups (0 = every run) |
+| `NOMCTL_BACKUP_HOUR` | unset | Hour (0-23) for scheduled backups; unset = derived, between 02:00 and 04:59 |
+| `NOMCTL_MIN_FREE_SPACE_KB` | `15728640` | Minimum free space in the backup directory (15 GB) |
+| `NOMCTL_NODE_EXPORTER_VERSION` | `1.6.1` | Prometheus node_exporter version |
+| `NOMCTL_PROMETHEUS_VERSION` | `2.47.0` | Prometheus version |
+| `NOMCTL_INFINITY_PLUGIN_VERSION` | `2.10.0` | Grafana Infinity datasource plugin version |
+| `NOMCTL_GRAFANA_ADMIN_USER` | `admin` | Grafana admin user |
+| `NOMCTL_GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin password |
+
+## Pre-flight checks
+
+Before any privileged command nomctl verifies, like the bash version did, that the host has at least 4 cores and 4 GiB RAM, that `systemd-timesyncd` uses `time.cloudflare.com` (the config file is patched and the service restarted if not), and that the Internet is reachable. `--skip-preflight` or `NOMCTL_SKIP_PREFLIGHT=true` disables the checks.
+
+## Building
+
+```bash
+make build      # ./bin/nomctl for the host platform
+make cross      # static linux/amd64 and linux/arm64 binaries in ./bin
+make test
+make lint       # gofmt + go vet + golangci-lint
+```
+
+Releases are produced by goreleaser on tag push (`git tag v0.1.0 && git push --tags`): archives for both architectures plus `checksums.txt`, which `install.sh` verifies.
+
+The Go module path lives in one place, `go.mod`; the Makefile and goreleaser read it from there. `install.sh` takes the GitHub repository from `NOMCTL_REPO` (default `0x3639/nomctl`).
+
+## Differences from the bash version
+
+- Only Zenon Network nodes are supported; the second node type and its arguments, variables and dashboard were removed.
+- `arm64` is supported in addition to `amd64`, so the Go toolchain, node_exporter and Prometheus downloads are chosen per architecture.
+- Environment variables use the `NOMCTL_` prefix instead of `ZNNSH_`.
+- The Go toolchain and the source checkout live under `NOMCTL_WORK_DIR` (`/opt/nomctl`) instead of the script directory; the log file is `/var/log/nomctl.log`.
+- Scheduled backups use a systemd timer (`nomctl-backup.timer`) instead of a cron file, and can be installed non-interactively with `nomctl backup --schedule`. The timer unit carries the backup, data and service settings in effect when it was created.
+- `nomctl logs` prints the last 20 lines by default; `-f` follows (and falls back to the last lines when the service is stopped, as the old `--monitor` did).
+- Downloads, checksums and Grafana API calls are done in Go, so `curl`, `wget`, `jq` and `gpg` are not installed; the Grafana apt key is stored as `/etc/apt/keyrings/grafana.asc`.
+- `deploy` installs `make` and `gcc` only (the bash version also installed `jq` for its own use).
+- The embedded node dashboard is skipped when a dashboard with its title (`znnd`) already exists; the bash version searched for a different title and therefore re-imported it on every run.
+- The dashboard import path that re-downloaded the node dashboard from the git checkout's own GitHub remote was dropped; the dashboard is embedded in the binary.
+- The pre-flight Internet check uses a TCP connection to `1.1.1.1:443` instead of ICMP `ping`, with the same HTTPS fallback.
+
+## License
+
+GPL-3.0, as a derivative of [hypercore-one/deployment](https://github.com/hypercore-one/deployment). See [LICENSE](LICENSE).

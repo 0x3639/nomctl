@@ -1,0 +1,53 @@
+# goreleaser v2 configuration: static linux/amd64 + linux/arm64 archives and a
+# checksums.txt, published to GitHub Releases by .github/workflows/release.yml.
+version: 2
+
+project_name: nomctl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: nomctl
+    main: .
+    binary: nomctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X {{ .ModulePath }}/cmd.version={{ .Version }}
+      - -X {{ .ModulePath }}/cmd.commit={{ .ShortCommit }}
+      - -X {{ .ModulePath }}/cmd.date={{ .Date }}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  draft: false
+  prerelease: auto
