@@ -1,8 +1,16 @@
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"errors"
 
-// runTUI launches the interactive menu. Implemented in phase 6.
-func runTUI(cmd *cobra.Command) error {
-	return cmd.Help()
+	"github.com/0x3639/nomctl/internal/tui"
+	"github.com/0x3639/nomctl/internal/ui"
+)
+
+// runTUI launches the interactive menu; without a terminal it prints help.
+func runTUI() error {
+	if !ui.Interactive() {
+		return errors.New("no terminal detected; run a subcommand instead (see nomctl --help)")
+	}
+	return tui.Run(cfg)
 }

@@ -1,14 +1,10 @@
 package cmd
 
 import (
-	"fmt"
-	"log/slog"
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"github.com/0x3639/nomctl/internal/service"
-	"github.com/0x3639/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/tui"
 )
 
 var (
@@ -46,22 +42,8 @@ var logsCmd = &cobra.Command{
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
-		return showLogs(flagLogsFollow, flagLogsLines)
+		return tui.Monitor(cfg, flagLogsFollow, flagLogsLines)
 	},
-}
-
-// showLogs ports monitor.sh: following a stopped service falls back to the
-// last lines with a warning.
-func showLogs(follow bool, lines int) error {
-	name := cfg.ServiceName
-	if follow && !service.IsActive(name) {
-		slog.Warn(fmt.Sprintf("%s service is not running. Showing last %d log lines:", name, lines))
-		follow = false
-	}
-	if follow {
-		fmt.Fprintln(os.Stderr, ui.StyleBox.Render(fmt.Sprintf("Monitoring %s logs. Press Ctrl+C to stop.", name)))
-	}
-	return service.Logs(name, follow, lines)
 }
 
 func init() {

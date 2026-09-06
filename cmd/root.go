@@ -56,8 +56,8 @@ Run "nomctl env" to list every variable with its default.`),
 		return setup(cmd)
 	},
 	PersistentPostRun: func(*cobra.Command, []string) { closeLog() },
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		return runTUI(cmd)
+	RunE: func(*cobra.Command, []string) error {
+		return runTUI()
 	},
 }
 

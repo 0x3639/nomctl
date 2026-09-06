@@ -41,8 +41,7 @@ var (
 )
 
 // Banner is the ASCII art shown by the TUI and the help screen.
-const Banner = `
- _ __    ___   _ __ ___     ___  | |_  | |
+const Banner = ` _ __    ___   _ __ ___     ___  | |_  | |
 | '_ \  / _ \ | '_ ' _ \   / __| | __| | |
 | | | || (_) || | | | | | | (__  | |_  | |
 |_| |_| \___/ |_| |_| |_|  \___|  \__| |_|`
@@ -141,3 +140,7 @@ func Pad(s string, width int) string {
 	}
 	return s + strings.Repeat(" ", width-len(s))
 }
+
+// Success logs a success line; kept here so packages that only need styling
+// do not have to import logx directly.
+func Success(msg string) { logx.Success(msg) }
