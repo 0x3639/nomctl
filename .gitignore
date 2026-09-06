@@ -1,0 +1,6 @@
+/dist/
+/bin/
+/nomctl
+*.test
+*.out
+.DS_Store
