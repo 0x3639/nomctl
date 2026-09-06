@@ -11,8 +11,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/hypercore-one/nomctl/internal/execx"
-	"github.com/hypercore-one/nomctl/internal/logx"
+	"github.com/0x3639/nomctl/internal/execx"
+	"github.com/0x3639/nomctl/internal/logx"
 )
 
 // ErrNotFound is returned when the unit does not exist.

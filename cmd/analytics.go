@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/hypercore-one/nomctl/internal/analytics"
+	"github.com/0x3639/nomctl/internal/analytics"
 )
 
 var analyticsCmd = &cobra.Command{

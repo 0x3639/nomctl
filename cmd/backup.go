@@ -6,11 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hypercore-one/nomctl/internal/backup"
-	"github.com/hypercore-one/nomctl/internal/restore"
-	"github.com/hypercore-one/nomctl/internal/resync"
-	"github.com/hypercore-one/nomctl/internal/tui"
-	"github.com/hypercore-one/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/backup"
+	"github.com/0x3639/nomctl/internal/restore"
+	"github.com/0x3639/nomctl/internal/resync"
+	"github.com/0x3639/nomctl/internal/tui"
+	"github.com/0x3639/nomctl/internal/ui"
 )
 
 var (

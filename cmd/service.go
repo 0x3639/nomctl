@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hypercore-one/nomctl/internal/service"
-	"github.com/hypercore-one/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/service"
+	"github.com/0x3639/nomctl/internal/ui"
 )
 
 var (

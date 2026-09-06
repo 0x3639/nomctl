@@ -12,11 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hypercore-one/nomctl/internal/config"
-	"github.com/hypercore-one/nomctl/internal/execx"
-	"github.com/hypercore-one/nomctl/internal/logx"
-	"github.com/hypercore-one/nomctl/internal/preflight"
-	"github.com/hypercore-one/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/execx"
+	"github.com/0x3639/nomctl/internal/logx"
+	"github.com/0x3639/nomctl/internal/preflight"
+	"github.com/0x3639/nomctl/internal/ui"
 )
 
 // Build information, injected via -ldflags "-X ...".

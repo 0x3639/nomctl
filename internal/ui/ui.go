@@ -16,7 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
-	"github.com/hypercore-one/nomctl/internal/logx"
+	"github.com/0x3639/nomctl/internal/logx"
 )
 
 // Colours used throughout.

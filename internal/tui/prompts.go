@@ -8,9 +8,9 @@ import (
 
 	"github.com/charmbracelet/huh"
 
-	"github.com/hypercore-one/nomctl/internal/backup"
-	"github.com/hypercore-one/nomctl/internal/config"
-	"github.com/hypercore-one/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/backup"
+	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/ui"
 )
 
 // ErrCancelled is returned when the user aborts a prompt.

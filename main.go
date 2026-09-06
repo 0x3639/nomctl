@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"github.com/hypercore-one/nomctl/cmd"
+	"github.com/0x3639/nomctl/cmd"
 )
 
 func main() {

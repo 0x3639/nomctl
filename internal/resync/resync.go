@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hypercore-one/nomctl/internal/config"
-	"github.com/hypercore-one/nomctl/internal/fsx"
-	"github.com/hypercore-one/nomctl/internal/logx"
-	"github.com/hypercore-one/nomctl/internal/service"
+	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/fsx"
+	"github.com/0x3639/nomctl/internal/logx"
+	"github.com/0x3639/nomctl/internal/service"
 )
 
 // Dirs are the data directories deleted by a resync. Everything else in the

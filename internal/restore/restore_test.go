@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hypercore-one/nomctl/internal/backup"
-	"github.com/hypercore-one/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/backup"
+	"github.com/0x3639/nomctl/internal/config"
 )
 
 func TestResolve(t *testing.T) {

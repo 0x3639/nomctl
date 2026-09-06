@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hypercore-one/nomctl/internal/execx"
-	"github.com/hypercore-one/nomctl/internal/logx"
+	"github.com/0x3639/nomctl/internal/execx"
+	"github.com/0x3639/nomctl/internal/logx"
 )
 
 const (

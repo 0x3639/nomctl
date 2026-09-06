@@ -1,4 +1,4 @@
-module github.com/hypercore-one/nomctl
+module github.com/0x3639/nomctl
 
 go 1.25.4
 

@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hypercore-one/nomctl/internal/config"
-	"github.com/hypercore-one/nomctl/internal/execx"
-	"github.com/hypercore-one/nomctl/internal/fsx"
-	"github.com/hypercore-one/nomctl/internal/logx"
-	"github.com/hypercore-one/nomctl/internal/service"
-	"github.com/hypercore-one/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/execx"
+	"github.com/0x3639/nomctl/internal/fsx"
+	"github.com/0x3639/nomctl/internal/logx"
+	"github.com/0x3639/nomctl/internal/service"
+	"github.com/0x3639/nomctl/internal/ui"
 )
 
 // RepoChoices lists the repositories offered by the interactive deploy menu.

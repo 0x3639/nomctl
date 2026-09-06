@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/hypercore-one/nomctl/dashboards"
+	"github.com/0x3639/nomctl/dashboards"
 )
 
 func TestEmbeddedDashboard(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hypercore-one/nomctl/internal/config"
-	"github.com/hypercore-one/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/ui"
 )
 
 var envCmd = &cobra.Command{
