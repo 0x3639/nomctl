@@ -31,6 +31,10 @@ var (
 // annotation key marking commands that must run as root.
 const annotationRoot = "nomctl.requiresRoot"
 
+// annotation key marking diagnostic commands that must never be blocked by
+// the pre-flight checks.
+const annotationNoPreflight = "nomctl.noPreflight"
+
 var (
 	cfg           config.Config
 	closeLog      = func() {}
@@ -147,7 +151,7 @@ func setup(cmd *cobra.Command) error {
 			return err
 		}
 	}
-	if requiresRoot && !cfg.SkipPreflight {
+	if requiresRoot && !cfg.SkipPreflight && cmd.Annotations[annotationNoPreflight] != "true" {
 		ui.Section(os.Stderr, "==== PRE-FLIGHT CHECKS ====")
 		if err := preflight.Run(); err != nil {
 			return fmt.Errorf("pre-flight check failed: %w", err)
@@ -166,6 +170,11 @@ func withLock(operation string, fn func() error) error {
 	}
 	defer l.Release()
 	return fn()
+}
+
+// diagnostic marks a command as privileged but exempt from pre-flight checks.
+func diagnostic() map[string]string {
+	return map[string]string{annotationRoot: "true", annotationNoPreflight: "true"}
 }
 
 // rootOnly returns the annotation map marking a command as privileged.
