@@ -49,3 +49,13 @@ Running `deploy` again rebuilds from the branch head and restarts the service. T
 ## Node configuration
 
 nomctl does not write `config.json`. znnd enables its HTTP RPC on `0.0.0.0:35997` by default, which is what `status`, `top` and alerts read from `127.0.0.1`.
+
+That RPC has no authentication. Only 35995/TCP (peer-to-peer) needs to be reachable from the Internet; firewall 35997 and 35998 (WebSocket) unless you intend to serve RPC publicly, for example:
+
+```bash
+ufw allow 35995/tcp
+ufw deny 35997/tcp
+ufw deny 35998/tcp
+```
+
+Alternatively set `RPC.HTTPHost` to `127.0.0.1` in `config.json` and restart the node.

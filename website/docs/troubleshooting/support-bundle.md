@@ -4,7 +4,7 @@ title: Support bundle
 
 ```bash
 sudo nomctl support-bundle                  # snapshot now
-sudo nomctl support-bundle --watch          # wait for the next crash, then snapshot
+sudo nomctl support-bundle --watch          # wait for the next service restart, then snapshot
 sudo nomctl support-bundle --since "2 days ago" --output /root/bundle-1
 ```
 
@@ -33,4 +33,4 @@ It never contains `config.json`, the wallet directory, or any file under the dat
 
 ## Watching for a crash
 
-With `--watch`, nomctl samples the process every `--poll` (default 10 s) and follows the journal until systemd restarts the unit, `--timeout` elapses, or you press Ctrl+C, then collects the rest. This puts the moments before the crash into the bundle rather than only what came after.
+With `--watch`, nomctl samples the process every `--poll` (default 10 s) and follows the journal until it sees the unit restart (systemd's restart counter grows, or the main process disappears and a new one appears), `--timeout` elapses, or you press Ctrl+C, then collects the rest. Any restart ends the watch, whether it was a crash or a manual `nomctl restart`. This puts the moments before the restart into the bundle rather than only what came after.

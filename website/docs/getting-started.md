@@ -10,7 +10,15 @@ Three commands take a fresh Ubuntu 24.04 server to a syncing node.
 curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
 ```
 
-The installer detects the architecture, downloads the latest GitHub release, verifies its sha256 against `checksums.txt` and installs the binary to `/usr/local/bin`. It honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` and `NOMCTL_REPO`. Rerunning it upgrades in place.
+The installer detects the architecture, downloads the latest GitHub release, verifies its sha256 against `checksums.txt` and installs the binary to `/usr/local/bin`. It is a short script; read it before piping it to a root shell, or download it first:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh
+less install.sh
+sudo bash install.sh
+```
+
+To pin a version instead of `main`, fetch the script from a release tag, for example `.../nomctl/v0.4.0/install.sh`, and set `NOMCTL_VERSION=v0.4.0`. It honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` and `NOMCTL_REPO`. Rerunning it upgrades in place.
 
 To build from source instead, with Go 1.24 or newer:
 

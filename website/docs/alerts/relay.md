@@ -21,7 +21,7 @@ help - show help
 
 Add a **Docker Image** resource with `ghcr.io/0x3639/nomctl-relay:latest` (or a Docker Compose resource using `deploy/relay/docker-compose.yml` from the repository). Then:
 
-- **Environment**: `RELAY_TELEGRAM_TOKEN` (mark it as a secret), `RELAY_PUBLIC_URL=https://alerts.example.org`, `RELAY_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`.
+- **Environment**: `RELAY_TELEGRAM_TOKEN` (mark it as a secret), `RELAY_PUBLIC_URL=https://alerts.example.org`, and `RELAY_TRUSTED_PROXIES` set to the network Coolify's proxy connects from. The Docker bridge ranges `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` work when only the proxy can reach the container; if other hosts on those ranges can reach port 8080 directly, narrow it to the proxy's own subnet, since anything in the list may claim any client address.
 - **Storage**: a persistent volume at `/data`. The image ships `/data` owned by the container user, so a fresh named volume works as is.
 - **Domain**: `https://alerts.example.org:8080`, the scheme so Coolify requests a certificate, the port so the proxy reaches the container.
 - **Health check**: `GET /healthz` on port 8080.

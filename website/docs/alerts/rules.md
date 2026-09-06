@@ -40,4 +40,4 @@ CPU is deliberately not an alert: a syncing node runs hot for hours, and the fai
 - Every alert has a recovery message.
 - A firing alert repeats every 10 minutes until it clears.
 - The first evaluation after the daemon starts only establishes a baseline and announces "alerts started"; nothing else is sent until a condition is confirmed on a later sample.
-- A report the relay could not deliver (Telegram outage, relay down) is retried on the next sample until it is acknowledged, on both the node and the relay side, so recoveries are never lost.
+- A report the relay could not deliver (Telegram outage) is answered with an error, and one the relay never received (relay down) times out; in both cases the node keeps the transition pending and re-sends it on its next sample until the relay confirms delivery. The relay records an alert as sent only after Telegram accepted it. The one gap is the relay's own `node_silent` while Telegram is down: it is retried every 30 seconds by the relay until it goes through.
