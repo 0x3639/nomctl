@@ -26,6 +26,7 @@ var (
 	ColorDim    = lipgloss.Color("239")
 	ColorBanner = lipgloss.Color("245")
 	ColorWhite  = lipgloss.Color("#FFFFFF")
+	ColorBlack  = lipgloss.Color("#000000")
 )
 
 // Styles.
