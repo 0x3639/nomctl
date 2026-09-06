@@ -41,6 +41,7 @@ const (
 	DefaultGrafanaAdminPassword  = "admin"
 	DefaultGrafanaHTTPAddr       = "127.0.0.1"
 	DefaultReleaseRepo           = "0x3639/nomctl"
+	DefaultBootstrapURL          = "https://hypercore.nyc3.digitaloceanspaces.com/bootstrap/2026-09-01/bootstrap-20260901010001.zip"
 )
 
 // Config holds every setting nomctl needs at runtime.
@@ -82,6 +83,9 @@ type Config struct {
 	// PillarName makes status/top show this pillar's production. The alerts
 	// config, when present, takes precedence. Env: NOMCTL_PILLAR_NAME.
 	PillarName string
+	// BootstrapURL is the default snapshot for `nomctl bootstrap`.
+	// Env: NOMCTL_BOOTSTRAP_URL.
+	BootstrapURL string
 
 	// Backup settings. Env: NOMCTL_BACKUP_DIR, NOMCTL_MAX_BACKUPS,
 	// NOMCTL_BACKUP_CADENCE_DAYS, NOMCTL_BACKUP_HOUR, NOMCTL_MIN_FREE_SPACE_KB.
@@ -132,6 +136,7 @@ func Default() Config {
 		GrafanaAdminPassword:  DefaultGrafanaAdminPassword,
 		GrafanaHTTPAddr:       DefaultGrafanaHTTPAddr,
 		ReleaseRepo:           DefaultReleaseRepo,
+		BootstrapURL:          DefaultBootstrapURL,
 		UpdateCheck:           true,
 	}
 }
@@ -202,6 +207,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("PILLAR_NAME", &c.PillarName)
 	str("REPO", &c.ReleaseRepo)
 	boolean("UPDATE_CHECK", &c.UpdateCheck)
+	str("BOOTSTRAP_URL", &c.BootstrapURL)
 	str("BACKUP_DIR", &c.BackupDir)
 	integer("MAX_BACKUPS", &c.MaxBackups)
 	integer("BACKUP_CADENCE_DAYS", &c.BackupCadenceDays)
@@ -307,6 +313,7 @@ func Vars() []Var {
 		{"NOMCTL_PILLAR_NAME", "(unset)", "Pillar name for status/top production stats (alerts config takes precedence)"},
 		{"NOMCTL_REPO", DefaultReleaseRepo, "GitHub repository nomctl upgrade downloads releases from"},
 		{"NOMCTL_UPDATE_CHECK", "true", "Check GitHub for newer nomctl and go-zenon in status/top (cached 6h)"},
+		{"NOMCTL_BOOTSTRAP_URL", DefaultBootstrapURL, "Snapshot for nomctl bootstrap (.zip with a .hash sidecar next to it)"},
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},
 		{"NOMCTL_MAX_BACKUPS", strconv.Itoa(DefaultMaxBackups), "Number of backups to retain"},
 		{"NOMCTL_BACKUP_CADENCE_DAYS", strconv.Itoa(DefaultBackupCadenceDays), "Days between scheduled backups (0 = every run)"},
