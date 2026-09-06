@@ -1,0 +1,137 @@
+# nomctl roadmap
+
+Features planned beyond v0.2.0, in priority order. Each one gets a design
+spec under `docs/superpowers/specs/` before code. Inspiration for several
+items is [MyTonCtrl](https://github.com/ton-blockchain/mytonctrl), the TON
+node controller; the mapping is noted where it applies.
+
+Status legend: **planned** (agreed, not designed), **designing** (spec in
+progress), **in progress** (plan being executed), **done** (released).
+
+## v0.3.0
+
+### 1. Alerting — designing
+
+Notify the operator when the node needs attention, and again when it
+recovers. Signals come from the existing metrics sampler:
+
+- service down / crash loop (restart count climbing)
+- sync stalled (synced but frontier momentum older than 2 minutes) and
+  sync fell behind (target minus current growing)
+- not enough peers
+- data or backup disk below the free-space minimum
+- memory near the host total, open files near the limit
+- pillar missed momentums (once item 2 lands)
+- backup timer failed or has not run within its cadence
+
+Delivery: Telegram bot (token + chat id, as MyTonCtrl does) and a generic
+webhook (JSON POST) so Discord, Slack, ntfy or a pager can be wired in.
+Each alert has an "ok" counterpart, a cooldown so it does not repeat, and a
+per-alert enable/disable. Runs as a small systemd service or timer
+installed by nomctl. Commands: `nomctl alerts setup`, `list`, `enable`,
+`disable`, `test`, `status`.
+
+MyTonCtrl equivalent: `setup_alert_bot`, `list_alerts`, `enable_alert`,
+`disable_alert`, `test_alert`.
+
+### 2. Pillar awareness — planned
+
+Detect whether the node's producing address belongs to a pillar and show
+produced vs expected momentums for the current epoch, weight and rank in
+`nomctl status` and `nomctl top` (via `embedded.pillar.getAll` and
+`getByOwner`). Feeds the missed-momentum alert. Also `nomctl pillars` to list
+all pillars with weight and momentum stats.
+
+MyTonCtrl equivalent: validator section of `status`, `vl`.
+
+### 3. Self-update — planned
+
+`nomctl upgrade`: download the latest GitHub release for the host
+architecture, verify `checksums.txt`, replace the binary atomically (same
+logic as `install.sh`), print the changelog. `nomctl status` shows "nomctl
+update available" and, by comparing the running znnd commit with the
+upstream branch head, "node update available"; `nomctl deploy` then
+rebuilds.
+
+MyTonCtrl equivalent: `update`, `upgrade`.
+
+## v0.4.0
+
+### 4. Wallet and config backup — planned
+
+`nomctl backup --wallet`: a separate small archive of `wallet/` and
+`config.json`, optionally encrypted with a passphrase (age or AES-GCM),
+kept apart from the chain-data archives and never pruned by the retention
+rule. `nomctl restore --wallet` counterpart. The current backup covers chain
+data only, which is replaceable; the wallet is not.
+
+MyTonCtrl equivalent: `create_backup`, `restore_backup`.
+
+### 5. Config editor — planned
+
+`nomctl config show|get|set`: read and change `config.json` keys with
+validation, a timestamped copy of the previous file, and a restart prompt.
+Initial keys: RPC enable/bind/ports, log level, min/max peers, seeders,
+producing address. nomctl does not touch `config.json` today.
+
+MyTonCtrl equivalent: `installer` sub-commands, `set`/`get`.
+
+### 6. Network check — planned
+
+`nomctl net check`: confirm port 35995/TCP is reachable from outside (via a
+self-connect through the public IP, with a helper endpoint if one becomes
+available), count inbound vs outbound peers, and print firewall guidance.
+The number one cause of `not enough peers`.
+
+MyTonCtrl equivalent: `checkAdnl`, `adnl_connection_failed` alert.
+
+### 7. Metrics exporter — planned
+
+`nomctl exporter`: a Prometheus `/metrics` endpoint on localhost fed by the
+sampler (sync state, heights, rate, peers, restarts, RSS, open files, pillar
+stats), registered as a scrape job in the Prometheus that `analytics install`
+sets up, plus a nomctl Grafana dashboard that uses it.
+
+MyTonCtrl equivalent: `prometheus_url`.
+
+## Later
+
+### 8. Benchmark — planned
+
+`nomctl benchmark`: sequential and random IO on the data directory, memory
+bandwidth and CPU, compared with node requirements, for sizing a VPS before
+deploy.
+
+MyTonCtrl equivalent: `benchmark`.
+
+### 9. Doctor — planned
+
+`nomctl doctor`: run the sampler and the crash-marker grep, match against
+the README "common signatures" table and print the diagnosis and suggested
+fix. Turns the troubleshooting section into a command.
+
+### 10. Bootstrap sync — planned
+
+`nomctl bootstrap`: download a trusted chain snapshot, verify its hash,
+extract it, so a fresh node syncs in minutes. Blocked on a maintained
+snapshot source with published hashes.
+
+### 11. Analytics dashboard refresh — planned
+
+Improve the embedded Grafana dashboard once the exporter exists: sync rate,
+peers, restarts, pillar stats next to the node_exporter panels.
+
+## Deliberately not planned
+
+- **Modes** (liteserver, validator, pools): one node type in Zenon.
+- **Remote controller**: manage many nodes from one console; ssh and the
+  non-interactive commands cover this.
+- **Fleet telemetry**: no central Zenon endpoint, and a privacy cost.
+- **Account inspection, bookmarks, governance voting**: `znn-cli` territory.
+
+## Smaller items
+
+- Make the RPC endpoint configurable (`NOMCTL_RPC_URL`) for nodes that
+  moved the port.
+- Context/timeouts for commands run during support-bundle collection.
+- `nomctl logs --since` and `--grep` passthroughs to journalctl.
