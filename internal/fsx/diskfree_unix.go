@@ -11,7 +11,7 @@ func DiskFree(path string) (availKB int64, usedPercent int, err error) {
 	if err := syscall.Statfs(path, &st); err != nil {
 		return 0, 0, err
 	}
-	bsize := int64(st.Bsize)
+	bsize := int64(st.Bsize) //nolint:unconvert // Bsize is uint32 on darwin, int64 on linux
 	availKB = int64(st.Bavail) * bsize / 1024
 	used := int64(st.Blocks) - int64(st.Bfree)
 	total := used + int64(st.Bavail)
