@@ -2,285 +2,40 @@
 
 `nomctl` is a single static binary for deploying and operating [Zenon Network](https://zenon.network) (NoM) nodes on Debian/Ubuntu. It is a Go port of the bash toolkit at [hypercore-one/deployment](https://github.com/hypercore-one/deployment): the same interactive menu, the same non-interactive commands for automation, no dependency on `gum`, `jq` or any other helper.
 
-## Quick start
+**Documentation: [nomctl.0x3639.com](https://nomctl.0x3639.com)**
 
-One command installs nomctl on a fresh Debian/Ubuntu server (amd64 or arm64):
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
+sudo nomctl deploy     # installs Go, builds znnd, creates and starts the go-zenon service
+sudo nomctl status     # sync state, peers, pillar production, CPU, memory, disk
+sudo nomctl            # the interactive menu
 ```
 
-Then:
+Then, optionally, `sudo nomctl alerts setup` for Telegram alerts (send `/start` to the bot first) and `sudo nomctl backup --schedule --cadence 7` for a backup timer.
 
-1. Deploy a node. This installs the Go toolchain, builds `znnd` from source, installs it to `/usr/local/bin`, and creates and starts the `go-zenon` systemd service:
+Requirements: Debian or Ubuntu with systemd and apt (Ubuntu 24.04 is the tested target), `amd64` or `arm64`, root, 4 cores and 4 GiB RAM.
 
-   ```bash
-   sudo nomctl deploy
-   ```
+## What is where
 
-2. Watch it sync:
-
-   ```bash
-   sudo nomctl logs -f
-   ```
-
-3. For everything else, open the interactive menu. It covers deploy, start/stop/restart, logs, resync, backup, restore and the Grafana analytics stack:
-
-   ```bash
-   sudo nomctl
-   ```
-
-Every menu action is also a subcommand (see [Commands](#commands)), so the same steps can be scripted:
-
-```bash
-sudo nomctl deploy && sudo nomctl backup --schedule --cadence 7
-```
-
-The installer downloads the latest GitHub release for your architecture, verifies its sha256 against `checksums.txt` and installs the binary to `/usr/local/bin`. It honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` (default `/usr/local/bin`) and `NOMCTL_REPO` (default `0x3639/nomctl`). To build from source instead, with Go 1.24 or newer:
-
-```bash
-go install github.com/0x3639/nomctl@latest
-```
-
-## Requirements
-
-- Debian or Ubuntu (systemd + apt); tested target is Ubuntu 24.04
-- `amd64` or `arm64`
-- root (every command except `--help`, `--version`, `env` and `completion`)
-- at least 4 CPU cores and 4 GiB RAM (checked at startup)
-- for the installer: `curl`, `tar` and `sha256sum` (all present on a stock Ubuntu install)
-
-## Commands
-
-Every menu action has a subcommand so it can be scripted.
-
-| Command | What it does |
-|---|---|
-| `nomctl` | Open the interactive menu |
-| `nomctl deploy [--repo URL] [--branch NAME]` | Install build dependencies and the Go toolchain, clone the repository, build `znnd`, install it to `/usr/local/bin`, create and enable the `go-zenon` systemd unit, start it |
-| `nomctl start` / `stop` / `restart` | Control the `go-zenon` service |
-| `nomctl logs [-f] [-n LINES]` | Show the last 20 journal lines, or follow the journal with `-f` |
-| `nomctl resync` | Stop the node, delete `network`, `nom`, `consensus` and `log` under the data directory (wallet and `config.json` are kept), start it again |
-| `nomctl backup [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | Snapshot `nom`, `network`, `consensus` and `cache` from `/root/.znn` into `/backup/go-zenon_backup_<timestamp>.tar.gz` with a sha256 sidecar, prune archives beyond `N`. `--cadence` skips the run if the newest archive is younger than `DAYS`. `--schedule` installs a daily systemd timer |
-| `nomctl restore [--file FILE]` | Verify the archive checksum, stop the node, move the current data into `/backup/restore`, extract, start. Without `--file` an interactive picker is shown |
-| `nomctl analytics install` | Install node_exporter, Prometheus and Grafana, configure the datasources and import the Node Exporter Full dashboard plus the embedded `znnd` dashboard. Grafana listens on port 3000 |
-| `nomctl status [--json]` | One-screen summary: service state, sync state and heights, momentums/s and ETA, peers, process CPU/memory/open files, host load/memory/disk/pressure |
-| `nomctl top [--interval 2s]` | The same, refreshed live with a sync progress bar and rate sparkline; `q` to quit |
-| `nomctl alerts setup [--code CODE] [--name NAME] [--relay URL]` | Pair this node with the Telegram alerts bot and start the alerts service (see [Alerts](#alerts)) |
-| `nomctl alerts status` / `list` / `enable` / `disable` / `set` / `test` / `unpair` | Manage alerts |
-| `nomctl support-bundle [--watch] [--since "12 hours ago"] [--output DIR] [--poll 10s] [--timeout 0]` | Collect diagnostics into `/root/nomctl-support-<host>-<time>` and a `.tar.gz` beside it (see [Troubleshooting](#troubleshooting)) |
-| `nomctl env` | Print every configuration variable with its default |
-| `nomctl completion bash\|zsh\|fish` | Shell completion script (generated by cobra) |
-| `nomctl --help`, `nomctl --version` | Help and build information |
-
-Global flags: `--debug` (verbose logging, external command output shown on the terminal), `--log-file PATH`, `--skip-preflight`.
-
-### Backups and scheduling
-
-A backup stops the node while the data directories are copied, restarts it, and only then compresses the copy. The backup directory must have at least 15 GB free; if it does not, old archives are pruned first.
-
-`nomctl backup --schedule --cadence 7 --max-backups 5` writes `nomctl-backup.service` and `nomctl-backup.timer` under `/etc/systemd/system` and enables the timer. It fires daily at `--hour` (or, when omitted, at a minute and hour between 02:00 and 04:59 derived from the hostname so many nodes do not back up simultaneously); the cadence check then decides whether a backup actually runs. Inspect it with `systemctl list-timers nomctl-backup.timer`.
-
-### Concurrency
-
-Backup, restore, resync and deploy take an exclusive lock on `/run/nomctl.lock` for their duration, whether started from the menu, the command line or the backup timer. A second operation that would overlap fails immediately with a message naming the running one; nothing queues.
-
-### Logging
-
-Every run logs to the terminal and appends a plain-text copy, including the output of `apt-get`, `git`, `go build` and so on, to `/var/log/nomctl.log`. With `--debug` that output is shown on the terminal instead of hidden behind spinners.
-
-## Configuration
-
-Settings come from `NOMCTL_*` environment variables; command-line flags override them.
-
-| Variable | Default | Description |
-|---|---|---|
-| `NOMCTL_DEBUG` | `false` | Verbose logging; stream external command output to the terminal |
-| `NOMCTL_LOG_FILE` | `/var/log/nomctl.log` | Plain-text log file (also receives external command output) |
-| `NOMCTL_SKIP_PREFLIGHT` | `false` | Skip the CPU/RAM/NTP/Internet pre-flight checks |
-| `NOMCTL_WORK_DIR` | `/opt/nomctl` | Where the Go toolchain and source checkout are kept |
-| `NOMCTL_INSTALL_DIR` | `/usr/local/bin` | Where the node binary is installed |
-| `NOMCTL_ZNN_DIR` | `/root/.znn` | Node data directory used by backup, restore and resync. It is not passed to `znnd`, which uses its own default; only change it if the node is configured to use the same path |
-| `NOMCTL_REPO_URL` | `https://github.com/zenon-network/go-zenon.git` | Git repository to build |
-| `NOMCTL_BRANCH_NAME` | `master` | Git branch to build |
-| `NOMCTL_BINARY_NAME` | `znnd` | Node binary name (also the `cmd/` package built) |
-| `NOMCTL_SERVICE_NAME` | `go-zenon` | systemd service name |
-| `NOMCTL_GO_VERSION` | `1.23.0` | Go toolchain version used to build the node |
-| `NOMCTL_PILLAR_NAME` | unset | Pillar shown by `status`/`top` when alerts are not set up (the alerts config takes precedence) |
-| `NOMCTL_BACKUP_DIR` | `/backup` | Directory that stores backup archives |
-| `NOMCTL_MAX_BACKUPS` | `7` | Number of backups to retain |
-| `NOMCTL_BACKUP_CADENCE_DAYS` | `0` | Days between scheduled backups (0 = every run) |
-| `NOMCTL_BACKUP_HOUR` | unset | Hour (0-23) for scheduled backups; unset = derived, between 02:00 and 04:59 |
-| `NOMCTL_MIN_FREE_SPACE_KB` | `15728640` | Minimum free space in the backup directory (15 GB) |
-| `NOMCTL_NODE_EXPORTER_VERSION` | `1.6.1` | Prometheus node_exporter version |
-| `NOMCTL_PROMETHEUS_VERSION` | `2.47.0` | Prometheus version |
-| `NOMCTL_INFINITY_PLUGIN_VERSION` | `2.10.0` | Grafana Infinity datasource plugin version |
-| `NOMCTL_GRAFANA_ADMIN_USER` | `admin` | Grafana admin user |
-| `NOMCTL_GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin password |
-
-## Pre-flight checks
-
-Before any privileged command nomctl verifies, like the bash version did, that the host has at least 4 cores and 4 GiB RAM, that `systemd-timesyncd` uses `time.cloudflare.com` (the config file is patched and the service restarted if not), and that the Internet is reachable. `--skip-preflight` or `NOMCTL_SKIP_PREFLIGHT=true` disables the checks.
-
-## Alerts
-
-nomctl can message you on Telegram when the node needs attention, and again when it recovers. All operators share one bot; each operator only ever sees alerts for the nodes they paired. The bot token lives on a small relay service (see `deploy/relay/README.md`), never on your node.
-
-### Pairing
-
-1. Open the alerts bot in Telegram and send `/start`. It replies with an 8-character pairing code, valid for 10 minutes.
-2. On the node:
-
-   ```bash
-   sudo nomctl alerts setup
-   ```
-
-   It asks for the code and a name for the node (default: the hostname), pairs, installs and starts `nomctl-alerts.service`, and sends a test message. `--code` and `--name` skip the prompts. Released binaries default to the community relay at `https://alerts.zenon.info`; `--relay` or `NOMCTL_RELAY_URL` point at a different one.
-
-Pair as many nodes as you like to the same chat; every message starts with the node's name.
-
-**Pillars.** The node name is also treated as the pillar name: if a registered pillar has that name, setup says "monitoring pillar NAME" and `pillar_missed` becomes active, and `nomctl status` / `top` show the pillar's rank and produced vs expected momentums for the epoch. If the names differ, set it afterwards:
-
-```bash
-sudo nomctl alerts set pillar.name MyPillar    # validated against the pillar list; empty clears it
-```
-
-### What you get
-
-| Alert | Fires when | Default |
-|---|---|---|
-| `service_down` | the service is not active for two samples in a row | |
-| `crash_loop` | systemd restarted the node twice within 10 minutes | `window_minutes=10 count=2` |
-| `sync_stalled` | synced, but the frontier momentum is more than 2 minutes old | |
-| `sync_behind` | syncing, and the gap to the target has not shrunk for 10 minutes | `minutes=10` |
-| `not_enough_peers` | fewer than 3 peers (or the node says so) for 5 minutes | `min_peers=3 minutes=5` |
-| `disk_low` | data directory has less than 15 GB free | `min_free_gb=15` |
-| `memory_high` | znnd uses more than 85% of host memory | `pct=85` |
-| `fds_high` | more than 80% of the open-file limit in use | `pct=80` |
-| `backup_stale` | the backup timer is enabled and the newest archive is older than cadence + 1 day | |
-| `rpc_unreachable` | service active but local RPC not answering for 5 minutes | `minutes=5` |
-| `momentums_stalled` | the frontier height has not moved for 5 minutes while the service runs and RPC answers, whatever sync state the node claims | `minutes=5` |
-| `pillar_missed` | your pillar's expected momentums grew by 2 more than its produced count over 30 minutes (needs a pillar name, see below) | `minutes=30 missed=2` |
-| `node_silent` | raised by the relay when the node has not reported for 5 minutes (power or network loss) | |
-
-Each alert sends a recovery message when it clears, and a reminder every 10 minutes while it stays active. The daemon samples every 30 seconds.
-
-### Managing
-
-```bash
-sudo nomctl alerts status                 # pairing, service, current state of each alert
-sudo nomctl alerts list                   # alerts and thresholds
-sudo nomctl alerts set disk_low.min_free_gb 30
-sudo nomctl alerts disable backup_stale
-sudo nomctl alerts test
-sudo nomctl alerts unpair                 # keeps credentials if the relay is unreachable; --force removes them anyway
-```
-
-In Telegram: `/nodes` lists your nodes with their last heartbeat and sync summary, `/mute NAME ALERT [DURATION]` and `/unmute NAME ALERT` silence one alert or `all` (default 24h), `/unpair NAME` forgets a node.
-
-### Privacy and security
-
-The relay stores your chat id, the node name and host name, the last heartbeat summary (sync state, height, peers, restarts), mutes, and when each alert was last sent. Alert text is forwarded, not stored. Every request from a node is signed with a per-node secret created at pairing; the relay never sends anything to a node. Unpairing from either side invalidates the secret immediately.
-
-## Troubleshooting
-
-### First look
-
-```bash
-sudo nomctl status
-```
-
-```
-Service   go-zenon active (running), pid 1234, 0 restarts, up 3d 4h
-Node      znnd v0.0.7 (a1b2c3d), syncing 1,234,567 / 2,000,000 (61.7%), 5.2 mom/s, ETA 1d 16h
-Peers     14 connected
-Frontier  height 1,234,567, 3s ago
-Pillar    MyPillar rank 12, produced 118 / 121 expected this epoch, 3 missed
-Process   cpu 42.0%, rss 1.9 GiB, threads 38, open files 412 / 32768
-Host      load 1.20 0.90 0.80, mem 3.1 GiB / 7.8 GiB available, /root/.znn 210.0 GiB free
-Pressure  cpu 2.1%, io 15.4%, mem 0.0%
-```
-
-- **Service**: `active (running)` with a restart count that is not climbing is healthy. A growing count means a crash loop; collect a bundle with `--watch`.
-- **Node**: `syncing` with a rate above zero means progress. `synced` with a frontier momentum older than two minutes is shown as `[STALLED]`; restart the service. `not enough peers` usually means port 35995/TCP is blocked inbound or the host has no outbound connectivity.
-- **Pillar** (only when a pillar name is configured): produced should track expected through the epoch; a growing gap means missed production slots, which `pillar_missed` alerts on.
-- **`node rpc unreachable`**: the process is not up, or its HTTP RPC on port 35997 was disabled in `config.json`. The rest of the output is still valid.
-- **Process**: open files near the 32768 limit, or memory close to the host total, predict the two most common crashes.
-- **Host**: less than 15 GB free on the data directory stops backups and will eventually stop the node. IO pressure above about 50% on a syncing node means the disk is the bottleneck.
-
-`sudo nomctl top` shows the same values live, with a sync progress bar and a sparkline of the sync rate. `sudo nomctl status --json` gives the raw sample for scripts. Both are read-only, need no configuration, and are also available from the menu.
-
-### Common signatures
-
-| What you see | Likely cause | What to do |
-|---|---|---|
-| `too many open files` in the journal | file descriptor limit reached | the unit sets `LimitNOFILE=32768`; check `open files` in `status`; if the unit was edited by hand, `sudo nomctl deploy` rewrites it |
-| `out of memory`, `oom-kill`, `Main process exited, code=killed, status=9/KILL` in the kernel journal | host RAM exhausted | 4 GiB is the minimum; look at `MemoryPeak` in the bundle's `04-service-properties.txt` |
-| `no space left on device` | data or backup filesystem full | `df -h`; prune backups with `nomctl backup --max-backups N`, or grow the disk |
-| `not enough peers` for more than a few minutes | firewall | allow 35995/TCP inbound; confirm outbound Internet |
-| `synced` but the frontier age keeps growing | stalled node | `sudo nomctl restart`; if it recurs, collect a bundle |
-| `leveldb` or `corrupt` errors after an unclean shutdown | damaged chain database | `sudo nomctl restore` from a backup, or `sudo nomctl resync` |
-| restarts climbing, nothing obvious in the journal | crash loop | `sudo nomctl support-bundle --watch` and share the bundle |
-
-### Support bundle
-
-```bash
-sudo nomctl support-bundle                  # snapshot now
-sudo nomctl support-bundle --watch          # wait for the next crash, then snapshot
-sudo nomctl support-bundle --since "2 days ago" --output /root/bundle-1
-```
-
-The bundle contains the service status, unit and properties (secrets redacted); the service, kernel and system-warning journals for the window; `/proc` and cgroup details of the live process; host memory, disk, pressure and process list; the newest node log files (last 4 MiB of up to 30 files); a grep of crash markers across all of it; coredump information; the node binary's hash; a node RPC snapshot with peer IPs redacted; and nomctl's own version, effective configuration (password redacted) and log tail.
-
-It never contains `config.json`, the wallet directory, or any file under the data directory other than `log/`. It may contain the host name, node addresses, file paths and peer counts, so skim `13-crash-markers.log` and `06-service-journal.log` before sharing publicly. The directory is created with mode `0700` and the archive with `0600`.
-
-With `--watch`, nomctl samples the process every `--poll` and follows the journal until systemd restarts the unit (or `--timeout` elapses, or you press Ctrl+C), writes those samples to `01-runtime-watch.log` and `00-live-journal.log`, then collects the rest. It is read-only and safe to leave running on a production node.
+- [Getting started](https://nomctl.0x3639.com/getting-started), the [command reference](https://nomctl.0x3639.com/reference/commands) and every [`NOMCTL_*` variable](https://nomctl.0x3639.com/reference/configuration)
+- [Alerts](https://nomctl.0x3639.com/alerts/overview): pairing, rules, Telegram commands, [running your own relay](https://nomctl.0x3639.com/alerts/relay)
+- [Troubleshooting](https://nomctl.0x3639.com/troubleshooting/first-look) and the [support bundle](https://nomctl.0x3639.com/troubleshooting/support-bundle)
+- [Differences from the bash toolkit](https://nomctl.0x3639.com/reference/differences) and the [roadmap](https://nomctl.0x3639.com/roadmap)
 
 ## Building
 
 ```bash
-make build      # ./bin/nomctl for the host platform
+make build      # ./bin/nomctl and ./bin/nomctl-relay for the host platform
 make cross      # static linux/amd64 and linux/arm64 binaries in ./bin
 make test
 make lint       # gofmt + go vet + golangci-lint
 ```
 
-Releases are produced by goreleaser on tag push (`git tag v0.1.0 && git push --tags`): archives for both architectures plus `checksums.txt`, which `install.sh` verifies.
+Releases are produced by goreleaser on tag push: archives for both architectures, `checksums.txt` (which `install.sh` verifies) and the `ghcr.io/0x3639/nomctl-relay` image. The docs site lives in `website/` and deploys to GitHub Pages from `main`.
 
-The Go module path is declared in `go.mod`; the Makefile and goreleaser read it from there, and the source imports reference it too. To move the module run `make rename NEW=github.com/you/nomctl`, which rewrites `go.mod` and every import. `install.sh` takes the GitHub repository slug from `NOMCTL_REPO` (default `0x3639/nomctl`).
-
-## Differences from the bash version
-
-- Only Zenon Network nodes are supported; the second node type and its arguments, variables and dashboard were removed.
-- `arm64` is supported in addition to `amd64`, so the Go toolchain, node_exporter and Prometheus downloads are chosen per architecture.
-- Environment variables use the `NOMCTL_` prefix instead of `ZNNSH_`.
-- The Go toolchain and the source checkout live under `NOMCTL_WORK_DIR` (`/opt/nomctl`) instead of the script directory; the log file is `/var/log/nomctl.log`.
-- Scheduled backups use a systemd timer (`nomctl-backup.timer`) instead of a cron file, and can be installed non-interactively with `nomctl backup --schedule`. The timer unit carries the backup, data and service settings in effect when it was created.
-- `nomctl logs` prints the last 20 lines by default; `-f` follows (and falls back to the last lines when the service is stopped, as the old `--monitor` did).
-- Downloads, checksums and Grafana API calls are done in Go, so `curl`, `wget`, `jq` and `gpg` are not installed; the Grafana apt key is stored as `/etc/apt/keyrings/grafana.asc`.
-- `deploy` installs `make` and `gcc` only (the bash version also installed `jq` for its own use).
-- The embedded node dashboard is skipped when a dashboard with its title (`znnd`) already exists; the bash version searched for a different title and therefore re-imported it on every run.
-- The dashboard import path that re-downloaded the node dashboard from the git checkout's own GitHub remote was dropped; the dashboard is embedded in the binary.
-- The pre-flight Internet check uses a TCP connection to `1.1.1.1:443` instead of ICMP `ping`, with the same HTTPS fallback.
-- `deploy` also installs `git` when missing (the bash toolkit was itself cloned with git) and refreshes the apt index before installing anything.
-- In the menu, the repository and branch are chosen before dependencies are installed and the node is stopped, rather than in between.
-- Backup and restore use `NOMCTL_ZNN_DIR`; the bash scripts hard-coded `/root/.znn` for them.
-- A backup whose node-data copy fails restarts the node before reporting the error instead of leaving it stopped.
-- Archives are written under a temporary name and only renamed once the sha256 sidecar exists; archives without a sidecar are ignored for cadence and pruning.
-- The cadence check considers only archives directly inside the backup directory (the bash `find` also descended into subdirectories, while its pruning did not).
-- Before a restore, the safety move of the current data must succeed or the restore aborts; the bash version only warned and extracted anyway.
-- `resync` fails when a directory cannot be deleted instead of reporting success.
-- Destructive operations abort when `systemctl` cannot report the service state, instead of treating an error as "not running".
-- The Grafana dashboard import references the Infinity datasource by its real UID; the bash version passed the plugin id, which Grafana accepted but bound panels to a non-existent datasource.
-- The analytics success message no longer prints the Grafana password.
-- Interactive prompt inputs are trimmed of surrounding whitespace before validation.
-- The restore picker lists the 20 newest archives (the bash version listed 50 in a scrolling list).
-- New in v0.4.0: `momentums_stalled` and `pillar_missed` alerts, pillar production in `status`/`top`.
-- New in v0.3.0: Telegram alerts through a shared relay (`nomctl alerts`, `nomctl-relay`).
-- New in v0.2.0: `status`, `top` and `support-bundle`. The bundle is a port of the standalone `collect-znnd-crash.sh` script with a node RPC snapshot and nomctl state added, `--service`/`--data` replaced by `NOMCTL_SERVICE_NAME`/`NOMCTL_ZNN_DIR`, and the default output directory under `/root`.
-- Out-of-range environment values are rejected when used, so a valid flag can override them; the bash version had no validation at all.
-- Backup, restore, resync and deploy are mutually exclusive via a lock file; the bash version let a scheduled backup overlap a manual operation.
-- `analytics install` converges: every step (binary, user, unit file, service, scrape job, plugin load) checks its own precondition, so an interrupted run is completed on the next run. The bash version skipped the whole component whenever its binary or service already existed, which could leave a half-installed component permanently broken.
+The module path is declared in `go.mod`; `make rename NEW=github.com/you/nomctl` rewrites it and every import. `install.sh` takes the GitHub repository slug from `NOMCTL_REPO` (default `0x3639/nomctl`). Source for the docs, design specs and plans is under `docs/` and `website/`.
 
 ## License
 

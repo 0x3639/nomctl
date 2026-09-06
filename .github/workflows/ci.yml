@@ -23,5 +23,11 @@ jobs:
         run: make fmt
       - name: Test
         run: go test ./...
+      - name: Docs build
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npm run build
+        working-directory: website
       - name: Cross-compile
         run: make cross
