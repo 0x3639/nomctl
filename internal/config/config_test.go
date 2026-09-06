@@ -54,17 +54,42 @@ func TestEnvOverrides(t *testing.T) {
 }
 
 func TestInvalidValues(t *testing.T) {
-	cases := map[string]map[string]string{
-		"bad bool":    {"NOMCTL_DEBUG": "maybe"},
-		"bad int":     {"NOMCTL_MAX_BACKUPS": "seven"},
+	unparsable := map[string]map[string]string{
+		"bad bool": {"NOMCTL_DEBUG": "maybe"},
+		"bad int":  {"NOMCTL_MAX_BACKUPS": "seven"},
+	}
+	for name, env := range unparsable {
+		if _, err := LoadFrom(envOf(env)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	outOfRange := map[string]map[string]string{
 		"zero max":    {"NOMCTL_MAX_BACKUPS": "0"},
 		"neg cadence": {"NOMCTL_BACKUP_CADENCE_DAYS": "-1"},
 		"hour 24":     {"NOMCTL_BACKUP_HOUR": "24"},
 	}
-	for name, env := range cases {
-		if _, err := LoadFrom(envOf(env)); err == nil {
-			t.Errorf("%s: expected error", name)
+	for name, env := range outOfRange {
+		c, err := LoadFrom(envOf(env))
+		if err != nil {
+			t.Errorf("%s: load must not fail, flags may still override: %v", name, err)
 		}
+		if err := c.Validate(); err == nil {
+			t.Errorf("%s: Validate should reject", name)
+		}
+	}
+	// A flag override repairs an out-of-range environment value.
+	c, _ := LoadFrom(envOf(map[string]string{"NOMCTL_MAX_BACKUPS": "0"}))
+	c.MaxBackups = 3
+	if err := c.Validate(); err != nil {
+		t.Errorf("override should validate: %v", err)
+	}
+}
+
+func TestRedacted(t *testing.T) {
+	c := Default()
+	c.GrafanaAdminPassword = "hunter2"
+	if s := c.Redacted(); strings.Contains(s, "hunter2") || !strings.Contains(s, "***") {
+		t.Errorf("password not redacted: %s", s)
 	}
 }
 

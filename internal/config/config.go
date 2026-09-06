@@ -195,13 +195,20 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	if len(errs) > 0 {
 		return c, fmt.Errorf("invalid configuration: %s", strings.Join(errs, "; "))
 	}
-	if err := c.Validate(); err != nil {
-		return c, err
-	}
 	return c, nil
 }
 
-// Validate checks value ranges. It is also called after flags are applied.
+// Redacted returns a printable copy with secrets masked, for debug logs.
+func (c Config) Redacted() string {
+	if c.GrafanaAdminPassword != "" {
+		c.GrafanaAdminPassword = "***"
+	}
+	return fmt.Sprintf("%+v", c)
+}
+
+// Validate checks value ranges. Load does not call it, so that flags can
+// override an invalid environment value; commands call it once flags are
+// applied.
 func (c Config) Validate() error {
 	if c.MaxBackups < 1 {
 		return fmt.Errorf("max backups must be at least 1 (got %d)", c.MaxBackups)

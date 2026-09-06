@@ -46,7 +46,8 @@ func TestParsers(t *testing.T) {
 }
 
 func TestDispatchUnknown(t *testing.T) {
-	if err := Dispatch(config.Default(), Action("bogus")); err == nil {
+	cfg := config.Default()
+	if err := Dispatch(&cfg, Action("bogus")); err == nil {
 		t.Error("unknown action should error")
 	}
 }

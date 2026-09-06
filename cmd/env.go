@@ -13,6 +13,8 @@ var envCmd = &cobra.Command{
 	Use:   "env",
 	Short: "List every NOMCTL_* environment variable and its default",
 	Args:  cobra.NoArgs,
+	// Prints static defaults; must work even with an invalid environment.
+	PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		out := cmd.OutOrStdout()
 		for _, v := range config.Vars() {

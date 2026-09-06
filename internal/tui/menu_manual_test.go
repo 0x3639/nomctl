@@ -14,7 +14,7 @@ func TestManualRun(t *testing.T) {
 		t.Skip("manual")
 	}
 	cfg := config.Default()
-	if err := Run(cfg); err != nil {
+	if err := Run(&cfg); err != nil {
 		t.Fatal(err)
 	}
 }

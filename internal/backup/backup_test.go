@@ -76,6 +76,41 @@ func TestListAndPrune(t *testing.T) {
 	}
 }
 
+func TestListIgnoresIncompleteArchives(t *testing.T) {
+	cfg := config.Default()
+	cfg.BackupDir = t.TempDir()
+	partial := filepath.Join(cfg.BackupDir, "go-zenon_backup_9.tar.gz")
+	if err := os.WriteFile(partial, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	infos, err := List(cfg)
+	if err != nil || len(infos) != 0 {
+		t.Errorf("archive without hash must be ignored, got %+v %v", infos, err)
+	}
+}
+
+func TestWriteArchive(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "f"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "go-zenon_backup_1.tar.gz")
+	if err := writeArchive(src, archive); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := SHA256File(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := os.ReadFile(HashPath(archive))
+	if strings.TrimSpace(string(stored)) != sum {
+		t.Error("hash sidecar does not match archive")
+	}
+	if _, err := os.Stat(archive + ".partial"); !os.IsNotExist(err) {
+		t.Error("partial file should be gone")
+	}
+}
+
 func TestCadenceReached(t *testing.T) {
 	now := time.Now()
 	if CadenceReached(now.Add(-23*time.Hour), now, 1) {
@@ -111,8 +146,13 @@ func TestUnits(t *testing.T) {
 	if !strings.Contains(svc, "ExecStart=/usr/local/bin/nomctl backup --skip-preflight --max-backups 5 --cadence 7") {
 		t.Errorf("service unit:\n%s", svc)
 	}
-	if !strings.Contains(svc, "Environment=NOMCTL_BACKUP_DIR=/backup") {
-		t.Errorf("service unit should carry backup dir:\n%s", svc)
+	if !strings.Contains(svc, `Environment="NOMCTL_BACKUP_DIR=/backup"`) || !strings.Contains(svc, `Environment="NOMCTL_MIN_FREE_SPACE_KB=15728640"`) {
+		t.Errorf("service unit should carry backup dir and min free space:\n%s", svc)
+	}
+	cfg.BackupDir = `/mnt/my "backups"`
+	svc = ServiceUnit(cfg, "/usr/local/bin/nomctl")
+	if !strings.Contains(svc, `Environment="NOMCTL_BACKUP_DIR=/mnt/my \"backups\""`) {
+		t.Errorf("quotes should be escaped:\n%s", svc)
 	}
 	timer := TimerUnit(3, 7)
 	if !strings.Contains(timer, "OnCalendar=*-*-* 03:07:00") || !strings.Contains(timer, "Persistent=true") {

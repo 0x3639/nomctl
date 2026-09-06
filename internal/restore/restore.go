@@ -19,13 +19,17 @@ import (
 	"github.com/0x3639/nomctl/internal/ui"
 )
 
-// Resolve turns a --file argument into an archive path: names without the
-// .tar.gz suffix are looked up in the backup directory.
+// Resolve turns a --file argument into an archive path. Anything containing
+// a path separator is used as given; a bare name (with or without the
+// .tar.gz suffix) is looked up in the backup directory.
 func Resolve(cfg config.Config, arg string) string {
-	if !strings.HasSuffix(arg, ".tar.gz") {
-		return filepath.Join(cfg.BackupDir, arg+".tar.gz")
+	if strings.ContainsRune(arg, os.PathSeparator) {
+		return arg
 	}
-	return arg
+	if !strings.HasSuffix(arg, ".tar.gz") {
+		arg += ".tar.gz"
+	}
+	return filepath.Join(cfg.BackupDir, arg)
 }
 
 // Verify checks that the archive and its hash sidecar exist and match.
@@ -70,8 +74,9 @@ func Run(cfg config.Config, archive string) error {
 			continue
 		}
 		dst := filepath.Join(restoreDir, folder+".bak."+stamp)
-		if err := os.Rename(src, dst); err != nil {
-			slog.Warn("Failed to move " + folder)
+		// mv handles the backup directory living on another filesystem.
+		if err := execx.Run("mv", src, dst); err != nil {
+			return fmt.Errorf("failed to move %s aside; aborting restore before touching data: %w", folder, err)
 		}
 	}
 

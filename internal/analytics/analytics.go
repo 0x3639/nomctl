@@ -62,7 +62,7 @@ func Install(cfg config.Config) error {
 	if err := ui.Step("Importing dashboards…", func() error { return importDefaultDashboards(g) }); err != nil {
 		slog.Warn("Some dashboards failed to import: " + err.Error())
 	}
-	logx.Success(fmt.Sprintf("Analytics stack installed successfully. Access Grafana at http://<host>:3000 (%s/%s).", cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword))
+	logx.Success(fmt.Sprintf("Analytics stack installed successfully. Access Grafana at http://<host>:3000 as %s.", cfg.GrafanaAdminUser))
 	return nil
 }
 
@@ -441,7 +441,14 @@ func importDefaultDashboards(g *Grafana) error {
 		slog.Info(fmt.Sprintf("Dashboard '%s' already exists – skipping import.", title))
 	default:
 		slog.Info("Importing embedded " + dashboards.Node + " dashboard…")
-		payload, err := ImportPayload(data)
+		uid, err := g.DatasourceUID(infinityPlugin)
+		if err == nil && uid == "" {
+			err = fmt.Errorf("datasource %s not found", infinityPlugin)
+		}
+		var payload []byte
+		if err == nil {
+			payload, err = ImportPayload(data, uid)
+		}
 		if err == nil {
 			err = g.ImportDashboard(payload)
 		}

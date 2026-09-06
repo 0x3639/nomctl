@@ -12,5 +12,8 @@ func runTUI() error {
 	if !ui.Interactive() {
 		return errors.New("no terminal detected; run a subcommand instead (see nomctl --help)")
 	}
-	return tui.Run(cfg)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	return tui.Run(&cfg)
 }

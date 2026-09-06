@@ -66,6 +66,12 @@ func List(cfg config.Config) ([]Info, error) {
 		if err != nil || !st.Mode().IsRegular() {
 			continue
 		}
+		// An archive without its hash sidecar never finished; it must not
+		// count for cadence or retention decisions.
+		if !fsx.Exists(HashPath(m)) {
+			slog.Warn("Ignoring incomplete backup " + filepath.Base(m) + " (no hash file)")
+			continue
+		}
 		infos = append(infos, Info{Path: m, ModTime: st.ModTime()})
 	}
 	SortNewestFirst(infos)
@@ -98,8 +104,12 @@ func Prune(cfg config.Config) error {
 	}
 	for _, old := range SelectForPruning(infos, cfg.MaxBackups) {
 		slog.Info("Removing old backup " + filepath.Base(old.Path))
-		_ = os.Remove(old.Path)
-		_ = os.Remove(HashPath(old.Path))
+		if err := os.Remove(old.Path); err != nil {
+			slog.Warn("Failed to remove " + old.Path + ": " + err.Error())
+		}
+		if err := os.Remove(HashPath(old.Path)); err != nil && !os.IsNotExist(err) {
+			slog.Warn("Failed to remove " + HashPath(old.Path) + ": " + err.Error())
+		}
 	}
 	return nil
 }
@@ -147,44 +157,37 @@ func Run(cfg config.Config, opts Options) (string, error) {
 		return "", err
 	}
 
-	if err := service.Stop(cfg.ServiceName); err != nil {
-		return "", err
-	}
-
-	archive := filepath.Join(cfg.BackupDir, ArchiveName(cfg.ServiceName, time.Now()))
-	tmp := TempDir(cfg)
-
-	slog.Info("Copying node data…")
-	if err := clearDir(tmp); err != nil {
-		return "", err
-	}
 	if !fsx.IsDir(cfg.ZnnDir) {
 		return "", fmt.Errorf("cannot access %s", cfg.ZnnDir)
 	}
-	for _, folder := range Folders {
-		src := filepath.Join(cfg.ZnnDir, folder)
-		if !fsx.IsDir(src) {
-			slog.Info("Skipping missing " + folder)
-			continue
-		}
-		if err := execx.Run("cp", "-a", src, tmp+"/"); err != nil {
-			return "", fmt.Errorf("failed to copy %s: %w", folder, err)
-		}
+	tmp := TempDir(cfg)
+	if err := clearDir(tmp); err != nil {
+		return "", err
 	}
 
+	st, err := service.Status(cfg.ServiceName)
+	if err != nil {
+		return "", err
+	}
+	wasActive := st == service.Active
+	if err := service.Stop(cfg.ServiceName); err != nil {
+		return "", err
+	}
+	if err := copyData(cfg, tmp); err != nil {
+		// Never leave the node down because the snapshot failed.
+		if wasActive {
+			if startErr := service.Start(cfg.ServiceName); startErr != nil {
+				slog.Error("Failed to restart " + cfg.ServiceName + " after copy failure: " + startErr.Error())
+			}
+		}
+		return "", err
+	}
 	if err := service.Start(cfg.ServiceName); err != nil {
 		return "", err
 	}
 
-	slog.Info("Creating archive " + filepath.Base(archive) + "…")
-	if err := execx.New("tar", "-czf", archive, ".").Dir(tmp).Run(); err != nil {
-		return "", err
-	}
-	sum, err := SHA256File(archive)
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(HashPath(archive), []byte(sum+"\n"), 0o644); err != nil {
+	archive := filepath.Join(cfg.BackupDir, ArchiveName(cfg.ServiceName, time.Now()))
+	if err := writeArchive(tmp, archive); err != nil {
 		return "", err
 	}
 	if err := clearDir(tmp); err != nil {
@@ -196,6 +199,49 @@ func Run(cfg config.Config, opts Options) (string, error) {
 		return archive, err
 	}
 	return archive, nil
+}
+
+// copyData copies the backup folders from the data directory into dst.
+func copyData(cfg config.Config, dst string) error {
+	slog.Info("Copying node data…")
+	for _, folder := range Folders {
+		src := filepath.Join(cfg.ZnnDir, folder)
+		if !fsx.IsDir(src) {
+			slog.Info("Skipping missing " + folder)
+			continue
+		}
+		if err := execx.Run("cp", "-a", src, dst+"/"); err != nil {
+			return fmt.Errorf("failed to copy %s: %w", folder, err)
+		}
+	}
+	return nil
+}
+
+// writeArchive compresses srcDir into archive. The tarball is written under a
+// temporary name and its hash sidecar is created before the final rename, so
+// an interrupted run never leaves a complete-looking archive behind.
+func writeArchive(srcDir, archive string) error {
+	slog.Info("Creating archive " + filepath.Base(archive) + "…")
+	partial := archive + ".partial"
+	if err := execx.New("tar", "-czf", partial, ".").Dir(srcDir).Run(); err != nil {
+		_ = os.Remove(partial)
+		return err
+	}
+	sum, err := SHA256File(partial)
+	if err != nil {
+		_ = os.Remove(partial)
+		return err
+	}
+	if err := os.WriteFile(HashPath(archive), []byte(sum+"\n"), 0o644); err != nil {
+		_ = os.Remove(partial)
+		return err
+	}
+	if err := os.Rename(partial, archive); err != nil {
+		_ = os.Remove(partial)
+		_ = os.Remove(HashPath(archive))
+		return err
+	}
+	return nil
 }
 
 func ensureFreeSpace(cfg config.Config) error {
@@ -293,12 +339,21 @@ Description=%s backup job
 
 [Service]
 Type=oneshot
-Environment=NOMCTL_BACKUP_DIR=%s
-Environment=NOMCTL_ZNN_DIR=%s
-Environment=NOMCTL_SERVICE_NAME=%s
-Environment=NOMCTL_LOG_FILE=%s
+Environment="NOMCTL_BACKUP_DIR=%s"
+Environment="NOMCTL_ZNN_DIR=%s"
+Environment="NOMCTL_SERVICE_NAME=%s"
+Environment="NOMCTL_LOG_FILE=%s"
+Environment="NOMCTL_MIN_FREE_SPACE_KB=%d"
 ExecStart=%s backup --skip-preflight --max-backups %d --cadence %d
-`, TimerName, cfg.BackupDir, cfg.ZnnDir, cfg.ServiceName, cfg.LogFile, execPath, cfg.MaxBackups, cfg.BackupCadenceDays)
+`, TimerName, unitQuote(cfg.BackupDir), unitQuote(cfg.ZnnDir), unitQuote(cfg.ServiceName), unitQuote(cfg.LogFile),
+		cfg.MinFreeSpaceKB, unitQuote(execPath), cfg.MaxBackups, cfg.BackupCadenceDays)
+}
+
+// unitQuote escapes a value for use inside a double-quoted systemd unit
+// setting (Environment="K=V") or an ExecStart argument.
+func unitQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
 // Schedule installs and enables the backup timer using this executable.
@@ -315,6 +370,9 @@ func Schedule(cfg config.Config) error {
 
 	svcPath := "/etc/systemd/system/" + TimerName + ".service"
 	timerPath := "/etc/systemd/system/" + TimerName + ".timer"
+	if strings.ContainsAny(execPath, " \t") {
+		execPath = `"` + unitQuote(execPath) + `"`
+	}
 	if err := service.WriteUnit(svcPath, ServiceUnit(cfg, execPath)); err != nil {
 		return err
 	}

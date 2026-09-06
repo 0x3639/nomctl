@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -18,24 +19,84 @@ import (
 // ErrNotFound is returned when the unit does not exist.
 var ErrNotFound = errors.New("service does not exist")
 
-// IsActive reports whether the unit is active (systemctl is-active --quiet).
+// State is the answer of `systemctl is-active`.
+type State int
+
+// Unit states nomctl distinguishes.
+const (
+	Inactive State = iota
+	Active
+	NotFound
+)
+
+// Status queries the unit state. Exit codes 0 (active), 3 (inactive/failed;
+// also what is-active reports for an unknown unit) and 4 (no such unit) are
+// answers; anything else, including a missing systemctl, is an error so
+// callers do not mistake "unknown" for "stopped".
+func Status(name string) (State, error) {
+	err := execx.New("systemctl", "is-active", "--quiet", name).Quiet()
+	switch {
+	case err == nil:
+		return Active, nil
+	case execx.ExitCode(err) == 3:
+		return Inactive, nil
+	case execx.ExitCode(err) == 4:
+		return NotFound, nil
+	default:
+		return Inactive, fmt.Errorf("cannot determine state of %s: %w", name, err)
+	}
+}
+
+// IsActive reports whether the unit is active. Query failures count as not
+// active and are logged; use Status when the distinction matters.
 func IsActive(name string) bool {
-	return execx.New("systemctl", "is-active", "--quiet", name).Quiet() == nil
+	st, err := Status(name)
+	if err != nil {
+		slog.Warn(err.Error())
+		return false
+	}
+	return st == Active
 }
 
 // Exists reports whether systemd knows the unit. `systemctl status` exits
-// with 4 when the unit cannot be found, which is what the bash version checks.
-func Exists(name string) bool {
+// with 4 when the unit cannot be found (the check the bash version used);
+// 0 and 3 mean the unit exists. Other failures are returned as errors.
+func Exists(name string) (bool, error) {
 	err := execx.New("systemctl", "status", name).Quiet()
-	return err == nil || execx.ExitCode(err) != 4
+	switch code := execx.ExitCode(err); {
+	case err == nil, code == 3:
+		return true, nil
+	case code == 4:
+		return false, nil
+	default:
+		return false, fmt.Errorf("cannot query unit %s: %w", name, err)
+	}
+}
+
+// Available checks that systemctl and journalctl are on PATH.
+func Available() error {
+	for _, tool := range []string{"systemctl", "journalctl"} {
+		if !execx.Exists(tool) {
+			return fmt.Errorf("%s not found; nomctl requires a systemd-based Linux host", tool)
+		}
+	}
+	return nil
 }
 
 // Start starts the unit unless it is already running.
 func Start(name string) error {
-	if !Exists(name) {
+	exists, err := Exists(name)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return fmt.Errorf("%s: %w", name, ErrNotFound)
 	}
-	if IsActive(name) {
+	st, err := Status(name)
+	if err != nil {
+		return err
+	}
+	if st == Active {
 		slog.Info(name + " service is already running")
 		return nil
 	}
@@ -46,9 +107,14 @@ func Start(name string) error {
 	return nil
 }
 
-// Stop stops the unit if it is running.
+// Stop stops the unit if it is running. An unknown state is an error so
+// that callers about to modify node data do not proceed blindly.
 func Stop(name string) error {
-	if !IsActive(name) {
+	st, err := Status(name)
+	if err != nil {
+		return err
+	}
+	if st != Active {
 		slog.Info(name + " service is not running")
 		return nil
 	}
@@ -61,7 +127,11 @@ func Stop(name string) error {
 
 // StopIfRunning is Stop with the wording used during deploy.
 func StopIfRunning(name string) error {
-	if !IsActive(name) {
+	st, err := Status(name)
+	if err != nil {
+		return err
+	}
+	if st != Active {
 		slog.Info(name + " service is not running")
 		return nil
 	}
@@ -123,11 +193,16 @@ func Logs(name string, follow bool, lines int) error {
 }
 
 func interrupted(err error) bool {
-	var ee *execx.Error
+	var ee *exec.ExitError
 	if !errors.As(err, &ee) {
 		return false
 	}
-	code := execx.ExitCode(err)
-	// journalctl exits 130 (or -1 when killed by a signal) on Ctrl+C.
-	return code == 130 || code == -1 || errors.Is(ee.Err, syscall.EINTR)
+	// journalctl exits 130 when it handles Ctrl+C itself, or is killed by SIGINT.
+	if ee.ExitCode() == 130 {
+		return true
+	}
+	if st, ok := ee.Sys().(syscall.WaitStatus); ok && st.Signaled() && st.Signal() == syscall.SIGINT {
+		return true
+	}
+	return false
 }

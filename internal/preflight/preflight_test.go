@@ -17,6 +17,9 @@ func TestPatchTimesyncd(t *testing.T) {
 		{"commented and other server", "[Time]\n#NTP=\nNTP=pool.ntp.org\nFallbackNTP=x\n", "[Time]\nNTP=time.cloudflare.com\n#NTP=\nFallbackNTP=x\n", true},
 		{"no section", "[Other]\nfoo=bar\n", "[Other]\nfoo=bar\n\n[Time]\nNTP=time.cloudflare.com\n", true},
 		{"case-insensitive", "[time]\nntp=Time.Cloudflare.Com\n", "[time]\nntp=Time.Cloudflare.Com\n", false},
+		{"wanted line in wrong section", "[Time]\n[Other]\nNTP=time.cloudflare.com\n", "[Time]\nNTP=time.cloudflare.com\n[Other]\nNTP=time.cloudflare.com\n", true},
+		{"duplicate after wanted", "[Time]\nNTP=time.cloudflare.com\nNTP=pool.ntp.org\n", "[Time]\nNTP=time.cloudflare.com\n", true},
+		{"other section untouched", "[Other]\nNTP=x\n[Time]\nNTP=time.cloudflare.com\n", "[Other]\nNTP=x\n[Time]\nNTP=time.cloudflare.com\n", false},
 	}
 	for _, c := range cases {
 		got, changed := PatchTimesyncd(c.in)

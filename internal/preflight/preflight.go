@@ -128,40 +128,55 @@ func NTP(confPath string) error {
 
 var (
 	reTimeSection = regexp.MustCompile(`(?i)^\s*\[Time\]\s*$`)
+	reAnySection  = regexp.MustCompile(`^\s*\[[^\]]+\]\s*$`)
 	reNTPLine     = regexp.MustCompile(`(?i)^\s*NTP=`)
 	reNTPWanted   = regexp.MustCompile(`(?i)^\s*NTP=\s*` + regexp.QuoteMeta(ntpServer) + `\s*$`)
 )
 
 // PatchTimesyncd returns the timesyncd.conf content with NTP=time.cloudflare.com
-// set under the [Time] section, and whether anything changed. It follows the
-// bash logic: add a [Time] section if missing, drop every existing NTP= line,
-// then insert the wanted line right after [Time].
+// as the only NTP= directive of the [Time] section, and whether anything
+// changed: add a [Time] section if missing, drop other NTP= lines in that
+// section, and insert the wanted line right after the [Time] header.
+// Directives in other sections are left alone.
 func PatchTimesyncd(content string) (string, bool) {
 	if strings.TrimSpace(content) == "" {
 		return "[Time]\nNTP=" + ntpServer + "\n", true
 	}
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	hasSection := false
+	hasSection, inTime, wanted, others := false, false, 0, 0
 	for _, l := range lines {
-		if reTimeSection.MatchString(l) {
-			hasSection = true
+		switch {
+		case reTimeSection.MatchString(l):
+			hasSection, inTime = true, true
+		case reAnySection.MatchString(l):
+			inTime = false
+		case inTime && reNTPWanted.MatchString(l):
+			wanted++
+		case inTime && reNTPLine.MatchString(l):
+			others++
 		}
-		if reNTPWanted.MatchString(l) && hasSection {
-			return content, false
-		}
+	}
+	if hasSection && wanted == 1 && others == 0 {
+		return content, false
 	}
 	if !hasSection {
 		lines = append(lines, "", "[Time]")
 	}
 	out := make([]string, 0, len(lines)+1)
+	inTime = false
 	for _, l := range lines {
-		if reNTPLine.MatchString(l) {
+		switch {
+		case reTimeSection.MatchString(l):
+			inTime = true
+			out = append(out, l, "NTP="+ntpServer)
+			continue
+		case reAnySection.MatchString(l):
+			inTime = false
+		}
+		if inTime && reNTPLine.MatchString(l) {
 			continue
 		}
 		out = append(out, l)
-		if reTimeSection.MatchString(l) {
-			out = append(out, "NTP="+ntpServer)
-		}
 	}
 	return strings.Join(out, "\n") + "\n", true
 }

@@ -57,7 +57,7 @@ func (g *Grafana) Ready() bool {
 		return false
 	}
 	_ = resp.Body.Close()
-	return resp.StatusCode < 500
+	return resp.StatusCode < 400
 }
 
 // WaitReady polls until Grafana responds or the timeout elapses.
@@ -76,11 +76,36 @@ func (g *Grafana) WaitReady(timeout time.Duration) error {
 
 // DatasourceExists checks /api/datasources/name/<name>.
 func (g *Grafana) DatasourceExists(name string) (bool, error) {
-	code, _, err := g.do(http.MethodGet, "/api/datasources/name/"+url.PathEscape(name), nil)
+	uid, err := g.DatasourceUID(name)
 	if err != nil {
 		return false, err
 	}
-	return code == http.StatusOK, nil
+	return uid != "", nil
+}
+
+// DatasourceUID returns the UID of the named datasource, or "" when it does
+// not exist. Dashboard imports must reference datasources by UID.
+func (g *Grafana) DatasourceUID(name string) (string, error) {
+	code, data, err := g.do(http.MethodGet, "/api/datasources/name/"+url.PathEscape(name), nil)
+	if err != nil {
+		return "", err
+	}
+	if code == http.StatusNotFound {
+		return "", nil
+	}
+	if code != http.StatusOK {
+		return "", fmt.Errorf("get datasource %s: HTTP %d", name, code)
+	}
+	var ds struct {
+		UID string `json:"uid"`
+	}
+	if err := json.Unmarshal(data, &ds); err != nil {
+		return "", err
+	}
+	if ds.UID == "" {
+		return "", fmt.Errorf("datasource %s has no uid", name)
+	}
+	return ds.UID, nil
 }
 
 // CreateDatasource posts a datasource definition.
@@ -128,10 +153,15 @@ func DBPayload(dashboard []byte) ([]byte, error) {
 }
 
 // ImportPayload wraps a dashboard that declares the Infinity datasource input
-// for POST /api/dashboards/import.
-func ImportPayload(dashboard []byte) ([]byte, error) {
+// for POST /api/dashboards/import. datasourceUID is the UID Grafana assigned
+// to the Infinity datasource; the bash version passed the plugin id here,
+// which Grafana accepts but binds panels to a datasource that does not exist.
+func ImportPayload(dashboard []byte, datasourceUID string) ([]byte, error) {
 	if !json.Valid(dashboard) {
 		return nil, errors.New("dashboard is not valid JSON")
+	}
+	if datasourceUID == "" {
+		return nil, errors.New("datasource uid is required")
 	}
 	return json.Marshal(map[string]any{
 		"dashboard": json.RawMessage(dashboard),
@@ -141,7 +171,7 @@ func ImportPayload(dashboard []byte) ([]byte, error) {
 			"name":     "DS_YESOREYERAM-INFINITY-DATASOURCE",
 			"type":     "datasource",
 			"pluginId": infinityPlugin,
-			"value":    infinityPlugin,
+			"value":    datasourceUID,
 		}},
 	})
 }

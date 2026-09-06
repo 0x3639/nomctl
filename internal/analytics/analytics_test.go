@@ -20,7 +20,10 @@ func TestEmbeddedDashboard(t *testing.T) {
 	if title := DashboardTitle(data); title != "znnd" {
 		t.Errorf("title = %q", title)
 	}
-	payload, err := ImportPayload(data)
+	if _, err := ImportPayload(data, ""); err == nil {
+		t.Error("empty datasource uid must be rejected")
+	}
+	payload, err := ImportPayload(data, "abc123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +36,7 @@ func TestEmbeddedDashboard(t *testing.T) {
 	if err := json.Unmarshal(payload, &p); err != nil {
 		t.Fatal(err)
 	}
-	if !p.Overwrite || p.FolderID != 0 || len(p.Inputs) != 1 || p.Inputs[0]["pluginId"] != infinityPlugin || p.Dashboard["title"] != "znnd" {
+	if !p.Overwrite || p.FolderID != 0 || len(p.Inputs) != 1 || p.Inputs[0]["pluginId"] != infinityPlugin || p.Inputs[0]["value"] != "abc123" || p.Dashboard["title"] != "znnd" {
 		t.Errorf("payload unexpected: %+v", p)
 	}
 	if _, err := DBPayload([]byte("{not json")); err == nil {
@@ -53,16 +56,23 @@ func TestNeedsNodeScrapeJob(t *testing.T) {
 func TestGrafanaClient(t *testing.T) {
 	var created []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			// The login page needs no auth; "down" simulates a 503.
+			if r.URL.RawQuery == "down" {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		u, p, ok := r.BasicAuth()
 		if !ok || u != "admin" || p != "secret" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		switch {
-		case r.URL.Path == "/":
-			w.WriteHeader(http.StatusOK)
 		case r.URL.Path == "/api/datasources/name/Prometheus":
-			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"uid":"prom-uid","name":"Prometheus"}`))
 		case r.URL.Path == "/api/datasources/name/missing":
 			w.WriteHeader(http.StatusNotFound)
 		case r.URL.Path == "/api/datasources" && r.Method == http.MethodPost:
@@ -89,11 +99,24 @@ func TestGrafanaClient(t *testing.T) {
 	if !g.Ready() {
 		t.Error("server should be ready")
 	}
+	down := NewGrafana("admin", "secret")
+	down.BaseURL = srv.URL + "/?down"
+	if down.Ready() {
+		t.Error("5xx must not count as ready")
+	}
+	wrongCreds := NewGrafana("admin", "bad")
+	wrongCreds.BaseURL = srv.URL
+	if err := wrongCreds.CreateDatasource(map[string]any{"name": "x"}); err == nil {
+		t.Error("401 must be an error")
+	}
 	if ok, err := g.DatasourceExists("Prometheus"); err != nil || !ok {
 		t.Errorf("Prometheus datasource should exist: %v %v", ok, err)
 	}
 	if ok, err := g.DatasourceExists("missing"); err != nil || ok {
 		t.Errorf("missing datasource: %v %v", ok, err)
+	}
+	if uid, err := g.DatasourceUID("Prometheus"); err != nil || uid != "prom-uid" {
+		t.Errorf("DatasourceUID = %q, %v", uid, err)
 	}
 	if err := g.CreateDatasource(map[string]any{"name": "x"}); err != nil || len(created) != 1 {
 		t.Errorf("create: %v %v", err, created)

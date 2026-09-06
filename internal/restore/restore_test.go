@@ -14,8 +14,14 @@ func TestResolve(t *testing.T) {
 	if got := Resolve(cfg, "go-zenon_backup_1"); got != "/backup/go-zenon_backup_1.tar.gz" {
 		t.Errorf("Resolve bare name = %q", got)
 	}
+	if got := Resolve(cfg, "go-zenon_backup_1.tar.gz"); got != "/backup/go-zenon_backup_1.tar.gz" {
+		t.Errorf("Resolve bare name with suffix = %q", got)
+	}
 	if got := Resolve(cfg, "/mnt/x.tar.gz"); got != "/mnt/x.tar.gz" {
 		t.Errorf("Resolve full path = %q", got)
+	}
+	if got := Resolve(cfg, "./x.tar.gz"); got != "./x.tar.gz" {
+		t.Errorf("Resolve relative path = %q", got)
 	}
 }
 

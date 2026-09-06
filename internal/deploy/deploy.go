@@ -59,19 +59,26 @@ func Run(cfg config.Config, repoURL, branch string) error {
 	return nil
 }
 
-// InstallDependencies installs make and gcc via apt when missing.
+// InstallDependencies installs git, make and gcc via apt when missing. The
+// bash toolkit could assume git because it had been cloned with it; a
+// binary install cannot.
 func InstallDependencies() error {
 	slog.Info("Installing dependencies...")
-	for _, tool := range []string{"make", "gcc"} {
+	var missing []string
+	for _, tool := range []string{"git", "make", "gcc"} {
 		if execx.Exists(tool) {
 			continue
 		}
 		slog.Info(fmt.Sprintf("%s could not be found. Installing %s...", tool, tool))
-		if err := execx.Run("apt-get", "install", "-y", tool); err != nil {
-			return err
-		}
+		missing = append(missing, tool)
 	}
-	return nil
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := execx.Run("apt-get", "update", "-qq"); err != nil {
+		return fmt.Errorf("failed to update package lists: %w", err)
+	}
+	return execx.Run("apt-get", append([]string{"install", "-y"}, missing...)...)
 }
 
 // InstallGo downloads the configured Go toolchain into WorkDir/go unless the

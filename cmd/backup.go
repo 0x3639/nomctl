@@ -34,25 +34,7 @@ timer is installed that runs "nomctl backup" daily at --hour (or a
 deterministic time between 02:00 and 04:59).`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		if cmd.Flags().Changed("max-backups") {
-			cfg.MaxBackups = flagBackupMax
-		}
-		if cmd.Flags().Changed("cadence") {
-			cfg.BackupCadenceDays = flagBackupCadence
-		}
-		if cmd.Flags().Changed("hour") {
-			cfg.BackupHour = flagBackupHour
-		}
-		if cfg.MaxBackups > 30 {
-			return fmt.Errorf("max backups must be between 1 and 30 (got %d)", cfg.MaxBackups)
-		}
-		if cfg.BackupCadenceDays > 365 {
-			return fmt.Errorf("cadence must be between 0 and 365 days (got %d)", cfg.BackupCadenceDays)
-		}
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
+	RunE: func(*cobra.Command, []string) error {
 		if _, err := backup.Run(cfg, backup.Options{Interactive: false}); err != nil {
 			return err
 		}
@@ -105,7 +87,28 @@ This command does not ask for confirmation; the interactive menu does.`,
 	RunE:        func(*cobra.Command, []string) error { return resync.Run(cfg) },
 }
 
+// applyBackupFlags copies backup flags over the environment and validates.
+func applyBackupFlags(cmd *cobra.Command) error {
+	if cmd.Flags().Changed("max-backups") {
+		cfg.MaxBackups = flagBackupMax
+	}
+	if cmd.Flags().Changed("cadence") {
+		cfg.BackupCadenceDays = flagBackupCadence
+	}
+	if cmd.Flags().Changed("hour") {
+		cfg.BackupHour = flagBackupHour
+	}
+	if cfg.MaxBackups > 30 {
+		return fmt.Errorf("max backups must be between 1 and 30 (got %d)", cfg.MaxBackups)
+	}
+	if cfg.BackupCadenceDays > 365 {
+		return fmt.Errorf("cadence must be between 0 and 365 days (got %d)", cfg.BackupCadenceDays)
+	}
+	return cfg.Validate()
+}
+
 func init() {
+	applyFlags[backupCmd] = applyBackupFlags
 	backupCmd.Flags().IntVar(&flagBackupMax, "max-backups", 0, "backups to keep, 1-30 (NOMCTL_MAX_BACKUPS)")
 	backupCmd.Flags().IntVar(&flagBackupCadence, "cadence", 0, "days between scheduled backups, 0-365 (NOMCTL_BACKUP_CADENCE_DAYS)")
 	backupCmd.Flags().IntVar(&flagBackupHour, "hour", -1, "hour of day 0-23 for the scheduled backup (NOMCTL_BACKUP_HOUR)")

@@ -16,6 +16,7 @@ import (
 	"github.com/0x3639/nomctl/internal/execx"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/preflight"
+	"github.com/0x3639/nomctl/internal/service"
 	"github.com/0x3639/nomctl/internal/ui"
 )
 
@@ -87,11 +88,23 @@ func Execute() int {
 
 var errCancelled = errors.New("cancelled")
 
+// applyFlags maps a command to the function that copies its flags into cfg
+// and validates the result; it runs inside setup before pre-flight checks.
+var applyFlags = map[*cobra.Command]func(*cobra.Command) error{}
+
 // setup loads configuration, applies global flags, configures logging and
 // enforces the root requirement plus pre-flight checks.
 func setup(cmd *cobra.Command) error {
+	requiresRoot := cmd.Annotations[annotationRoot] == "true"
+	isRoot := os.Geteuid() == 0
+	if requiresRoot && !isRoot {
+		logx.Setup(false, "")
+		return fmt.Errorf("%s must be run as root (try: sudo %s)", cmd.CommandPath(), cmd.CommandPath())
+	}
+
 	c, err := config.Load()
 	if err != nil {
+		logx.Setup(false, "")
 		return err
 	}
 	if cmd.Flags().Changed("debug") {
@@ -104,9 +117,6 @@ func setup(cmd *cobra.Command) error {
 		c.SkipPreflight = flagNoPreflig
 	}
 	cfg = c
-
-	requiresRoot := cmd.Annotations[annotationRoot] == "true"
-	isRoot := os.Geteuid() == 0
 
 	// Only privileged commands write the log file (it lives under /var/log).
 	var logFile string
@@ -121,12 +131,21 @@ func setup(cmd *cobra.Command) error {
 		execx.Configure(cfg.Debug, nil)
 	}
 	ui.SetDebug(cfg.Debug)
-	slog.Debug("configuration loaded", "config", fmt.Sprintf("%+v", cfg))
+	slog.Debug("configuration loaded", "config", cfg.Redacted())
 
-	if requiresRoot && !isRoot {
-		return fmt.Errorf("%s must be run as root (try: sudo %s)", cmd.CommandPath(), cmd.CommandPath())
+	// Command-specific flag handling and validation happens here so that bad
+	// arguments are rejected before the (slow) pre-flight checks run.
+	if apply := applyFlags[cmd]; apply != nil {
+		if err := apply(cmd); err != nil {
+			return err
+		}
 	}
 
+	if requiresRoot {
+		if err := service.Available(); err != nil {
+			return err
+		}
+	}
 	if requiresRoot && !cfg.SkipPreflight {
 		ui.Section(os.Stderr, "==== PRE-FLIGHT CHECKS ====")
 		if err := preflight.Run(); err != nil {

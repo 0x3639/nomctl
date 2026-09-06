@@ -11,7 +11,7 @@ LDFLAGS     := -s -w -X $(MODULE)/cmd.version=$(VERSION) -X $(MODULE)/cmd.commit
 GOFLAGS     := -trimpath
 export CGO_ENABLED=0
 
-.PHONY: all build test lint fmt vet cross clean tidy
+.PHONY: all build test lint fmt vet cross clean tidy rename
 
 all: build
 
@@ -36,6 +36,13 @@ lint: fmt vet ## gofmt + go vet + golangci-lint
 
 tidy:
 	go mod tidy
+
+rename: ## Change the module path everywhere: make rename NEW=github.com/you/nomctl
+	@test -n "$(NEW)" || { echo "usage: make rename NEW=github.com/you/nomctl"; exit 1; }
+	grep -rl --include='*.go' "$(MODULE)" . | xargs sed -i.bak 's|$(MODULE)|$(NEW)|g'
+	sed -i.bak 's|^module $(MODULE)$$|module $(NEW)|' go.mod
+	find . -name '*.bak' -delete
+	@echo "module path is now $(NEW)"
 
 clean:
 	rm -rf bin dist

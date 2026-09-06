@@ -16,8 +16,8 @@ func TestWipePreservesWalletAndConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(data, "config.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if n := Wipe(data); n != 4 {
-		t.Errorf("deleted %d, want 4", n)
+	if n, err := Wipe(data); n != 4 || err != nil {
+		t.Errorf("deleted %d, want 4 (err %v)", n, err)
 	}
 	for _, kept := range []string{"wallet", "cache", "config.json"} {
 		if _, err := os.Stat(filepath.Join(data, kept)); err != nil {
@@ -29,7 +29,7 @@ func TestWipePreservesWalletAndConfig(t *testing.T) {
 			t.Errorf("%s should be deleted", gone)
 		}
 	}
-	if n := Wipe(data); n != 0 {
-		t.Errorf("second wipe deleted %d", n)
+	if n, err := Wipe(data); n != 0 || err != nil {
+		t.Errorf("second wipe deleted %d (err %v)", n, err)
 	}
 }

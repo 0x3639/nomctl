@@ -67,10 +67,10 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 }
 
 // Run shows the main menu until the user exits.
-func Run(cfg config.Config) error {
+func Run(cfg *config.Config) error {
 	for {
 		printBanner()
-		choice, err := Select("CHOOSE AN ACTION:", MenuOptions(cfg))
+		choice, err := Select("CHOOSE AN ACTION:", MenuOptions(*cfg))
 		if err != nil {
 			if errors.Is(err, ErrCancelled) {
 				return nil
@@ -103,10 +103,10 @@ func printBanner() {
 }
 
 // Dispatch runs one menu action interactively.
-func Dispatch(cfg config.Config, action Action) error {
+func Dispatch(cfg *config.Config, action Action) error {
 	switch action {
 	case ActionDeploy:
-		return Deploy(cfg)
+		return Deploy(*cfg)
 	case ActionRestart:
 		return service.Restart(cfg.ServiceName)
 	case ActionStop:
@@ -114,15 +114,15 @@ func Dispatch(cfg config.Config, action Action) error {
 	case ActionStart:
 		return service.Start(cfg.ServiceName)
 	case ActionMonitor:
-		return Monitor(cfg, true, 20)
+		return Monitor(*cfg, true, 20)
 	case ActionResync:
-		return Resync(cfg)
+		return Resync(*cfg)
 	case ActionBackup:
 		return Backup(cfg)
 	case ActionRestore:
-		return Restore(cfg)
+		return Restore(*cfg)
 	case ActionAnalytics:
-		return analytics.Install(cfg)
+		return analytics.Install(*cfg)
 	case ActionExit:
 		return nil
 	}
@@ -223,9 +223,11 @@ var (
 	reHour       = regexp.MustCompile(`^([0-9]|1[0-9]|2[0-3])$`)
 )
 
-// Backup runs a backup and then offers to schedule recurring ones.
-func Backup(cfg config.Config) error {
-	if _, err := backup.Run(cfg, backup.Options{Interactive: true}); err != nil {
+// Backup runs a backup and then offers to schedule recurring ones. The
+// scheduling choices are written back to cfg so they persist for the rest of
+// the menu session, as the exported variables did in the bash version.
+func Backup(cfg *config.Config) error {
+	if _, err := backup.Run(*cfg, backup.Options{Interactive: true}); err != nil {
 		return err
 	}
 	ok, err := Confirm("Would you like to set up scheduled backups?")
@@ -278,7 +280,7 @@ func Backup(cfg config.Config) error {
 		cfg.BackupHour = -1
 		slog.Error("Invalid hour input. Backup will run at a deterministic time between 2–4 AM.")
 	}
-	return backup.Schedule(cfg)
+	return backup.Schedule(*cfg)
 }
 
 // ParseMaxBackups validates a 1-30 input the way the bash prompt did.
