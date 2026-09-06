@@ -66,7 +66,11 @@ var defaultThresholds = map[string]map[string]float64{
 	"rpc_unreachable":   {"minutes": 5},
 	"momentums_stalled": {"minutes": 5},
 	"pillar_missed":     {"minutes": 30, "missed": 2},
+	"update_available":  {},
 }
+
+// disabledByDefault lists alerts an operator must opt into.
+var disabledByDefault = map[string]bool{"update_available": true}
 
 // DefaultConfig returns every node-raised alert enabled with spec defaults.
 func DefaultConfig() Config {
@@ -81,7 +85,7 @@ func DefaultConfig() Config {
 }
 
 func defaultRule(name string) RuleConfig {
-	rc := RuleConfig{Enabled: true, Thresholds: map[string]float64{}}
+	rc := RuleConfig{Enabled: !disabledByDefault[name], Thresholds: map[string]float64{}}
 	for k, v := range defaultThresholds[name] {
 		rc.Thresholds[k] = v
 	}

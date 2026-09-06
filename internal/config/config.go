@@ -40,6 +40,7 @@ const (
 	DefaultGrafanaAdminUser      = "admin"
 	DefaultGrafanaAdminPassword  = "admin"
 	DefaultGrafanaHTTPAddr       = "127.0.0.1"
+	DefaultReleaseRepo           = "0x3639/nomctl"
 )
 
 // Config holds every setting nomctl needs at runtime.
@@ -72,6 +73,12 @@ type Config struct {
 	ServiceName string
 	// GoVersion is the Go toolchain used to build the node. Env: NOMCTL_GO_VERSION.
 	GoVersion string
+	// ReleaseRepo is the GitHub repository nomctl upgrades itself from.
+	// Env: NOMCTL_REPO.
+	ReleaseRepo string
+	// UpdateCheck enables the "update available" check in status/top.
+	// Env: NOMCTL_UPDATE_CHECK.
+	UpdateCheck bool
 	// PillarName makes status/top show this pillar's production. The alerts
 	// config, when present, takes precedence. Env: NOMCTL_PILLAR_NAME.
 	PillarName string
@@ -124,6 +131,8 @@ func Default() Config {
 		GrafanaAdminUser:      DefaultGrafanaAdminUser,
 		GrafanaAdminPassword:  DefaultGrafanaAdminPassword,
 		GrafanaHTTPAddr:       DefaultGrafanaHTTPAddr,
+		ReleaseRepo:           DefaultReleaseRepo,
+		UpdateCheck:           true,
 	}
 }
 
@@ -191,6 +200,8 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("SERVICE_NAME", &c.ServiceName)
 	str("GO_VERSION", &c.GoVersion)
 	str("PILLAR_NAME", &c.PillarName)
+	str("REPO", &c.ReleaseRepo)
+	boolean("UPDATE_CHECK", &c.UpdateCheck)
 	str("BACKUP_DIR", &c.BackupDir)
 	integer("MAX_BACKUPS", &c.MaxBackups)
 	integer("BACKUP_CADENCE_DAYS", &c.BackupCadenceDays)
@@ -294,6 +305,8 @@ func Vars() []Var {
 		{"NOMCTL_SERVICE_NAME", DefaultServiceName, "systemd service name"},
 		{"NOMCTL_GO_VERSION", DefaultGoVersion, "Go toolchain version used to build the node"},
 		{"NOMCTL_PILLAR_NAME", "(unset)", "Pillar name for status/top production stats (alerts config takes precedence)"},
+		{"NOMCTL_REPO", DefaultReleaseRepo, "GitHub repository nomctl upgrade downloads releases from"},
+		{"NOMCTL_UPDATE_CHECK", "true", "Check GitHub for newer nomctl and go-zenon in status/top (cached 6h)"},
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},
 		{"NOMCTL_MAX_BACKUPS", strconv.Itoa(DefaultMaxBackups), "Number of backups to retain"},
 		{"NOMCTL_BACKUP_CADENCE_DAYS", strconv.Itoa(DefaultBackupCadenceDays), "Days between scheduled backups (0 = every run)"},

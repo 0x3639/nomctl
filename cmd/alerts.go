@@ -21,6 +21,7 @@ import (
 	"github.com/0x3639/nomctl/internal/service"
 	"github.com/0x3639/nomctl/internal/tui"
 	"github.com/0x3639/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/update"
 )
 
 var (
@@ -163,6 +164,10 @@ var alertsRunCmd = &cobra.Command{
 			return err
 		}
 		alerts.BackupChecker = backupChecker
+		alerts.NewerVersion = update.Newer
+		if cfg.UpdateCheck {
+			alerts.UpdateChecker = updateChecker
+		}
 		d := alerts.NewDaemon(acfg, alerts.DefaultConfigPath, alerts.DefaultStatePath, metrics.NewSampler(cfg), client)
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -185,6 +190,20 @@ var alertsRunCmd = &cobra.Command{
 // lookupPillar asks the local node whether a pillar with this name exists.
 func lookupPillar(ctx context.Context, name string) (*node.PillarInfo, error) {
 	return node.New(node.DefaultURL).PillarByName(ctx, name)
+}
+
+// updateChecker feeds the update_available rule from the cached check.
+func updateChecker() alerts.UpdateInfo {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	c := update.Run(ctx, update.Options{Repo: cfg.ReleaseRepo, NodeRepo: cfg.RepoURL, NodeBranch: cfg.BranchName})
+	info := alerts.UpdateInfo{NomctlLatest: c.NomctlLatest, NomctlRunning: version, NodeBranch: c.NodeBranch}
+	if c.NodeRemote != "" {
+		if commit, err := node.New(node.DefaultURL).ProcessInfo(ctx); err == nil && commit.Commit != "" {
+			info.NodeBehind = !update.SameCommit(commit.Commit, c.NodeRemote)
+		}
+	}
+	return info
 }
 
 // backupChecker feeds the backup_stale rule from the timer state and archives.

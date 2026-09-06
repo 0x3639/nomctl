@@ -10,6 +10,7 @@ import (
 
 	"github.com/0x3639/nomctl/internal/alerts"
 	"github.com/0x3639/nomctl/internal/metrics"
+	"github.com/0x3639/nomctl/internal/update"
 )
 
 var (
@@ -40,8 +41,22 @@ CPU %% and the sync rate are measured over --wait (default 2s).`,
 			return enc.Encode(sample)
 		}
 		fmt.Fprint(cmd.OutOrStdout(), metrics.Format(sample))
+		checkCtx, cancelCheck := context.WithTimeout(ctx, 20*time.Second)
+		defer cancelCheck()
+		for _, line := range updateLines(checkCtx, sample.Node.Commit) {
+			fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "Update", line)
+		}
 		return nil
 	},
+}
+
+// updateLines runs the cached update check and renders any "Update" lines.
+func updateLines(ctx context.Context, nodeCommit string) []string {
+	if !cfg.UpdateCheck || flagNoUpdateCheck {
+		return nil
+	}
+	c := update.Run(ctx, update.Options{Repo: cfg.ReleaseRepo, NodeRepo: cfg.RepoURL, NodeBranch: cfg.BranchName})
+	return update.Lines(c, version, nodeCommit)
 }
 
 // pillarName prefers the alerts configuration, then NOMCTL_PILLAR_NAME.
@@ -54,6 +69,7 @@ func pillarName() string {
 
 func init() {
 	statusCmd.Flags().BoolVar(&flagStatusJSON, "json", false, "print the sample as JSON")
+	statusCmd.Flags().BoolVar(&flagNoUpdateCheck, "no-update-check", false, "skip the GitHub update check (NOMCTL_UPDATE_CHECK=false)")
 	statusCmd.Flags().DurationVar(&flagStatusWait, "wait", 2*time.Second, "measurement window for CPU %% and sync rate")
 	rootCmd.AddCommand(statusCmd)
 }

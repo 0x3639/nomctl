@@ -40,6 +40,13 @@ func TestRenderTop(t *testing.T) {
 	}
 }
 
+func TestRenderTopNotes(t *testing.T) {
+	out := stripANSI(renderTop(fixedSample(), nil, 100, fixedSample().Taken, "nomctl 9.9.9 available (running 0.4.0): sudo nomctl upgrade"))
+	if !strings.Contains(out, "update: nomctl 9.9.9 available") {
+		t.Errorf("note missing:\n%s", out)
+	}
+}
+
 func TestRenderTopPillar(t *testing.T) {
 	s := fixedSample()
 	s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "MyPillar", Rank: 11, Produced: 118, Expected: 121}

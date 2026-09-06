@@ -9,10 +9,10 @@ Planned features in priority order. Each gets a design spec in the repository un
 
 - **Alerting** (v0.3.0): Telegram through a shared relay, pairing by code, per-alert thresholds, mutes, `node_silent`.
 - **Pillar awareness** (v0.4.0): the node name doubles as the pillar name; `status` and `top` show production; `pillar_missed` and `momentums_stalled` alerts.
+- **Self-update** (v0.5.0): `nomctl upgrade` with verified download, atomic replace and rollback; update lines in `status`/`top`; opt-in `update_available` alert.
 
 ## Next
 
-- **Self-update**: `nomctl upgrade` downloads the latest release, verifies the checksum and replaces the binary; `status` shows when nomctl or the node has an update available.
 - **Wallet and config backup**: a separate small archive of `wallet/` and `config.json`, optionally encrypted, never pruned by the chain-data retention rule.
 - **Config editor**: `nomctl config show|get|set` for `config.json` with validation and a backup of the previous file.
 - **Network check**: confirm port 35995/TCP is reachable from outside and count inbound versus outbound peers.

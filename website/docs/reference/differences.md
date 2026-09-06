@@ -39,3 +39,4 @@ nomctl reproduces the behaviour of [hypercore-one/deployment](https://github.com
 - v0.2.0: `status`, `top` and `support-bundle`.
 - v0.3.0: Telegram alerts through a shared relay.
 - v0.4.0: `momentums_stalled` and `pillar_missed` alerts, pillar production in `status` and `top`.
+- v0.5.0: `nomctl upgrade`, update checks in `status`/`top`, the `update_available` alert.

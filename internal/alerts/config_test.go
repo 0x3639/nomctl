@@ -9,13 +9,13 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	c := DefaultConfig()
-	if len(c.Rules) != 12 || c.Interval != 30*time.Second || c.RelayURL != DefaultRelayURL || c.Paired() {
+	if len(c.Rules) != 13 || c.Interval != 30*time.Second || c.RelayURL != DefaultRelayURL || c.Paired() {
 		t.Errorf("defaults: %+v", c)
 	}
 	for _, name := range RuleNames() {
 		rc, ok := c.Rules[name]
-		if !ok || !rc.Enabled {
-			t.Errorf("%s missing or disabled", name)
+		if !ok || rc.Enabled == disabledByDefault[name] {
+			t.Errorf("%s missing or wrong default state", name)
 		}
 	}
 	if c.Rules["disk_low"].Threshold("disk_low", "min_free_gb") != 15 || c.Rules["memory_high"].Threshold("memory_high", "pct") != 85 {
@@ -68,7 +68,7 @@ func TestLoadFillsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Rules) != 12 || c.Rules["disk_low"].Enabled || c.Rules["disk_low"].Threshold("disk_low", "min_free_gb") != 15 || !c.Rules["service_down"].Enabled || c.Interval != DefaultInterval {
+	if len(c.Rules) != 13 || c.Rules["disk_low"].Enabled || c.Rules["disk_low"].Threshold("disk_low", "min_free_gb") != 15 || !c.Rules["service_down"].Enabled || c.Interval != DefaultInterval {
 		t.Errorf("fill defaults: %+v", c.Rules)
 	}
 	if err := os.WriteFile(path, []byte(`{"interval":"1s"}`), 0o600); err != nil {
