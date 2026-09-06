@@ -18,7 +18,11 @@ less install.sh
 sudo bash install.sh
 ```
 
-To pin a version instead of `main`, fetch the script from a release tag, for example `.../nomctl/v0.4.0/install.sh`, and set `NOMCTL_VERSION=v0.4.0`. It honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` and `NOMCTL_REPO`. Rerunning it upgrades in place.
+To pin a version instead of `main`, fetch the script from the release tag and tell it which release to install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/v0.4.0/install.sh | sudo NOMCTL_VERSION=v0.4.0 bash
+``` It honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` and `NOMCTL_REPO`. Rerunning it upgrades in place.
 
 To build from source instead, with Go 1.24 or newer:
 
