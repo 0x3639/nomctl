@@ -71,6 +71,9 @@ type Config struct {
 	ServiceName string
 	// GoVersion is the Go toolchain used to build the node. Env: NOMCTL_GO_VERSION.
 	GoVersion string
+	// PillarName makes status/top show this pillar's production. The alerts
+	// config, when present, takes precedence. Env: NOMCTL_PILLAR_NAME.
+	PillarName string
 
 	// Backup settings. Env: NOMCTL_BACKUP_DIR, NOMCTL_MAX_BACKUPS,
 	// NOMCTL_BACKUP_CADENCE_DAYS, NOMCTL_BACKUP_HOUR, NOMCTL_MIN_FREE_SPACE_KB.
@@ -181,6 +184,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("BINARY_NAME", &c.BinaryName)
 	str("SERVICE_NAME", &c.ServiceName)
 	str("GO_VERSION", &c.GoVersion)
+	str("PILLAR_NAME", &c.PillarName)
 	str("BACKUP_DIR", &c.BackupDir)
 	integer("MAX_BACKUPS", &c.MaxBackups)
 	integer("BACKUP_CADENCE_DAYS", &c.BackupCadenceDays)
@@ -282,6 +286,7 @@ func Vars() []Var {
 		{"NOMCTL_BINARY_NAME", DefaultBinaryName, "Node binary name (also the cmd/ package built)"},
 		{"NOMCTL_SERVICE_NAME", DefaultServiceName, "systemd service name"},
 		{"NOMCTL_GO_VERSION", DefaultGoVersion, "Go toolchain version used to build the node"},
+		{"NOMCTL_PILLAR_NAME", "(unset)", "Pillar name for status/top production stats (alerts config takes precedence)"},
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},
 		{"NOMCTL_MAX_BACKUPS", strconv.Itoa(DefaultMaxBackups), "Number of backups to retain"},
 		{"NOMCTL_BACKUP_CADENCE_DAYS", strconv.Itoa(DefaultBackupCadenceDays), "Days between scheduled backups (0 = every run)"},

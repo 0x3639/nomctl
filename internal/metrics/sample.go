@@ -134,9 +134,13 @@ type Sampler struct {
 	heights   []heightPoint
 }
 
+// SetPillarName changes the pillar whose stats are sampled ("" for none).
+func (s *Sampler) SetPillarName(name string) { s.PillarName = name }
+
 // NewSampler configures a Sampler for the node described by cfg.
 func NewSampler(cfg config.Config) *Sampler {
 	return &Sampler{
+		PillarName: cfg.PillarName,
 		ProcRoot:   DefaultProcRoot,
 		CgroupRoot: DefaultCgroupRoot,
 		Node:       node.New(node.DefaultURL),

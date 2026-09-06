@@ -25,7 +25,7 @@ var topCmd = &cobra.Command{
 		if flagTopInterval < 500*time.Millisecond {
 			return errors.New("--interval must be at least 500ms")
 		}
-		return tui.Top(cfg, flagTopInterval)
+		return tui.Top(cfg, flagTopInterval, pillarName())
 	},
 }
 

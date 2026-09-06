@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/0x3639/nomctl/internal/alerts"
 	"github.com/0x3639/nomctl/internal/metrics"
 )
 
@@ -28,6 +29,7 @@ CPU %% and the sync rate are measured over --wait (default 2s).`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		// CPU % and the sync rate are deltas, so take two samples --wait apart.
 		sampler := metrics.NewSampler(cfg)
+		sampler.SetPillarName(pillarName())
 		ctx := context.Background()
 		sampler.Take(ctx)
 		time.Sleep(flagStatusWait)
@@ -40,6 +42,14 @@ CPU %% and the sync rate are measured over --wait (default 2s).`,
 		fmt.Fprint(cmd.OutOrStdout(), metrics.Format(sample))
 		return nil
 	},
+}
+
+// pillarName prefers the alerts configuration, then NOMCTL_PILLAR_NAME.
+func pillarName() string {
+	if acfg, err := alerts.Load(alerts.DefaultConfigPath); err == nil && acfg.PillarName != "" {
+		return acfg.PillarName
+	}
+	return cfg.PillarName
 }
 
 func init() {

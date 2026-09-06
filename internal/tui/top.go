@@ -17,9 +17,12 @@ import (
 // historyLen is how many rate points the sparkline keeps.
 const historyLen = 60
 
-// Top runs the live dashboard until q, Esc or Ctrl+C.
-func Top(cfg config.Config, interval time.Duration) error {
-	m := newTopModel(metrics.NewSampler(cfg), interval)
+// Top runs the live dashboard until q, Esc or Ctrl+C. pillarName, when not
+// empty, adds the pillar's production to the NODE panel.
+func Top(cfg config.Config, interval time.Duration, pillarName string) error {
+	s := metrics.NewSampler(cfg)
+	s.SetPillarName(pillarName)
+	m := newTopModel(s, interval)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
