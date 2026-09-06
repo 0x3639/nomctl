@@ -18,6 +18,7 @@ import (
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/preflight"
 	"github.com/0x3639/nomctl/internal/service"
+	"github.com/0x3639/nomctl/internal/tui"
 	"github.com/0x3639/nomctl/internal/ui"
 )
 
@@ -136,6 +137,7 @@ func setup(cmd *cobra.Command) error {
 		execx.Configure(cfg.Debug, nil)
 	}
 	ui.SetDebug(cfg.Debug)
+	tui.Version = versionString()
 	slog.Debug("configuration loaded", "config", cfg.Redacted())
 
 	// Command-specific flag handling and validation happens here so that bad
