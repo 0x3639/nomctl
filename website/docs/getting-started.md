@@ -1,5 +1,6 @@
 ---
 title: Getting started
+description: "Install nomctl with one command, deploy a Zenon node, watch it sync, and set up alerts and backups."
 ---
 
 Three commands take a fresh Ubuntu 24.04 server to a syncing node.
@@ -22,7 +23,9 @@ To pin a version instead of `main`, fetch the script from the release tag and te
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/v0.4.0/install.sh | sudo NOMCTL_VERSION=v0.4.0 bash
-``` It honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` and `NOMCTL_REPO`. Rerunning it upgrades in place.
+```
+
+The installer honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` and `NOMCTL_REPO`. Rerunning it upgrades in place.
 
 To build from source instead, with Go 1.24 or newer:
 

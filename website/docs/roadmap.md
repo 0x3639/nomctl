@@ -1,5 +1,6 @@
 ---
 title: Roadmap
+description: "Planned features, hardening follow-ups, and what is deliberately out of scope."
 ---
 
 Planned features in priority order. Each gets a design spec in the repository under `docs/superpowers/specs/` before code. Several are inspired by [MyTonCtrl](https://github.com/ton-blockchain/mytonctrl), the TON node controller.

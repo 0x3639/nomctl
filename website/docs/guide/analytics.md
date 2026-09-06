@@ -1,5 +1,6 @@
 ---
 title: Analytics stack
+description: "Install node_exporter, Prometheus and Grafana with the znnd dashboard, and reach Grafana safely."
 ---
 
 ```bash

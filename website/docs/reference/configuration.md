@@ -1,5 +1,6 @@
 ---
 title: Configuration
+description: "Every NOMCTL_* environment variable with its default, and the files nomctl writes."
 ---
 
 Settings come from `NOMCTL_*` environment variables; command-line flags override them. `nomctl env` prints this table from the binary.

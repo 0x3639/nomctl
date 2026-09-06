@@ -1,5 +1,6 @@
 ---
 title: Alerts overview
+description: "Telegram alerts for Zenon nodes through a shared relay: how it works, what you get, and privacy."
 ---
 
 nomctl can message you on Telegram when the node needs attention, and again when it recovers.

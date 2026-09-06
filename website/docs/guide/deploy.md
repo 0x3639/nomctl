@@ -1,5 +1,6 @@
 ---
 title: Deploy
+description: "How nomctl deploy builds znnd from source, installs Go, writes the go-zenon systemd unit, and how to choose a repository and branch."
 ---
 
 `nomctl deploy` builds the node from source and sets up its systemd service.

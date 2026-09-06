@@ -1,5 +1,6 @@
 ---
 title: Differences from the bash toolkit
+description: "How nomctl differs from the hypercore-one bash toolkit it replaces."
 ---
 
 nomctl reproduces the behaviour of [hypercore-one/deployment](https://github.com/hypercore-one/deployment) with these deliberate changes.

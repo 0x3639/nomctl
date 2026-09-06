@@ -1,5 +1,6 @@
 ---
 title: Running the relay
+description: "Run your own nomctl-relay on Coolify: bot creation, environment variables, volume, domain, trusted proxies."
 ---
 
 The relay is one container with one SQLite file. It holds the Telegram bot token; nodes never see it. The community relay at `https://alerts.zenon.info` is what released binaries use by default; this page is for running your own.

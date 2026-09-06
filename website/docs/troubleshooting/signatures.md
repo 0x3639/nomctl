@@ -1,5 +1,6 @@
 ---
 title: Common signatures
+description: "Common failure signatures in the journal and status output, their likely cause, and what to do."
 ---
 
 | What you see | Likely cause | What to do |

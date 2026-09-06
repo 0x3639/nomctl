@@ -3,6 +3,7 @@ id: index
 slug: /overview
 title: What nomctl is
 sidebar_label: Overview
+description: "What nomctl is, what it does, requirements, and where it puts files on the host."
 ---
 
 nomctl is a single static binary for deploying and operating [Zenon Network](https://zenon.network) (NoM) nodes on Debian and Ubuntu. It is a Go port of the bash toolkit at [hypercore-one/deployment](https://github.com/hypercore-one/deployment): the same interactive menu and the same non-interactive commands for automation, with no dependency on `gum`, `jq` or any other helper.
