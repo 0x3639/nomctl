@@ -134,7 +134,7 @@ nomctl can message you on Telegram when the node needs attention, and again when
    sudo nomctl alerts setup
    ```
 
-   It asks for the code and a name for the node (default: the hostname), pairs, installs and starts `nomctl-alerts.service`, and sends a test message. `--code` and `--name` skip the prompts; `--relay` or `NOMCTL_RELAY_URL` point at a different relay.
+   It asks for the code and a name for the node (default: the hostname), pairs, installs and starts `nomctl-alerts.service`, and sends a test message. `--code` and `--name` skip the prompts. Released binaries default to the community relay at `https://alerts.zenon.info`; `--relay` or `NOMCTL_RELAY_URL` point at a different one.
 
 Pair as many nodes as you like to the same chat; every message starts with the node's name.
 
