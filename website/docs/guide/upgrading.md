@@ -24,7 +24,7 @@ The installer one-liner does the same thing and remains a fine way to upgrade; `
 
 `nomctl status` and `top` check, at most every six hours, whether a newer nomctl release exists and whether the configured go-zenon branch has commits beyond the running node's build. When either is true a line is added:
 
-```
+```text
 Update    nomctl 0.5.0 available (running 0.4.0): sudo nomctl upgrade
 Update    go-zenon master has new commits (deployed 1a2b3c4, remote 9f8e7d6): sudo nomctl deploy
 ```

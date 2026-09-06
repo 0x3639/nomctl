@@ -5,6 +5,7 @@ package update
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -153,7 +154,7 @@ func get(ctx context.Context, url string) ([]byte, error) {
 
 // extractBinary pulls the "nomctl" entry out of a tar.gz.
 func extractBinary(archive []byte, dir string) (string, error) {
-	gz, err := gzip.NewReader(strings.NewReader(string(archive)))
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return "", err
 	}

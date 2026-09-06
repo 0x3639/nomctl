@@ -45,6 +45,9 @@ so the daemon uses the new code.`,
 		if flagUpgradeRollback && (flagUpgradeCheck || flagUpgradeVersion != "") {
 			return errors.New("--rollback cannot be combined with --check or --version")
 		}
+		if flagUpgradeCheck && flagUpgradeVersion != "" {
+			return errors.New("--check compares against the latest release; it cannot be combined with --version")
+		}
 		if flagUpgradeRollback {
 			if err := update.Rollback(target); err != nil {
 				return err
