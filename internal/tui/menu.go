@@ -126,7 +126,7 @@ func Dispatch(cfg *config.Config, action Action) error {
 	case ActionMonitor:
 		return Monitor(*cfg, true, 20)
 	case ActionStatus:
-		return Top(*cfg, 2*time.Second, PillarName())
+		return Top(*cfg, 2*time.Second, PillarName(), nil)
 	case ActionAlerts:
 		return AlertsAction()
 	case ActionSupport:

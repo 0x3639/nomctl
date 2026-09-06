@@ -17,12 +17,21 @@ import (
 // historyLen is how many rate points the sparkline keeps.
 const historyLen = 60
 
+// NodeRemoteCommit and NodeBranch, when set by the caller, let the
+// dashboard flag a deployed node that is behind its branch.
+var (
+	NodeRemoteCommit string
+	NodeBranch       string
+)
+
 // Top runs the live dashboard until q, Esc or Ctrl+C. pillarName, when not
-// empty, adds the pillar's production to the NODE panel.
-func Top(cfg config.Config, interval time.Duration, pillarName string) error {
+// empty, adds the pillar's production to the NODE panel; notes are shown
+// under the panels (update availability).
+func Top(cfg config.Config, interval time.Duration, pillarName string, notes []string) error {
 	s := metrics.NewSampler(cfg)
 	s.SetPillarName(pillarName)
 	m := newTopModel(s, interval)
+	m.notes = notes
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -37,6 +46,7 @@ type topModel struct {
 	history  []float64
 	width    int
 	sampling bool
+	notes    []string
 }
 
 func newTopModel(s *metrics.Sampler, interval time.Duration) topModel {
@@ -91,7 +101,7 @@ func (m topModel) View() string {
 	if m.sample.Taken.IsZero() {
 		return "Sampling…\n"
 	}
-	return renderTop(m.sample, m.history, m.width, time.Now())
+	return renderTop(m.sample, m.history, m.width, time.Now(), m.notes...)
 }
 
 var (
@@ -105,19 +115,26 @@ var (
 
 // renderTop draws the three panels for a sample. width is the terminal
 // width; now is used for the "sampled Ns ago" footer.
-func renderTop(s metrics.Sample, history []float64, width int, now time.Time) string {
+func renderTop(s metrics.Sample, history []float64, width int, now time.Time, notes ...string) string {
 	inner := max(40, width-4)
 	panel := func(title string, lines ...string) string {
 		body := stylePanelTitle.Render(title) + "\n" + strings.Join(lines, "\n")
 		return stylePanel.Width(inner).Render(body)
 	}
 
-	return strings.Join([]string{
+	parts := []string{
 		panel("NODE", nodeLines(s.Node, history, inner)...),
 		panel("PROCESS", processLines(s)...),
 		panel("HOST", hostLines(s.Host)...),
-		styleFooter.Render(fmt.Sprintf("sampled %s ago   q quit", metrics.HumanDuration(now.Sub(s.Taken)))),
-	}, "\n") + "\n"
+	}
+	if NodeRemoteCommit != "" && s.Node.Commit != "" && !strings.HasPrefix(strings.ToLower(NodeRemoteCommit), strings.ToLower(s.Node.Commit)) {
+		notes = append(notes, fmt.Sprintf("go-zenon %s has new commits (deployed %s): sudo nomctl deploy", NodeBranch, s.Node.Commit))
+	}
+	for _, n := range notes {
+		parts = append(parts, styleWarn.Render("update: "+n))
+	}
+	parts = append(parts, styleFooter.Render(fmt.Sprintf("sampled %s ago   q quit", metrics.HumanDuration(now.Sub(s.Taken)))))
+	return strings.Join(parts, "\n") + "\n"
 }
 
 func nodeLines(n metrics.NodeSample, history []float64, inner int) []string {

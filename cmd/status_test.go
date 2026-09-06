@@ -15,7 +15,7 @@ func TestDiagnosticCommandsSkipPreflight(t *testing.T) {
 }
 
 // diagnosticCommands grows as the commands are added.
-var diagnosticCommands = []string{"status", "top", "support-bundle"}
+var diagnosticCommands = []string{"status", "top", "support-bundle", "upgrade"}
 
 func TestAlertsCommands(t *testing.T) {
 	for _, c := range []string{"setup", "run", "status", "list", "test"} {

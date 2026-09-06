@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/0x3639/nomctl/internal/metrics"
@@ -34,6 +35,22 @@ type BackupInfo struct {
 // tests stub it. nil disables the rule.
 var BackupChecker func() BackupInfo
 
+// UpdateInfo is what the update_available rule needs.
+type UpdateInfo struct {
+	NomctlLatest  string // release tag, "" when unknown
+	NomctlRunning string
+	NodeBehind    bool
+	NodeBranch    string
+}
+
+// UpdateChecker is consulted by the update_available rule (cached by the
+// caller). nil disables the rule.
+var UpdateChecker func() UpdateInfo
+
+// NewerVersion reports whether latest is a higher release than running;
+// injected so this package does not import update.
+var NewerVersion = func(latest, running string) bool { return false }
+
 // AllRules returns every node-side rule in spec order.
 func AllRules() []Rule {
 	return []Rule{
@@ -49,6 +66,7 @@ func AllRules() []Rule {
 		ruleFunc{"rpc_unreachable", rpcUnreachable},
 		ruleFunc{"momentums_stalled", momentumsStalled},
 		ruleFunc{"pillar_missed", pillarMissed},
+		ruleFunc{"update_available", updateAvailable},
 	}
 }
 
@@ -335,4 +353,25 @@ func pillarMissed(h []metrics.Sample, cfg RuleConfig) Result {
 			last.Name, expected-produced, expected, metrics.HumanDuration(d), last.Produced, last.Expected)}
 	}
 	return Result{}
+}
+
+// updateAvailable is informational: it fires while a newer nomctl release
+// exists or the deployed node is behind its branch, and clears after the
+// upgrade or deploy.
+func updateAvailable(h []metrics.Sample, _ RuleConfig) Result {
+	if UpdateChecker == nil || len(h) == 0 {
+		return Result{}
+	}
+	info := UpdateChecker()
+	var parts []string
+	if info.NomctlLatest != "" && NewerVersion(info.NomctlLatest, info.NomctlRunning) {
+		parts = append(parts, fmt.Sprintf("nomctl %s available (running %s): sudo nomctl upgrade", strings.TrimPrefix(info.NomctlLatest, "v"), info.NomctlRunning))
+	}
+	if info.NodeBehind {
+		parts = append(parts, fmt.Sprintf("go-zenon %s has new commits: sudo nomctl deploy", info.NodeBranch))
+	}
+	if len(parts) == 0 {
+		return Result{}
+	}
+	return Result{Firing: true, Detail: strings.Join(parts, "; ")}
 }

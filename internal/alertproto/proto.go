@@ -145,6 +145,7 @@ var Alerts = []AlertInfo{
 	{Name: "rpc_unreachable", Severity: Warning, Title: "node rpc unreachable", OKTitle: "node rpc ok"},
 	{Name: "momentums_stalled", Severity: Critical, Title: "momentums stalled", OKTitle: "momentums advancing again"},
 	{Name: "pillar_missed", Severity: Critical, Title: "pillar missing momentums", OKTitle: "pillar producing again"},
+	{Name: "update_available", Severity: InfoSev, Title: "update available", OKTitle: "up to date"},
 	{Name: "node_silent", Severity: Critical, Title: "node silent", OKTitle: "node reporting again", Relay: true},
 }
 

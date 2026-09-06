@@ -389,3 +389,30 @@ func TestPillarMissed(t *testing.T) {
 		t.Error("unknown pillar means no alert")
 	}
 }
+
+func TestUpdateAvailable(t *testing.T) {
+	r := rule(t, "update_available")
+	cfg := DefaultConfig()
+	if cfg.Rules["update_available"].Enabled {
+		t.Error("update_available must be opt-in")
+	}
+	rc := cfg.Rules["update_available"]
+	h := series(1, nil)
+	UpdateChecker = nil
+	if r.Evaluate(h, rc).Firing {
+		t.Error("no checker, no alert")
+	}
+	NewerVersion = func(latest, running string) bool { return latest == "v9.9.9" && running == "0.4.0" }
+	defer func() { NewerVersion = func(string, string) bool { return false }; UpdateChecker = nil }()
+	UpdateChecker = func() UpdateInfo { return UpdateInfo{NomctlLatest: "v0.4.0", NomctlRunning: "0.4.0"} }
+	if r.Evaluate(h, rc).Firing {
+		t.Error("up to date must not fire")
+	}
+	UpdateChecker = func() UpdateInfo {
+		return UpdateInfo{NomctlLatest: "v9.9.9", NomctlRunning: "0.4.0", NodeBehind: true, NodeBranch: "master"}
+	}
+	res := r.Evaluate(h, rc)
+	if !res.Firing || !strings.Contains(res.Detail, "nomctl 9.9.9 available") || !strings.Contains(res.Detail, "go-zenon master has new commits") {
+		t.Errorf("update detail: %+v", res)
+	}
+}

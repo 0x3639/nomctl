@@ -262,3 +262,28 @@ func TestDaemonPassesPillarName(t *testing.T) {
 		t.Fatal("reload must clear the pillar name")
 	}
 }
+
+func TestInfoAlertsAreNotReminded(t *testing.T) {
+	relay := &fakeRelay{secret: []byte("secret")}
+	d, now := newTestDaemon(t, relay, healthy)
+	d.cfg.Rules["update_available"] = RuleConfig{Enabled: true}
+	NewerVersion = func(string, string) bool { return true }
+	UpdateChecker = func() UpdateInfo { return UpdateInfo{NomctlLatest: "v9.9.9", NomctlRunning: "0.4.0"} }
+	defer func() { NewerVersion = func(string, string) bool { return false }; UpdateChecker = nil }()
+	steps(d, now, 2) // baseline (firing, silent) then... still firing: baseline already firing, so no transition
+	// Make it transition: clear then set.
+	UpdateChecker = func() UpdateInfo { return UpdateInfo{} }
+	steps(d, now, 1)
+	UpdateChecker = func() UpdateInfo { return UpdateInfo{NomctlLatest: "v9.9.9", NomctlRunning: "0.4.0"} }
+	steps(d, now, 30) // 15 minutes: an info alert is sent once, never reminded
+	got := relay.names()
+	count := 0
+	for _, n := range got {
+		if n == "update_available:firing" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("info alert sent %d times, want 1: %v", count, got)
+	}
+}
