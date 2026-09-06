@@ -36,6 +36,7 @@ const (
 	ActionStart     Action = "start"
 	ActionMonitor   Action = "monitor"
 	ActionStatus    Action = "status"
+	ActionAlerts    Action = "alerts"
 	ActionSupport   Action = "support"
 	ActionResync    Action = "resync"
 	ActionBackup    Action = "backup"
@@ -56,6 +57,7 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 		{ActionStart, "Start the " + cfg.ServiceName + " service"},
 		{ActionMonitor, "View " + cfg.BinaryName + " logs in real-time"},
 		{ActionStatus, "Live node dashboard (sync, CPU, memory)"},
+		{ActionAlerts, "Telegram alerts (set up or show status)"},
 		{ActionSupport, "Create a support bundle for troubleshooting"},
 		{ActionResync, "Resync the " + cfg.BinaryName + " node"},
 		{ActionBackup, "Backup " + cfg.BinaryName + " data"},
@@ -125,6 +127,8 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return Monitor(*cfg, true, 20)
 	case ActionStatus:
 		return Top(*cfg, 2*time.Second)
+	case ActionAlerts:
+		return AlertsAction()
 	case ActionSupport:
 		return SupportBundle(*cfg)
 	case ActionResync:
@@ -144,6 +148,25 @@ func Dispatch(cfg *config.Config, action Action) error {
 // Version is the nomctl version string recorded in support bundles; the cmd
 // package sets it at startup.
 var Version = "dev"
+
+// AlertsSetup and AlertsStatus are installed by the cmd package so the menu
+// can reuse the command implementations without an import cycle.
+var (
+	AlertsSetup  func() error
+	AlertsStatus func() error
+	AlertsPaired func() bool
+)
+
+// AlertsAction runs setup when unpaired, otherwise shows status.
+func AlertsAction() error {
+	if AlertsSetup == nil || AlertsStatus == nil || AlertsPaired == nil {
+		return errors.New("alerts are not available in this build")
+	}
+	if AlertsPaired() {
+		return AlertsStatus()
+	}
+	return AlertsSetup()
+}
 
 // SupportBundle collects a bundle with defaults and prints where it went.
 func SupportBundle(cfg config.Config) error {
