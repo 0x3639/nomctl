@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -26,6 +28,19 @@ type Grafana struct {
 // NewGrafana builds a client with basic-auth credentials.
 func NewGrafana(user, password string) *Grafana {
 	return &Grafana{BaseURL: grafanaURL, User: user, Password: password, Client: &http.Client{Timeout: 30 * time.Second}}
+}
+
+// ClientURL returns the endpoint to reach a Grafana bound to httpAddr:
+// wildcard addresses map to loopback, anything else is used as given.
+func ClientURL(httpAddr string) string {
+	host := strings.TrimSpace(httpAddr)
+	switch host {
+	case "", "0.0.0.0", "*":
+		host = "127.0.0.1"
+	case "::", "[::]":
+		host = "::1"
+	}
+	return "http://" + net.JoinHostPort(strings.Trim(host, "[]"), "3000")
 }
 
 func (g *Grafana) do(method, path string, body []byte) (int, []byte, error) {

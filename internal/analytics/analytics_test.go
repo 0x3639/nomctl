@@ -195,6 +195,16 @@ func TestGrafanaClient(t *testing.T) {
 	}
 }
 
+func TestClientURL(t *testing.T) {
+	cases := map[string]string{"127.0.0.1": "http://127.0.0.1:3000", "0.0.0.0": "http://127.0.0.1:3000", "": "http://127.0.0.1:3000",
+		"::": "http://[::1]:3000", "10.0.0.5": "http://10.0.0.5:3000", "fd00::5": "http://[fd00::5]:3000"}
+	for in, want := range cases {
+		if got := ClientURL(in); got != want {
+			t.Errorf("ClientURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestGrafanaDropIn(t *testing.T) {
 	if got := GrafanaDropIn("127.0.0.1"); got != "[Service]\nEnvironment=GF_SERVER_HTTP_ADDR=127.0.0.1\n" {
 		t.Errorf("drop-in = %q", got)

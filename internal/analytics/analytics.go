@@ -34,6 +34,7 @@ const (
 func Install(cfg config.Config) error {
 	ui.Section(os.Stderr, "==== ANALYTICS STACK SETUP ====")
 	g := NewGrafana(cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword)
+	g.BaseURL = ClientURL(cfg.GrafanaHTTPAddr)
 
 	steps := []struct {
 		title string

@@ -233,6 +233,7 @@ func CreateService(cfg config.Config) error {
 	slog.Info(fmt.Sprintf("Checking if %s is already set up...", cfg.ServiceUnit()))
 	want := UnitFile(cfg)
 	current, err := os.ReadFile(cfg.ServiceUnitPath())
+	changed := false
 	switch {
 	case err == nil && string(current) == want:
 		slog.Info(cfg.ServiceUnit() + " is up to date.")
@@ -241,6 +242,7 @@ func CreateService(cfg config.Config) error {
 		if err := service.WriteUnit(cfg.ServiceUnitPath(), want); err != nil {
 			return err
 		}
+		changed = true
 	default:
 		slog.Info("Creating " + cfg.ServiceUnit() + "...")
 		if err := service.WriteUnit(cfg.ServiceUnitPath(), want); err != nil {
@@ -252,6 +254,14 @@ func CreateService(cfg config.Config) error {
 	}
 	if err := service.Enable(cfg.ServiceUnit()); err != nil {
 		return err
+	}
+	// A changed unit only takes effect on the next (re)start; deploy stops
+	// the node before building, but apply it here too in case it is running.
+	if changed && service.IsActive(cfg.ServiceName) {
+		slog.Info("Restarting " + cfg.ServiceUnit() + " to apply the updated unit...")
+		if err := service.RestartUnit(cfg.ServiceUnit()); err != nil {
+			return err
+		}
 	}
 	logx.Success(cfg.ServiceUnit() + " is set up.")
 	return nil
