@@ -28,10 +28,30 @@ function walk(dir) {
   return out.sort();
 }
 
+// routeFor mirrors Docusaurus slug rules: an absolute slug is used as is, a
+// relative one is resolved against the document's directory, and the result
+// is normalised so it can never leave the docs root.
 function routeFor(docsDir, file, meta) {
-  if (meta.slug) return meta.slug;
-  const rel = path.relative(docsDir, file).replace(/\.mdx?$/, '');
-  return '/' + rel.replace(/\/index$/, '').replace(/^index$/, '');
+  const dirRoute = '/' + path.relative(docsDir, path.dirname(file)).split(path.sep).filter(Boolean).join('/');
+  let route;
+  if (meta.slug) {
+    route = meta.slug.startsWith('/') ? meta.slug : path.posix.join(dirRoute, meta.slug);
+  } else {
+    const rel = path.relative(docsDir, file).replace(/\.mdx?$/, '');
+    route = '/' + rel.split(path.sep).join('/').replace(/\/index$/, '').replace(/^index$/, '');
+  }
+  route = path.posix.normalize(route);
+  if (!route.startsWith('/')) route = '/' + route;
+  return route.replace(/\/$/, '');
+}
+
+// targetFor returns the .md twin path, refusing anything outside outDir.
+function targetFor(outDir, route) {
+  const target = path.resolve(outDir, route.replace(/^\//, '') + '.md');
+  if (!target.startsWith(path.resolve(outDir) + path.sep)) {
+    throw new Error(`llms-txt: refusing to write outside the build directory: ${route}`);
+  }
+  return target;
 }
 
 module.exports = function llmsTxtPlugin(context) {
@@ -47,7 +67,7 @@ module.exports = function llmsTxtPlugin(context) {
         const title = meta.title || path.basename(file, path.extname(file));
         const summary = meta.description || '';
         const md = `# ${title}\n\nSource: ${site}${route}\n\n${body.trim()}\n`;
-        const target = path.join(outDir, route.replace(/^\//, '') + '.md');
+        const target = targetFor(outDir, route);
         fs.mkdirSync(path.dirname(target), {recursive: true});
         fs.writeFileSync(target, md);
         pages.push({title, route, summary, md});
@@ -74,3 +94,6 @@ module.exports = function llmsTxtPlugin(context) {
     },
   };
 };
+
+module.exports.routeFor = routeFor;
+module.exports.targetFor = targetFor;

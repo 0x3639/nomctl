@@ -27,7 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci && npm run build
+      - run: npm ci && node --test plugins/llms-txt.test.js && npm run build
         working-directory: website
       - name: Cross-compile
         run: make cross
