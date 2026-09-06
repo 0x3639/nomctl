@@ -1,0 +1,17 @@
+services:
+  relay:
+    image: ghcr.io/0x3639/nomctl-relay:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      RELAY_TELEGRAM_TOKEN: ${RELAY_TELEGRAM_TOKEN:?set the bot token}
+      RELAY_DB: /data/relay.db
+      RELAY_LISTEN: ":8080"
+      RELAY_SILENT_AFTER: 5m
+      RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-}
+      RELAY_TRUSTED_PROXIES: ${RELAY_TRUSTED_PROXIES:-}
+    volumes:
+      - relay-data:/data
+volumes:
+  relay-data:

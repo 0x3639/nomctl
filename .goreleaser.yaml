@@ -1,5 +1,6 @@
-# goreleaser v2 configuration: static linux/amd64 + linux/arm64 archives and a
-# checksums.txt, published to GitHub Releases by .github/workflows/release.yml.
+# goreleaser v2 configuration: static linux/amd64 + linux/arm64 archives for
+# nomctl and nomctl-relay, a checksums.txt, and a container image for the
+# relay, published by .github/workflows/release.yml.
 version: 2
 
 project_name: nomctl
@@ -26,15 +27,60 @@ builds:
       - -X {{ .ModulePath }}/cmd.version={{ .Version }}
       - -X {{ .ModulePath }}/cmd.commit={{ .ShortCommit }}
       - -X {{ .ModulePath }}/cmd.date={{ .Date }}
+      - '{{ if index .Env "NOMCTL_RELAY_URL" }}-X {{ .ModulePath }}/internal/alerts.DefaultRelayURL={{ .Env.NOMCTL_RELAY_URL }}{{ end }}'
+
+  - id: nomctl-relay
+    main: ./cmd/nomctl-relay
+    binary: nomctl-relay
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X {{ .ModulePath }}/internal/relay.Version={{ .Version }}
 
 archives:
-  - id: default
+  - id: nomctl
+    ids:
+      - nomctl
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
       - README.md
+  - id: nomctl-relay
+    ids:
+      - nomctl-relay
+    formats:
+      - tar.gz
+    name_template: "nomctl-relay_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - deploy/relay/README.md
+
+dockers_v2:
+  - id: relay
+    ids:
+      - nomctl-relay
+    images:
+      - ghcr.io/0x3639/nomctl-relay
+    tags:
+      - "{{ .Version }}"
+      - latest
+    dockerfile: deploy/relay/Dockerfile.release
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.source: https://github.com/0x3639/nomctl
+      org.opencontainers.image.version: "{{ .Version }}"
 
 checksum:
   name_template: checksums.txt

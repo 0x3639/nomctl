@@ -7,7 +7,11 @@ BINARY      := nomctl
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE        ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS     := -s -w -X $(MODULE)/cmd.version=$(VERSION) -X $(MODULE)/cmd.commit=$(COMMIT) -X $(MODULE)/cmd.date=$(DATE)
+RELAY_URL   ?=
+LDFLAGS     := -s -w -X $(MODULE)/cmd.version=$(VERSION) -X $(MODULE)/cmd.commit=$(COMMIT) -X $(MODULE)/cmd.date=$(DATE) -X $(MODULE)/internal/relay.Version=$(VERSION)
+ifneq ($(RELAY_URL),)
+LDFLAGS     += -X $(MODULE)/internal/alerts.DefaultRelayURL=$(RELAY_URL)
+endif
 GOFLAGS     := -trimpath
 export CGO_ENABLED=0
 
@@ -15,12 +19,15 @@ export CGO_ENABLED=0
 
 all: build
 
-build: ## Build for the host platform into ./bin
+build: ## Build both binaries for the host platform into ./bin
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY) .
+	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/nomctl-relay ./cmd/nomctl-relay
 
 cross: ## Cross-compile static linux/amd64 and linux/arm64 binaries
 	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-amd64 .
 	GOOS=linux GOARCH=arm64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY)-linux-arm64 .
+	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/nomctl-relay-linux-amd64 ./cmd/nomctl-relay
+	GOOS=linux GOARCH=arm64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/nomctl-relay-linux-arm64 ./cmd/nomctl-relay
 
 test: ## Run unit tests
 	go test ./...

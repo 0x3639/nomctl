@@ -163,6 +163,12 @@ func Enable(unit string) error { return execx.Run("systemctl", "enable", unit) }
 // EnableNow enables and starts a unit.
 func EnableNow(unit string) error { return execx.Run("systemctl", "enable", "--now", unit) }
 
+// Disable disables and stops a unit.
+func Disable(unit string) error { return execx.Run("systemctl", "disable", "--now", unit) }
+
+// Reload sends SIGHUP to a unit's main process so it re-reads its config.
+func Reload(unit string) error { return execx.Run("systemctl", "kill", "-s", "HUP", unit) }
+
 // IsEnabled reports whether the unit is enabled to start at boot.
 func IsEnabled(unit string) bool {
 	return execx.New("systemctl", "is-enabled", "--quiet", unit).Quiet() == nil
