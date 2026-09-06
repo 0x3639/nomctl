@@ -3,6 +3,8 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -182,6 +184,18 @@ func TestFormatHealthy(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q in:\n%s", want, text)
 		}
+	}
+}
+
+func TestFormatMissingDataDir(t *testing.T) {
+	srv := fakeNode(t, 1)
+	defer srv.Close()
+	s := testSampler(t, srv.URL)
+	s.diskFree = func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }
+	s.readProps = func(string) (ServiceProps, error) { return ServiceProps{}, errors.New("line one\nline two") }
+	text := Format(s.Take(context.Background()))
+	if !strings.Contains(text, "testdata not found") || strings.Contains(text, "line two") {
+		t.Errorf("Format:\n%s", text)
 	}
 }
 

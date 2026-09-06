@@ -181,9 +181,16 @@ func processLines(s metrics.Sample) []string {
 func hostLines(h metrics.HostSample) []string {
 	return []string{
 		fmt.Sprintf("load %.2f %.2f %.2f   mem %s / %s available", h.Load1, h.Load5, h.Load15, metrics.HumanBytes(h.MemAvailable), metrics.HumanBytes(h.MemTotal)),
-		fmt.Sprintf("%s %s free of %s", h.DataDir, metrics.HumanBytes(h.DataDirFree), metrics.HumanBytes(h.DataDirTotal)),
+		diskLine(h),
 		fmt.Sprintf("pressure cpu %.1f%%   io %.1f%%   mem %.1f%%", h.Pressure.CPU, h.Pressure.IO, h.Pressure.Memory),
 	}
+}
+
+func diskLine(h metrics.HostSample) string {
+	if h.DataDirTotal == 0 {
+		return styleWarn.Render(h.DataDir + " not found")
+	}
+	return fmt.Sprintf("%s %s free of %s", h.DataDir, metrics.HumanBytes(h.DataDirFree), metrics.HumanBytes(h.DataDirTotal))
 }
 
 // progressBar renders a filled bar of the given width for pct in [0,1].

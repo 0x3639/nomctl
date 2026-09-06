@@ -274,7 +274,7 @@ func Format(s Sample) string {
 	line := func(label, text string) { fmt.Fprintf(&b, "%-9s %s\n", label, text) }
 
 	if !s.Service.Found {
-		line("Service", fmt.Sprintf("%s: %s", s.Service.Unit, s.Service.Error))
+		line("Service", fmt.Sprintf("%s: %s", s.Service.Unit, firstLine(s.Service.Error)))
 	} else {
 		up := ""
 		if !s.Service.Since.IsZero() && s.Service.ActiveState == "active" {
@@ -316,9 +316,21 @@ func Format(s Sample) string {
 		line("Process", "not running")
 	}
 	h := s.Host
-	line("Host", fmt.Sprintf("load %.2f %.2f %.2f, mem %s / %s available, %s %s free", h.Load1, h.Load5, h.Load15, HumanBytes(h.MemAvailable), HumanBytes(h.MemTotal), h.DataDir, HumanBytes(h.DataDirFree)))
+	disk := h.DataDir + " " + HumanBytes(h.DataDirFree) + " free"
+	if h.DataDirTotal == 0 {
+		disk = h.DataDir + " not found"
+	}
+	line("Host", fmt.Sprintf("load %.2f %.2f %.2f, mem %s / %s available, %s", h.Load1, h.Load5, h.Load15, HumanBytes(h.MemAvailable), HumanBytes(h.MemTotal), disk))
 	line("Pressure", fmt.Sprintf("cpu %.1f%%, io %.1f%%, mem %.1f%%", h.Pressure.CPU, h.Pressure.IO, h.Pressure.Memory))
 	return b.String()
+}
+
+// firstLine trims a multi-line error to its first line for one-line output.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // HumanBytes renders bytes as KiB/MiB/GiB with one decimal.
