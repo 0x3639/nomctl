@@ -73,6 +73,10 @@ func MoveAside(cfg config.Config, now time.Time, folders []string) (map[string]s
 			continue
 		}
 		dst := filepath.Join(restoreDir, folder+".bak."+stamp)
+		if fsx.Exists(dst) {
+			// mv would nest src inside an existing dst.
+			return moved, fmt.Errorf("%s already exists; aborting before touching data", dst)
+		}
 		// mv handles the backup directory living on another filesystem.
 		if err := execx.Run("mv", src, dst); err != nil {
 			return moved, fmt.Errorf("failed to move %s aside; aborting before touching data: %w", folder, err)

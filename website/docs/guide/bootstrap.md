@@ -21,17 +21,17 @@ The interactive menu has the same under **Restore Zenon from a bootstrap snapsho
 4. The archive is inspected: it must contain `backup/nom.bak/`, `backup/network.bak/` and `backup/consensus.bak/`, nothing else, with no path traversal or symlinks. Its extracted size must fit in the data directory with the same margin.
 5. **Keep (default):** the snapshot is extracted into a staging directory while the node keeps running, then the service is stopped, the current `nom`, `network` and `consensus` are moved to `<backup dir>/restore/<dir>.bak.<timestamp>`, the staged directories are renamed into place and the service starts.
    **`--discard`:** the service is stopped and the current directories deleted first, then the snapshot is extracted and installed. Use it when the disk cannot hold both copies.
-6. Once the service has started, the archive and sidecar are deleted. The wallet, `config.json` and `cache` are never touched.
+6. Once the service has started, the archive and sidecar are deleted. If that cleanup fails, delete `<backup dir>/bootstrap/` by hand; a leftover verified archive is reused by a later run. The wallet, `config.json` and `cache` are never touched.
 
 If a run fails after the download, run it again: a verified archive already in `<backup dir>/bootstrap/` is reused, not downloaded again.
 
-Once the node has synced, delete the safety copy (`/backup` is the default `NOMCTL_BACKUP_DIR`):
+Once the node has synced, delete the safety copy under `<backup dir>/restore/`. With the default `NOMCTL_BACKUP_DIR`:
 
 ```bash
 sudo rm -r /backup/restore/*.bak.*
 ```
 
-If the swap fails after the node was stopped, the previous data is put back and the node restarted; the verified download stays in `<backup dir>/bootstrap/` so running the command again skips the download. With `--discard` there is nothing to put back: the node stays stopped and running the command again finishes the job from the kept download.
+If the swap fails after the node was stopped, nomctl puts the previous data back and restarts the node; the verified download stays in `<backup dir>/bootstrap/` so running the command again skips the download. If putting the data back or the restart itself fails, the error says so and the node is left stopped: check `<backup dir>/restore/` and the data directory before starting it. With `--discard` there is nothing to put back: the node stays stopped and running the command again finishes the job from the kept download.
 
 ## Snapshot source
 

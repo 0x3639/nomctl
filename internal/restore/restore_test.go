@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/config"
@@ -22,6 +23,25 @@ func TestResolve(t *testing.T) {
 	}
 	if got := Resolve(cfg, "./x.tar.gz"); got != "./x.tar.gz" {
 		t.Errorf("Resolve relative path = %q", got)
+	}
+}
+
+func TestMoveAsideRefusesExistingDestination(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{ZnnDir: filepath.Join(root, "znn"), BackupDir: filepath.Join(root, "backup")}
+	if err := os.MkdirAll(filepath.Join(cfg.ZnnDir, "nom"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	if err := os.MkdirAll(filepath.Join(cfg.BackupDir, "restore", "nom.bak.1700000000"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := MoveAside(cfg, now, []string{"nom"})
+	if err == nil || len(moved) != 0 {
+		t.Fatalf("expected refusal, got moved=%v err=%v", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ZnnDir, "nom")); err != nil {
+		t.Error("nom must stay in place")
 	}
 }
 
