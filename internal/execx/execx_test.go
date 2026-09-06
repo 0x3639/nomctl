@@ -2,8 +2,11 @@ package execx
 
 import (
 	"bytes"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestOutputAndSink(t *testing.T) {
@@ -58,5 +61,23 @@ func TestLastLines(t *testing.T) {
 	}
 	if lastLines("", 3) != "" {
 		t.Error("empty input should give empty output")
+	}
+}
+
+func TestInteractiveUntilInterruptForwardsSIGINT(t *testing.T) {
+	Configure(false, nil)
+	done := make(chan error, 1)
+	go func() { done <- New("sleep", "30").InteractiveUntilInterrupt() }()
+	time.Sleep(300 * time.Millisecond) // let the child start
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if ExitCode(err) != -1 {
+			t.Errorf("child should die from the forwarded signal, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("child did not receive SIGINT; nomctl would hang on Ctrl+C")
 	}
 }

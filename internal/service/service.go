@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"syscall"
 
 	"github.com/0x3639/nomctl/internal/execx"
@@ -201,10 +200,9 @@ func Logs(name string, follow bool, lines int) error {
 	if !follow {
 		return execx.New("journalctl", "-u", unit, "-n", fmt.Sprint(lines), "--no-pager").Interactive()
 	}
-	// Ctrl+C is meant for journalctl; keep nomctl alive so it exits cleanly.
-	signal.Ignore(os.Interrupt)
-	defer signal.Reset(os.Interrupt)
-	err := execx.New("journalctl", "-u", unit, "-f", "--no-pager").Interactive()
+	// Ctrl+C is meant for journalctl: it is forwarded to it and treated as a
+	// normal end of the follow.
+	err := execx.New("journalctl", "-u", unit, "-f", "--no-pager").InteractiveUntilInterrupt()
 	if err != nil && interrupted(err) {
 		return nil
 	}

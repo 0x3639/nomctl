@@ -12,8 +12,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // Runner holds the process-wide execution settings.
@@ -134,6 +136,44 @@ func (c *Cmd) Interactive() error {
 	cmd.Stdout = c.r.Stdout
 	cmd.Stderr = c.r.Stderr
 	if err := cmd.Run(); err != nil {
+		return &Error{Cmd: c.String(), Err: err}
+	}
+	return nil
+}
+
+// InteractiveUntilInterrupt is Interactive for long-running foreground
+// commands such as `journalctl -f`: Ctrl+C is caught here (so nomctl itself
+// survives it) and forwarded to the child, whose termination ends the call.
+//
+// signal.Ignore must not be used for this: an ignored disposition is
+// inherited across exec, so the child would ignore Ctrl+C as well.
+func (c *Cmd) InteractiveUntilInterrupt() error {
+	cmd := c.build()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = c.r.Stdout
+	cmd.Stderr = c.r.Stderr
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+
+	if err := cmd.Start(); err != nil {
+		return &Error{Cmd: c.String(), Err: err}
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case sig := <-sigs:
+				_ = cmd.Process.Signal(sig)
+			case <-done:
+				return
+			}
+		}
+	}()
+	err := cmd.Wait()
+	close(done)
+	if err != nil {
 		return &Error{Cmd: c.String(), Err: err}
 	}
 	return nil
