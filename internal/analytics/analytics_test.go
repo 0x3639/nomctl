@@ -55,6 +55,7 @@ func TestNeedsNodeScrapeJob(t *testing.T) {
 
 func TestGrafanaClient(t *testing.T) {
 	var created []string
+	var passwordChanged string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			// The login page needs no auth; "down" simulates a 503.
@@ -66,6 +67,30 @@ func TestGrafanaClient(t *testing.T) {
 			return
 		}
 		u, p, ok := r.BasicAuth()
+		if r.URL.Path == "/api/user/password" && r.Method == http.MethodPut {
+			// Only the initial password may change itself, as in Grafana.
+			if !ok || u != "admin" || p != "admin" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["oldPassword"] != "admin" || body["newPassword"] == "" || body["newPassword"] != body["confirmNew"] {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			passwordChanged = body["newPassword"]
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/api/user" {
+			if ok && u == "admin" && (p == "secret" || (passwordChanged != "" && p == passwordChanged)) {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+			return
+		}
 		if !ok || u != "admin" || p != "secret" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -142,5 +167,46 @@ func TestGrafanaClient(t *testing.T) {
 	}
 	if err := g.PostDashboard([]byte(`{}`)); err == nil {
 		t.Error("teapot status should be an error")
+	}
+
+	// Password application: configured password rejected, default accepted,
+	// change succeeds, configured password now works.
+	if ok, err := g.Authenticated(); err != nil || !ok {
+		t.Errorf("configured creds should authenticate: %v %v", ok, err)
+	}
+	initial := NewGrafana("admin", "admin")
+	initial.BaseURL = srv.URL
+	if ok, _ := initial.Authenticated(); ok {
+		t.Error("default password must not authenticate before it is set")
+	}
+	if err := initial.ChangePassword("admin", "newpass"); err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+	if passwordChanged != "newpass" {
+		t.Errorf("password not applied: %q", passwordChanged)
+	}
+	changed := NewGrafana("admin", "newpass")
+	changed.BaseURL = srv.URL
+	if ok, _ := changed.Authenticated(); !ok {
+		t.Error("new password should authenticate")
+	}
+	if err := changed.ChangePassword("wrong", "x"); err == nil {
+		t.Error("wrong old password must fail")
+	}
+}
+
+func TestClientURL(t *testing.T) {
+	cases := map[string]string{"127.0.0.1": "http://127.0.0.1:3000", "0.0.0.0": "http://127.0.0.1:3000", "": "http://127.0.0.1:3000",
+		"::": "http://[::1]:3000", "10.0.0.5": "http://10.0.0.5:3000", "fd00::5": "http://[fd00::5]:3000"}
+	for in, want := range cases {
+		if got := ClientURL(in); got != want {
+			t.Errorf("ClientURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestGrafanaDropIn(t *testing.T) {
+	if got := GrafanaDropIn("127.0.0.1"); got != "[Service]\nEnvironment=GF_SERVER_HTTP_ADDR=127.0.0.1\n" {
+		t.Errorf("drop-in = %q", got)
 	}
 }

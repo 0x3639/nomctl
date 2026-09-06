@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -26,6 +28,19 @@ type Grafana struct {
 // NewGrafana builds a client with basic-auth credentials.
 func NewGrafana(user, password string) *Grafana {
 	return &Grafana{BaseURL: grafanaURL, User: user, Password: password, Client: &http.Client{Timeout: 30 * time.Second}}
+}
+
+// ClientURL returns the endpoint to reach a Grafana bound to httpAddr:
+// wildcard addresses map to loopback, anything else is used as given.
+func ClientURL(httpAddr string) string {
+	host := strings.TrimSpace(httpAddr)
+	switch host {
+	case "", "0.0.0.0", "*":
+		host = "127.0.0.1"
+	case "::", "[::]":
+		host = "::1"
+	}
+	return "http://" + net.JoinHostPort(strings.Trim(host, "[]"), "3000")
 }
 
 func (g *Grafana) do(method, path string, body []byte) (int, []byte, error) {
@@ -71,6 +86,22 @@ func (g *Grafana) WaitReady(timeout time.Duration) error {
 			return errors.New("Grafana did not start in time")
 		}
 		time.Sleep(time.Second)
+	}
+}
+
+// Authenticated reports whether the client's credentials are accepted.
+func (g *Grafana) Authenticated() (bool, error) {
+	code, _, err := g.do(http.MethodGet, "/api/user", nil)
+	if err != nil {
+		return false, err
+	}
+	switch code {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusUnauthorized:
+		return false, nil
+	default:
+		return false, fmt.Errorf("check credentials: HTTP %d", code)
 	}
 }
 
@@ -120,6 +151,23 @@ func (g *Grafana) CreateDatasource(def map[string]any) error {
 	}
 	if code < 200 || code > 299 {
 		return fmt.Errorf("create datasource: HTTP %d: %s", code, bytes.TrimSpace(data))
+	}
+	return nil
+}
+
+// ChangePassword sets the current user's password via PUT /api/user/password,
+// authenticating with the client's current credentials.
+func (g *Grafana) ChangePassword(oldPassword, newPassword string) error {
+	body, err := json.Marshal(map[string]string{"oldPassword": oldPassword, "newPassword": newPassword, "confirmNew": newPassword})
+	if err != nil {
+		return err
+	}
+	code, data, err := g.do(http.MethodPut, "/api/user/password", body)
+	if err != nil {
+		return err
+	}
+	if code < 200 || code > 299 {
+		return fmt.Errorf("change password: HTTP %d: %s", code, bytes.TrimSpace(data))
 	}
 	return nil
 }

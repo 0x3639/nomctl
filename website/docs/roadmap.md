@@ -18,11 +18,6 @@ Planned features in priority order. Each gets a design spec in the repository un
 - **Network check**: confirm port 35995/TCP is reachable from outside and count inbound versus outbound peers.
 - **Metrics exporter**: a Prometheus `/metrics` endpoint fed by the sampler, scraped by the analytics stack, plus a nomctl Grafana dashboard.
 
-## Hardening follow-ups
-
-- The generated `go-zenon` unit stops the node with `pkill -9 znnd`, inherited from the bash toolkit. On a host running more than one znnd it would kill all of them; the unit should target `$MAINPID` or rely on systemd's own kill handling.
-- `analytics install` does not change Grafana's initial `admin` / `admin` password; see [Analytics](/guide/analytics) for the manual steps. A future release should set it from `NOMCTL_GRAFANA_ADMIN_PASSWORD` on first install and bind Grafana to localhost.
-
 ## Later
 
 - **Benchmark**: disk, memory and CPU against node requirements before deploying.

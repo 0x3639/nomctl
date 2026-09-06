@@ -34,6 +34,7 @@ const (
 func Install(cfg config.Config) error {
 	ui.Section(os.Stderr, "==== ANALYTICS STACK SETUP ====")
 	g := NewGrafana(cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword)
+	g.BaseURL = ClientURL(cfg.GrafanaHTTPAddr)
 
 	steps := []struct {
 		title string
@@ -43,7 +44,8 @@ func Install(cfg config.Config) error {
 		{"Installing prerequisites…", installPrerequisites, "failed to install prerequisites"},
 		{"Installing Node Exporter…", func() error { return installNodeExporter(cfg) }, "failed to install Node Exporter"},
 		{"Installing Prometheus…", func() error { return installPrometheus(cfg) }, "failed to install Prometheus"},
-		{"Installing Grafana…", func() error { return installGrafana(g) }, "failed to install Grafana"},
+		{"Installing Grafana…", func() error { return installGrafana(cfg, g) }, "failed to install Grafana"},
+		{"Securing Grafana…", func() error { return secureGrafana(cfg, g) }, "failed to secure Grafana"},
 		{"Configuring Grafana datasources…", func() error {
 			if err := configurePrometheusDatasource(g); err != nil {
 				return err
@@ -62,7 +64,11 @@ func Install(cfg config.Config) error {
 	if err := ui.Step("Importing dashboards…", func() error { return importDefaultDashboards(g) }); err != nil {
 		slog.Warn("Some dashboards failed to import: " + err.Error())
 	}
-	logx.Success(fmt.Sprintf("Analytics stack installed successfully. Access Grafana at http://<host>:3000 as %s.", cfg.GrafanaAdminUser))
+	access := fmt.Sprintf("Analytics stack installed successfully. Grafana listens on %s:3000 as %s", cfg.GrafanaHTTPAddr, cfg.GrafanaAdminUser)
+	if cfg.GrafanaHTTPAddr == config.DefaultGrafanaHTTPAddr {
+		access += "; reach it with: ssh -L 3000:127.0.0.1:3000 root@<host>"
+	}
+	logx.Success(access + ".")
 	return nil
 }
 
@@ -303,8 +309,17 @@ func installPrometheus(cfg config.Config) error {
 	return nil
 }
 
+// grafanaDropIn is the systemd drop-in that binds Grafana to the configured
+// address. Grafana reads GF_SERVER_HTTP_ADDR, so no grafana.ini edit is needed.
+const grafanaDropIn = "/etc/systemd/system/grafana-server.service.d/nomctl.conf"
+
+// GrafanaDropIn renders the bind-address drop-in.
+func GrafanaDropIn(httpAddr string) string {
+	return fmt.Sprintf("[Service]\nEnvironment=GF_SERVER_HTTP_ADDR=%s\n", httpAddr)
+}
+
 // installGrafana converges the Grafana package install and service state.
-func installGrafana(g *Grafana) error {
+func installGrafana(cfg config.Config, g *Grafana) error {
 	const unit = "grafana-server"
 	if !dpkgInstalled("grafana") {
 		slog.Info("Installing Grafana…")
@@ -333,13 +348,56 @@ func installGrafana(g *Grafana) error {
 	} else {
 		slog.Info("Grafana package already installed.")
 	}
-	if err := service.EnsureRunning(unit, false); err != nil {
+	// Bind address via drop-in; a change restarts Grafana.
+	want := GrafanaDropIn(cfg.GrafanaHTTPAddr)
+	current, _ := os.ReadFile(grafanaDropIn)
+	reload := false
+	if string(current) != want {
+		if err := os.MkdirAll(filepath.Dir(grafanaDropIn), 0o755); err != nil {
+			return err
+		}
+		if err := service.WriteUnit(grafanaDropIn, want); err != nil {
+			return err
+		}
+		reload = true
+	}
+	if err := service.EnsureRunning(unit, reload); err != nil {
 		return err
+	}
+	if reload && service.IsActive(unit) {
+		if err := service.RestartUnit(unit); err != nil {
+			return err
+		}
 	}
 	if err := g.WaitReady(grafanaWait); err != nil {
 		return err
 	}
-	logx.Success("Grafana installed and running.")
+	logx.Success(fmt.Sprintf("Grafana installed and running on %s:3000.", cfg.GrafanaHTTPAddr))
+	return nil
+}
+
+// secureGrafana applies the configured admin password. Grafana starts with
+// admin/admin; if the configured password differs and the configured one is
+// rejected while the default still works, the password is changed.
+func secureGrafana(cfg config.Config, g *Grafana) error {
+	if cfg.GrafanaAdminPassword == config.DefaultGrafanaAdminPassword {
+		slog.Warn("Grafana is using the default admin password; set NOMCTL_GRAFANA_ADMIN_PASSWORD and rerun analytics install to change it")
+		return nil
+	}
+	if ok, _ := g.Authenticated(); ok {
+		slog.Info("Grafana admin password already applied.")
+		return nil
+	}
+	initial := NewGrafana(cfg.GrafanaAdminUser, config.DefaultGrafanaAdminPassword)
+	initial.BaseURL = g.BaseURL
+	initial.Client = g.Client
+	if ok, err := initial.Authenticated(); err != nil || !ok {
+		return fmt.Errorf("neither the configured Grafana password nor the default works; set NOMCTL_GRAFANA_ADMIN_PASSWORD to the current password")
+	}
+	if err := initial.ChangePassword(config.DefaultGrafanaAdminPassword, cfg.GrafanaAdminPassword); err != nil {
+		return err
+	}
+	logx.Success("Grafana admin password set from NOMCTL_GRAFANA_ADMIN_PASSWORD.")
 	return nil
 }
 

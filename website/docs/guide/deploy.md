@@ -31,7 +31,7 @@ Group=root
 Type=simple
 SuccessExitStatus=SIGKILL 9
 ExecStart=/usr/local/bin/znnd
-ExecStop=/usr/bin/pkill -9 znnd
+KillMode=control-group
 Restart=on-failure
 TimeoutStopSec=10s
 TimeoutStartSec=10s
@@ -43,9 +43,11 @@ WantedBy=multi-user.target
 
 From the menu, deploy offers `zenon-network`, `hypercore-one` or a custom URL, then lists the remote branches with `master` first. From the command line pass `--repo` and `--branch`, or set `NOMCTL_REPO_URL` and `NOMCTL_BRANCH_NAME`.
 
+Stopping sends SIGTERM to the service's own processes and SIGKILL after 10 seconds; nothing outside the unit's cgroup is touched, so several nodes can share a host. (The bash toolkit's unit ran `pkill -9 znnd`, which would have killed all of them.)
+
 ## Redeploying
 
-Running `deploy` again rebuilds from the branch head and restarts the service. The previous checkout is kept as `/opt/nomctl/go-zenon-<timestamp>`. Deploy takes the node-data lock, so it cannot overlap a backup, restore or resync.
+Running `deploy` again rebuilds from the branch head and restarts the service. The previous checkout is kept as `/opt/nomctl/go-zenon-<timestamp>`. If the unit file on disk differs from the current definition, for example a unit written by an older nomctl, it is rewritten. Deploy takes the node-data lock, so it cannot overlap a backup, restore or resync.
 
 ## Node configuration
 

@@ -35,7 +35,7 @@ func TestUnitFile(t *testing.T) {
 	for _, want := range []string{
 		"Description=znnd service",
 		"ExecStart=/usr/local/bin/znnd",
-		"ExecStop=/usr/bin/pkill -9 znnd",
+		"KillMode=control-group",
 		"LimitNOFILE=32768",
 		"SuccessExitStatus=SIGKILL 9",
 		"WantedBy=multi-user.target",
@@ -43,5 +43,8 @@ func TestUnitFile(t *testing.T) {
 		if !strings.Contains(unit, want) {
 			t.Errorf("unit missing %q:\n%s", want, unit)
 		}
+	}
+	if strings.Contains(unit, "pkill") {
+		t.Error("the unit must not kill every znnd on the host")
 	}
 }

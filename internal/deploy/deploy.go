@@ -217,7 +217,7 @@ Group=root
 Type=simple
 SuccessExitStatus=SIGKILL 9
 ExecStart=%[2]s
-ExecStop=/usr/bin/pkill -9 %[1]s
+KillMode=control-group
 Restart=on-failure
 TimeoutStopSec=10s
 TimeoutStartSec=10s
@@ -226,18 +226,26 @@ WantedBy=multi-user.target
 `, cfg.BinaryName, cfg.BinaryPath())
 }
 
-// CreateService writes (if absent), reloads and enables the node unit.
+// CreateService writes the node unit when it is missing or differs from
+// what nomctl renders (so fixes to the unit reach existing nodes on their
+// next deploy), then reloads and enables it.
 func CreateService(cfg config.Config) error {
 	slog.Info(fmt.Sprintf("Checking if %s is already set up...", cfg.ServiceUnit()))
-	if service.IsActive(cfg.ServiceName) {
-		slog.Info(fmt.Sprintf("%s is already active. Skipping setup.", cfg.ServiceUnit()))
-		return nil
-	}
-	if fsx.Exists(cfg.ServiceUnitPath()) {
-		slog.Info(fmt.Sprintf("%s already exists, but it's not active. Setting it up...", cfg.ServiceUnit()))
-	} else {
+	want := UnitFile(cfg)
+	current, err := os.ReadFile(cfg.ServiceUnitPath())
+	changed := false
+	switch {
+	case err == nil && string(current) == want:
+		slog.Info(cfg.ServiceUnit() + " is up to date.")
+	case err == nil:
+		slog.Info("Updating " + cfg.ServiceUnit() + " to the current unit definition...")
+		if err := service.WriteUnit(cfg.ServiceUnitPath(), want); err != nil {
+			return err
+		}
+		changed = true
+	default:
 		slog.Info("Creating " + cfg.ServiceUnit() + "...")
-		if err := service.WriteUnit(cfg.ServiceUnitPath(), UnitFile(cfg)); err != nil {
+		if err := service.WriteUnit(cfg.ServiceUnitPath(), want); err != nil {
 			return err
 		}
 	}
@@ -246,6 +254,14 @@ func CreateService(cfg config.Config) error {
 	}
 	if err := service.Enable(cfg.ServiceUnit()); err != nil {
 		return err
+	}
+	// A changed unit only takes effect on the next (re)start; deploy stops
+	// the node before building, but apply it here too in case it is running.
+	if changed && service.IsActive(cfg.ServiceName) {
+		slog.Info("Restarting " + cfg.ServiceUnit() + " to apply the updated unit...")
+		if err := service.RestartUnit(cfg.ServiceUnit()); err != nil {
+			return err
+		}
 	}
 	logx.Success(cfg.ServiceUnit() + " is set up.")
 	return nil
