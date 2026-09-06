@@ -106,12 +106,11 @@ func setup(cmd *cobra.Command) error {
 	cfg = c
 
 	requiresRoot := cmd.Annotations[annotationRoot] == "true"
-	if requiresRoot && os.Geteuid() != 0 {
-		return fmt.Errorf("%s must be run as root (try: sudo %s)", cmd.CommandPath(), cmd.CommandPath())
-	}
+	isRoot := os.Geteuid() == 0
 
+	// Only privileged commands write the log file (it lives under /var/log).
 	var logFile string
-	if requiresRoot {
+	if requiresRoot && isRoot {
 		logFile = cfg.LogFile
 	}
 	f, closer := logx.Setup(cfg.Debug, logFile)
@@ -124,6 +123,10 @@ func setup(cmd *cobra.Command) error {
 	ui.SetDebug(cfg.Debug)
 	slog.Debug("configuration loaded", "config", fmt.Sprintf("%+v", cfg))
 
+	if requiresRoot && !isRoot {
+		return fmt.Errorf("%s must be run as root (try: sudo %s)", cmd.CommandPath(), cmd.CommandPath())
+	}
+
 	if requiresRoot && !cfg.SkipPreflight {
 		ui.Section(os.Stderr, "==== PRE-FLIGHT CHECKS ====")
 		if err := preflight.Run(); err != nil {
@@ -133,3 +136,6 @@ func setup(cmd *cobra.Command) error {
 	}
 	return nil
 }
+
+// rootOnly returns the annotation map marking a command as privileged.
+func rootOnly() map[string]string { return map[string]string{annotationRoot: "true"} }
