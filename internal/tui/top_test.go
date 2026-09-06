@@ -40,6 +40,15 @@ func TestRenderTop(t *testing.T) {
 	}
 }
 
+func TestRenderTopPillar(t *testing.T) {
+	s := fixedSample()
+	s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "MyPillar", Rank: 11, Produced: 118, Expected: 121}
+	out := stripANSI(renderTop(s, nil, 100, s.Taken))
+	if !strings.Contains(out, "pillar MyPillar rank 11, produced 118 / 121 expected this epoch, 3 missed") {
+		t.Errorf("pillar line missing:\n%s", out)
+	}
+}
+
 func TestRenderTopUnreachableAndStalled(t *testing.T) {
 	s := fixedSample()
 	s.Node = metrics.NodeSample{URL: node.DefaultURL, Error: "connection refused"}

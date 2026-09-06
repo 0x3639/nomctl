@@ -46,6 +46,11 @@ type Sampler interface {
 	Take(ctx context.Context) metrics.Sample
 }
 
+// pillarSetter is implemented by *metrics.Sampler to receive the pillar name.
+type pillarSetter interface {
+	SetPillarName(name string)
+}
+
 // Daemon evaluates rules over samples and reports transitions.
 type Daemon struct {
 	cfg       Config
@@ -64,6 +69,9 @@ type Daemon struct {
 
 // NewDaemon wires a daemon. cfgPath is re-read on reload.
 func NewDaemon(cfg Config, cfgPath, statePath string, sampler Sampler, client *Client) *Daemon {
+	if ps, ok := sampler.(pillarSetter); ok {
+		ps.SetPillarName(cfg.PillarName)
+	}
 	return &Daemon{
 		cfg:       cfg,
 		cfgPath:   cfgPath,
@@ -120,6 +128,9 @@ func (d *Daemon) apply(cfg Config) error {
 		d.state.LastError = ""
 	}
 	d.cfg = cfg
+	if ps, ok := d.sampler.(pillarSetter); ok {
+		ps.SetPillarName(cfg.PillarName)
+	}
 	return nil
 }
 

@@ -64,6 +64,18 @@ type HostSample struct {
 	Pressure     Pressure
 }
 
+// PillarSample is this node's pillar, when one is configured.
+type PillarSample struct {
+	Configured bool
+	Found      bool
+	Name       string
+	Rank       int
+	Produced   uint64
+	Expected   uint64
+	Weight     string
+	Error      string `json:",omitempty"`
+}
+
 // NodeSample is the RPC view plus derived values.
 type NodeSample struct {
 	URL             string
@@ -84,6 +96,7 @@ type NodeSample struct {
 	ETA             time.Duration
 	ETAKnown        bool
 	Stalled         bool
+	Pillar          PillarSample
 }
 
 // Sample is one observation of everything.
@@ -107,6 +120,8 @@ type Sampler struct {
 	Node       *node.Client
 	Now        func() time.Time
 	ClockTicks float64
+	// PillarName, when set, adds this pillar's production stats to samples.
+	PillarName string
 
 	unit      string
 	dataDir   string
@@ -119,9 +134,13 @@ type Sampler struct {
 	heights   []heightPoint
 }
 
+// SetPillarName changes the pillar whose stats are sampled ("" for none).
+func (s *Sampler) SetPillarName(name string) { s.PillarName = name }
+
 // NewSampler configures a Sampler for the node described by cfg.
 func NewSampler(cfg config.Config) *Sampler {
 	return &Sampler{
+		PillarName: cfg.PillarName,
 		ProcRoot:   DefaultProcRoot,
 		CgroupRoot: DefaultCgroupRoot,
 		Node:       node.New(node.DefaultURL),
@@ -224,12 +243,29 @@ func (s *Sampler) takeHost() HostSample {
 }
 
 func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
-	n := NodeSample{URL: s.Node.URL}
+	n := NodeSample{URL: s.Node.URL, Pillar: PillarSample{Configured: s.PillarName != "", Name: s.PillarName}}
+	s.Node.PillarName = s.PillarName
 	snap := s.Node.Snapshot(ctx)
 	if snap.Err != nil {
 		n.Error = snap.Err.Error()
 		s.heights = nil
 		return n
+	}
+	switch {
+	case !n.Pillar.Configured:
+	case snap.PillarErr != nil:
+		n.Pillar.Error = snap.PillarErr.Error()
+	case snap.Pillar == nil:
+		n.Pillar.Error = "not found in the pillar list"
+	default:
+		n.Pillar.Found = true
+		n.Pillar.Name = snap.Pillar.Name
+		n.Pillar.Rank = snap.Pillar.Rank
+		n.Pillar.Weight = snap.Pillar.Weight
+		if snap.Pillar.CurrentStats != nil {
+			n.Pillar.Produced = snap.Pillar.CurrentStats.ProducedMomentums
+			n.Pillar.Expected = snap.Pillar.CurrentStats.ExpectedMomentums
+		}
 	}
 	n.Reachable = true
 	n.State = snap.Sync.State
@@ -303,6 +339,9 @@ func Format(s Sample) string {
 		line("Node", fmt.Sprintf("znnd %s (%s), %s", n.Version, n.Commit, sync))
 		line("Peers", fmt.Sprintf("%d connected", n.NumPeers))
 		line("Frontier", fmt.Sprintf("height %s, %s ago", Commas(n.FrontierHeight), HumanDuration(n.FrontierAge)))
+		if n.Pillar.Configured {
+			line("Pillar", PillarText(n.Pillar))
+		}
 	}
 
 	if s.Process.Present {
@@ -331,6 +370,18 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// PillarText renders the pillar line shared by status and top.
+func PillarText(p PillarSample) string {
+	if !p.Found {
+		return fmt.Sprintf("%s: %s", p.Name, p.Error)
+	}
+	missed := ""
+	if p.Expected > p.Produced {
+		missed = fmt.Sprintf(", %d missed", p.Expected-p.Produced)
+	}
+	return fmt.Sprintf("%s rank %d, produced %d / %d expected this epoch%s", p.Name, p.Rank, p.Produced, p.Expected, missed)
 }
 
 // HumanBytes renders bytes as KiB/MiB/GiB with one decimal.

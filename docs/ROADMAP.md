@@ -35,13 +35,15 @@ output remains a possible follow-up.
 MyTonCtrl equivalent: `setup_alert_bot`, `list_alerts`, `enable_alert`,
 `disable_alert`, `test_alert`.
 
-### 2. Pillar awareness — planned
+### 2. Pillar awareness — done (v0.4.0)
 
-Detect whether the node's producing address belongs to a pillar and show
-produced vs expected momentums for the current epoch, weight and rank in
-`nomctl status` and `nomctl top` (via `embedded.pillar.getAll` and
-`getByOwner`). Feeds the missed-momentum alert. Also `nomctl pillars` to list
-all pillars with weight and momentum stats.
+The alerts node name doubles as the pillar name (validated with
+`embedded.pillar.getByName`, overridable with `nomctl alerts set
+pillar.name`). `status` and `top` show rank and produced vs expected
+momentums; `pillar_missed` alerts on missed production and
+`momentums_stalled` on a node whose frontier stops moving regardless of
+sync state. Spec: `docs/superpowers/specs/2026-09-06-pillar-alerts-design.md`.
+A `nomctl pillars` listing is still open.
 
 MyTonCtrl equivalent: validator section of `status`, `vl`.
 
@@ -134,5 +136,8 @@ peers, restarts, pillar stats next to the node_exporter panels.
 
 - Make the RPC endpoint configurable (`NOMCTL_RPC_URL`) for nodes that
   moved the port.
+- znn-sdk-go cannot be used until it builds with CGO disabled (go-zenon's
+  VM pulls in go-ethereum's cgo secp256k1); `internal/node` mirrors its
+  field names so a later switch is mechanical.
 - Context/timeouts for commands run during support-bundle collection.
 - `nomctl logs --since` and `--grep` passthroughs to journalctl.

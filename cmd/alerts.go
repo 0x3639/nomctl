@@ -17,6 +17,7 @@ import (
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/metrics"
+	"github.com/0x3639/nomctl/internal/node"
 	"github.com/0x3639/nomctl/internal/service"
 	"github.com/0x3639/nomctl/internal/tui"
 	"github.com/0x3639/nomctl/internal/ui"
@@ -102,6 +103,16 @@ func alertsSetup(cmd *cobra.Command) error {
 		acfg.Interval = existing.Interval
 	}
 	acfg.RelayURL, acfg.NodeID, acfg.Secret, acfg.Name = relayURL, resp.NodeID, resp.Secret, name
+	// The node name doubles as the pillar name when a pillar has it.
+	acfg.PillarName = ""
+	if info, err := lookupPillar(ctx, name); err != nil {
+		fmt.Fprintf(os.Stderr, "could not check whether %q is a pillar (%v); set it later with: nomctl alerts set pillar.name %s\n", name, err, name)
+	} else if info != nil {
+		acfg.PillarName = info.Name
+		logx.Success(fmt.Sprintf("Monitoring pillar %s (rank %d): missed momentums will alert", info.Name, info.Rank))
+	} else {
+		fmt.Fprintf(os.Stderr, "No pillar named %q; monitoring as a full node. If this node runs a pillar: nomctl alerts set pillar.name <pillar>\n", name)
+	}
 	if err := acfg.Save(alerts.DefaultConfigPath); err != nil {
 		return err
 	}
@@ -171,6 +182,11 @@ var alertsRunCmd = &cobra.Command{
 	},
 }
 
+// lookupPillar asks the local node whether a pillar with this name exists.
+func lookupPillar(ctx context.Context, name string) (*node.PillarInfo, error) {
+	return node.New(node.DefaultURL).PillarByName(ctx, name)
+}
+
 // backupChecker feeds the backup_stale rule from the timer state and archives.
 // The cadence comes from the installed timer unit, not this process's env.
 func backupChecker() alerts.BackupInfo {
@@ -200,6 +216,11 @@ var alertsStatusCmd = &cobra.Command{
 			return nil
 		}
 		fmt.Fprintf(out, "%-10s %s (node %s)\n", "Node", acfg.Name, acfg.NodeID)
+		if acfg.PillarName != "" {
+			fmt.Fprintf(out, "%-10s %s\n", "Pillar", acfg.PillarName)
+		} else {
+			fmt.Fprintf(out, "%-10s none (full node); set with: nomctl alerts set pillar.name <pillar>\n", "Pillar")
+		}
 		fmt.Fprintf(out, "%-10s %s\n", "Relay", acfg.RelayURL)
 		svc := "inactive"
 		if service.IsActive(alerts.UnitName) {
@@ -267,6 +288,9 @@ var alertsListCmd = &cobra.Command{
 			fmt.Fprintf(out, "%-18s %-8s %-9s %s\n", name, string(info.Severity), state, strings.Join(th, " "))
 		}
 		fmt.Fprintf(out, "%-18s %-8s %-9s %s\n", "node_silent", "critical", "relay", "raised by the relay after 5m without a heartbeat")
+		if acfg.PillarName == "" {
+			fmt.Fprintln(out, "\npillar_missed is inactive until a pillar name is set: nomctl alerts set pillar.name <pillar>")
+		}
 		return nil
 	},
 }
@@ -298,13 +322,25 @@ var alertsDisableCmd = &cobra.Command{Use: "disable <alert>", Short: "Disable an
 
 var alertsSetCmd = &cobra.Command{
 	Use:         "set <alert>.<setting> <value>",
-	Short:       "Change an alert threshold, e.g. disk_low.min_free_gb 20",
+	Short:       "Change an alert threshold (e.g. disk_low.min_free_gb 20) or pillar.name",
 	Args:        cobra.ExactArgs(2),
 	Annotations: rootOnly(),
 	RunE: func(_ *cobra.Command, args []string) error {
 		acfg, err := alerts.Load(alerts.DefaultConfigPath)
 		if err != nil {
 			return fmt.Errorf("alerts are not set up (%w); run: sudo nomctl alerts setup", err)
+		}
+		if args[0] == "pillar.name" && strings.TrimSpace(args[1]) != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			info, err := lookupPillar(ctx, strings.TrimSpace(args[1]))
+			if err != nil {
+				return fmt.Errorf("cannot verify pillar %q with the local node: %w", args[1], err)
+			}
+			if info == nil {
+				return fmt.Errorf("no pillar named %q is registered", args[1])
+			}
+			args[1] = info.Name
 		}
 		if err := acfg.Set(args[0], args[1]); err != nil {
 			return err
@@ -384,6 +420,7 @@ up the relay side).`,
 
 func init() {
 	tui.AlertsSetup = func() error { return alertsSetup(alertsSetupCmd) }
+	tui.PillarName = pillarName
 	tui.AlertsStatus = func() error { return alertsStatusCmd.RunE(alertsStatusCmd, nil) }
 	tui.AlertsPaired = func() bool {
 		acfg, err := alerts.Load(alerts.DefaultConfigPath)

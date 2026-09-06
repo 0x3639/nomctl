@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,11 +12,12 @@ import (
 func rpcServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
 		var req struct {
 			ID     any    `json:"id"`
 			Method string `json:"method"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.Unmarshal(raw, &req); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -31,6 +33,16 @@ func rpcServer(t *testing.T) *httptest.Server {
 			result = `{"numGoroutine":42,"numCPU":4}`
 		case "ledger.getFrontierMomentum":
 			result = `{"height":100,"timestamp":1700000000,"hash":"deadbeef"}`
+		case "embedded.pillar.getByName":
+			var full struct {
+				Params []string `json:"params"`
+			}
+			_ = json.Unmarshal(raw, &full)
+			if len(full.Params) == 1 && full.Params[0] == "MyPillar" {
+				result = `{"name":"MyPillar","rank":11,"ownerAddress":"z1own","producerAddress":"z1prod","currentStats":{"producedMomentums":118,"expectedMomentums":121},"weight":"1234"}`
+			} else {
+				result = `null`
+			}
 		case "boom":
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}`))
 			return
@@ -70,6 +82,30 @@ func TestCalls(t *testing.T) {
 	m, err := c.FrontierMomentum(ctx)
 	if err != nil || m.Height != 100 || m.Timestamp != 1700000000 || m.Time().Unix() != 1700000000 {
 		t.Fatalf("Frontier = %+v, %v", m, err)
+	}
+}
+
+func TestPillarByName(t *testing.T) {
+	srv := rpcServer(t)
+	defer srv.Close()
+	c := New(srv.URL)
+	p, err := c.PillarByName(context.Background(), "MyPillar")
+	if err != nil || p == nil || p.Rank != 11 || p.CurrentStats == nil || p.CurrentStats.ProducedMomentums != 118 || p.CurrentStats.ExpectedMomentums != 121 || p.Weight != "1234" {
+		t.Fatalf("pillar = %+v, %v", p, err)
+	}
+	p, err = c.PillarByName(context.Background(), "Nobody")
+	if err != nil || p != nil {
+		t.Fatalf("unknown pillar should be nil, nil: %+v %v", p, err)
+	}
+	c.PillarName = "MyPillar"
+	snap := c.Snapshot(context.Background())
+	if snap.Err != nil || snap.Pillar == nil || snap.Pillar.Name != "MyPillar" {
+		t.Fatalf("snapshot pillar: %+v", snap)
+	}
+	c.PillarName = "Nobody"
+	snap = c.Snapshot(context.Background())
+	if snap.Err != nil || snap.Pillar != nil || snap.PillarErr != nil {
+		t.Fatalf("snapshot unknown pillar: %+v", snap)
 	}
 }
 

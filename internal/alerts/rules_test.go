@@ -27,6 +27,10 @@ func series(n int, mut func(i int, s *metrics.Sample)) []metrics.Sample {
 	var h []metrics.Sample
 	for i := range n {
 		s := healthy(base.Add(time.Duration(i) * 30 * time.Second))
+		// A live chain adds about three momentums per 30 s sample.
+		s.Node.FrontierHeight = uint64(1000 + 3*i)
+		s.Node.CurrentHeight = s.Node.FrontierHeight
+		s.Node.TargetHeight = s.Node.FrontierHeight
 		if mut != nil {
 			mut(i, &s)
 		}
@@ -283,5 +287,105 @@ func TestHistoryHelpers(t *testing.T) {
 	}
 	if len(lastN(h, 3)) != 3 || len(lastN(h[:1], 3)) != 1 {
 		t.Error("lastN")
+	}
+}
+
+func TestMomentumsStalled(t *testing.T) {
+	r := rule(t, "momentums_stalled")
+	cfg := DefaultConfig().Rules["momentums_stalled"]
+	if r.Evaluate(series(20, nil), cfg).Firing {
+		t.Error("advancing frontier must not fire")
+	}
+	stuck := func(_ int, s *metrics.Sample) {
+		s.Node.FrontierHeight = 5000
+		s.Node.State, s.Node.StateText = node.Syncing, "syncing"
+	}
+	if r.Evaluate(series(5, stuck), cfg).Firing {
+		t.Error("needs 5 minutes of history")
+	}
+	res := r.Evaluate(series(12, stuck), cfg)
+	if !res.Firing || !strings.Contains(res.Detail, "height 5,000 unchanged for 5m 0s") || !strings.Contains(res.Detail, "state: syncing") {
+		t.Errorf("stuck while claiming to sync: %+v", res)
+	}
+	h := series(12, stuck)
+	h[11].Node.FrontierHeight = 5001
+	if r.Evaluate(h, cfg).Firing {
+		t.Error("any movement in the window clears it")
+	}
+	h = series(12, stuck)
+	h[6].Node.Reachable = false
+	if r.Evaluate(h, cfg).Firing {
+		t.Error("an unreachable sample is not evidence of a stall")
+	}
+	h = series(12, stuck)
+	h[3].Service.ActiveState = "inactive"
+	if r.Evaluate(h, cfg).Firing {
+		t.Error("service down is service_down's job")
+	}
+}
+
+func TestPillarMissed(t *testing.T) {
+	r := rule(t, "pillar_missed")
+	cfg := DefaultConfig().Rules["pillar_missed"]
+	// 70 samples = 35 minutes; expected grows by 1 every 10 samples.
+	producing := func(i int, s *metrics.Sample) {
+		s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64(100 + i/10), Produced: uint64(100 + i/10)}
+	}
+	if r.Evaluate(series(70, producing), cfg).Firing {
+		t.Error("producing every expected momentum must not fire")
+	}
+	missing := func(i int, s *metrics.Sample) {
+		s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64(100 + i/10), Produced: 100}
+	}
+	if r.Evaluate(series(20, missing), cfg).Firing {
+		t.Error("needs 30 minutes of history")
+	}
+	res := r.Evaluate(series(70, missing), cfg)
+	if !res.Firing || !strings.Contains(res.Detail, "P missed") || !strings.Contains(res.Detail, "expected momentums in the last 30m") {
+		t.Errorf("missing all slots: %+v", res)
+	}
+	one := func(i int, s *metrics.Sample) {
+		exp := uint64(100 + i/10)
+		prod := exp
+		if i >= 60 {
+			prod = exp - 1
+		}
+		s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: exp, Produced: prod}
+	}
+	if r.Evaluate(series(70, one), cfg).Firing {
+		t.Error("one missed momentum is below the default threshold of 2")
+	}
+	// Epoch rollover: counters reset mid-window; only the post-reset part counts.
+	rollover := func(i int, s *metrics.Sample) {
+		if i < 40 {
+			s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64(500 + i/10), Produced: 490}
+		} else {
+			s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64((i - 40) / 10), Produced: uint64((i - 40) / 10)}
+		}
+	}
+	if r.Evaluate(series(70, rollover), cfg).Firing {
+		t.Error("misses before the epoch rollover must not count")
+	}
+	// Two misses right after a rollover: not enough post-rollover history yet.
+	freshMisses := func(i int, s *metrics.Sample) {
+		if i < 60 {
+			s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64(500 + i/10), Produced: uint64(500 + i/10)}
+		} else {
+			s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64((i - 60) / 4), Produced: 0}
+		}
+	}
+	if r.Evaluate(series(70, freshMisses), cfg).Firing {
+		t.Error("misses in a 5 minute post-rollover window must wait for a full window")
+	}
+	if !r.Evaluate(series(125, freshMisses), cfg).Firing {
+		t.Error("once the post-rollover window spans 30 minutes the misses fire")
+	}
+	unconfigured := func(i int, s *metrics.Sample) { missing(i, s); s.Node.Pillar.Configured = false }
+	if r.Evaluate(series(70, unconfigured), cfg).Firing {
+		t.Error("no pillar configured means no alert")
+	}
+	notFound := func(i int, s *metrics.Sample) { missing(i, s); s.Node.Pillar.Found = false }
+	if r.Evaluate(series(70, notFound), cfg).Firing {
+		t.Error("unknown pillar means no alert")
 	}
 }

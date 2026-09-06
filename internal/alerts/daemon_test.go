@@ -233,3 +233,32 @@ func TestDaemonReload(t *testing.T) {
 		t.Error("reload did not apply the new threshold")
 	}
 }
+
+// pillarSampler records the pillar name pushed by the daemon.
+type pillarSampler struct {
+	scriptedSampler
+	name string
+}
+
+func (p *pillarSampler) SetPillarName(name string) { p.name = name }
+
+func TestDaemonPassesPillarName(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.PillarName = "MyPillar"
+	ps := &pillarSampler{scriptedSampler: scriptedSampler{now: time.Now, samples: []func(time.Time) metrics.Sample{healthy}}}
+	client, err := NewClient(Config{RelayURL: "http://127.0.0.1:1", NodeID: "n", Secret: base64.StdEncoding.EncodeToString([]byte("s"))}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDaemon(cfg, "", "", ps, client)
+	if ps.name != "MyPillar" {
+		t.Fatalf("sampler pillar = %q", ps.name)
+	}
+	cfg.PillarName = ""
+	if err := d.apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if ps.name != "" {
+		t.Fatal("reload must clear the pillar name")
+	}
+}

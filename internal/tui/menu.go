@@ -126,7 +126,7 @@ func Dispatch(cfg *config.Config, action Action) error {
 	case ActionMonitor:
 		return Monitor(*cfg, true, 20)
 	case ActionStatus:
-		return Top(*cfg, 2*time.Second)
+		return Top(*cfg, 2*time.Second, PillarName())
 	case ActionAlerts:
 		return AlertsAction()
 	case ActionSupport:
@@ -148,6 +148,10 @@ func Dispatch(cfg *config.Config, action Action) error {
 // Version is the nomctl version string recorded in support bundles; the cmd
 // package sets it at startup.
 var Version = "dev"
+
+// PillarName is installed by the cmd package; it returns the configured
+// pillar name for the dashboard.
+var PillarName = func() string { return "" }
 
 // AlertsSetup and AlertsStatus are installed by the cmd package so the menu
 // can reuse the command implementations without an import cycle.

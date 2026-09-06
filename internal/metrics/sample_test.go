@@ -34,9 +34,36 @@ func fakeNode(t *testing.T, height uint64) *httptest.Server {
 			res = `{"numGoroutine":42,"numCPU":4}`
 		case "ledger.getFrontierMomentum":
 			res = `{"height":` + h + `,"timestamp":1700000000,"hash":"h"}`
+		case "embedded.pillar.getByName":
+			res = `{"name":"MyPillar","rank":11,"currentStats":{"producedMomentums":118,"expectedMomentums":121},"weight":"5"}`
 		}
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":` + res + `}`))
 	}))
+}
+
+func TestPillarSample(t *testing.T) {
+	srv := fakeNode(t, 1000)
+	defer srv.Close()
+	s := testSampler(t, srv.URL)
+	smp := s.Take(context.Background())
+	if smp.Node.Pillar.Configured {
+		t.Error("no pillar configured by default")
+	}
+	if strings.Contains(Format(smp), "Pillar") {
+		t.Error("no Pillar line without configuration")
+	}
+	s.PillarName = "MyPillar"
+	smp = s.Take(context.Background())
+	p := smp.Node.Pillar
+	if !p.Configured || !p.Found || p.Rank != 11 || p.Produced != 118 || p.Expected != 121 {
+		t.Errorf("pillar = %+v", p)
+	}
+	if text := Format(smp); !strings.Contains(text, "Pillar    MyPillar rank 11, produced 118 / 121 expected this epoch, 3 missed") {
+		t.Errorf("Format:\n%s", text)
+	}
+	if got := PillarText(PillarSample{Configured: true, Name: "X", Error: "not found in the pillar list"}); got != "X: not found in the pillar list" {
+		t.Errorf("not found text = %q", got)
+	}
 }
 
 func testSampler(t *testing.T, url string) *Sampler {

@@ -106,6 +106,7 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_BINARY_NAME` | `znnd` | Node binary name (also the `cmd/` package built) |
 | `NOMCTL_SERVICE_NAME` | `go-zenon` | systemd service name |
 | `NOMCTL_GO_VERSION` | `1.23.0` | Go toolchain version used to build the node |
+| `NOMCTL_PILLAR_NAME` | unset | Pillar shown by `status`/`top` when alerts are not set up (the alerts config takes precedence) |
 | `NOMCTL_BACKUP_DIR` | `/backup` | Directory that stores backup archives |
 | `NOMCTL_MAX_BACKUPS` | `7` | Number of backups to retain |
 | `NOMCTL_BACKUP_CADENCE_DAYS` | `0` | Days between scheduled backups (0 = every run) |
@@ -138,6 +139,12 @@ nomctl can message you on Telegram when the node needs attention, and again when
 
 Pair as many nodes as you like to the same chat; every message starts with the node's name.
 
+**Pillars.** The node name is also treated as the pillar name: if a registered pillar has that name, setup says "monitoring pillar NAME" and `pillar_missed` becomes active, and `nomctl status` / `top` show the pillar's rank and produced vs expected momentums for the epoch. If the names differ, set it afterwards:
+
+```bash
+sudo nomctl alerts set pillar.name MyPillar    # validated against the pillar list; empty clears it
+```
+
 ### What you get
 
 | Alert | Fires when | Default |
@@ -152,6 +159,8 @@ Pair as many nodes as you like to the same chat; every message starts with the n
 | `fds_high` | more than 80% of the open-file limit in use | `pct=80` |
 | `backup_stale` | the backup timer is enabled and the newest archive is older than cadence + 1 day | |
 | `rpc_unreachable` | service active but local RPC not answering for 5 minutes | `minutes=5` |
+| `momentums_stalled` | the frontier height has not moved for 5 minutes while the service runs and RPC answers, whatever sync state the node claims | `minutes=5` |
+| `pillar_missed` | your pillar's expected momentums grew by 2 more than its produced count over 30 minutes (needs a pillar name, see below) | `minutes=30 missed=2` |
 | `node_silent` | raised by the relay when the node has not reported for 5 minutes (power or network loss) | |
 
 Each alert sends a recovery message when it clears, and a reminder every 10 minutes while it stays active. The daemon samples every 30 seconds.
@@ -186,6 +195,7 @@ Service   go-zenon active (running), pid 1234, 0 restarts, up 3d 4h
 Node      znnd v0.0.7 (a1b2c3d), syncing 1,234,567 / 2,000,000 (61.7%), 5.2 mom/s, ETA 1d 16h
 Peers     14 connected
 Frontier  height 1,234,567, 3s ago
+Pillar    MyPillar rank 12, produced 118 / 121 expected this epoch, 3 missed
 Process   cpu 42.0%, rss 1.9 GiB, threads 38, open files 412 / 32768
 Host      load 1.20 0.90 0.80, mem 3.1 GiB / 7.8 GiB available, /root/.znn 210.0 GiB free
 Pressure  cpu 2.1%, io 15.4%, mem 0.0%
@@ -193,6 +203,7 @@ Pressure  cpu 2.1%, io 15.4%, mem 0.0%
 
 - **Service**: `active (running)` with a restart count that is not climbing is healthy. A growing count means a crash loop; collect a bundle with `--watch`.
 - **Node**: `syncing` with a rate above zero means progress. `synced` with a frontier momentum older than two minutes is shown as `[STALLED]`; restart the service. `not enough peers` usually means port 35995/TCP is blocked inbound or the host has no outbound connectivity.
+- **Pillar** (only when a pillar name is configured): produced should track expected through the epoch; a growing gap means missed production slots, which `pillar_missed` alerts on.
 - **`node rpc unreachable`**: the process is not up, or its HTTP RPC on port 35997 was disabled in `config.json`. The rest of the output is still valid.
 - **Process**: open files near the 32768 limit, or memory close to the host total, predict the two most common crashes.
 - **Host**: less than 15 GB free on the data directory stops backups and will eventually stop the node. IO pressure above about 50% on a syncing node means the disk is the bottleneck.
@@ -264,6 +275,7 @@ The Go module path is declared in `go.mod`; the Makefile and goreleaser read it 
 - The analytics success message no longer prints the Grafana password.
 - Interactive prompt inputs are trimmed of surrounding whitespace before validation.
 - The restore picker lists the 20 newest archives (the bash version listed 50 in a scrolling list).
+- New in v0.4.0: `momentums_stalled` and `pillar_missed` alerts, pillar production in `status`/`top`.
 - New in v0.3.0: Telegram alerts through a shared relay (`nomctl alerts`, `nomctl-relay`).
 - New in v0.2.0: `status`, `top` and `support-bundle`. The bundle is a port of the standalone `collect-znnd-crash.sh` script with a node RPC snapshot and nomctl state added, `--service`/`--data` replaced by `NOMCTL_SERVICE_NAME`/`NOMCTL_ZNN_DIR`, and the default output directory under `/root`.
 - Out-of-range environment values are rejected when used, so a valid flag can override them; the bash version had no validation at all.
