@@ -1,0 +1,8 @@
+Name:	znnd
+State:	S (sleeping)
+Pid:	1234
+Threads:	38
+FDSize:	512
+VmPeak:	 3200000 kB
+VmRSS:	 1900000 kB
+VmSwap:	       0 kB
