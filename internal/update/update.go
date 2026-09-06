@@ -241,9 +241,10 @@ func copyFile(src, dst string) error {
 
 // --- node (go-zenon) update check --------------------------------------------
 
-// RemoteHead returns the commit at the head of branch in repoURL.
-func RemoteHead(repoURL, branch string) (string, error) {
-	out, err := execx.Output("git", "ls-remote", repoURL, "refs/heads/"+branch)
+// RemoteHead returns the commit at the head of branch in repoURL, bounded
+// by ctx.
+func RemoteHead(ctx context.Context, repoURL, branch string) (string, error) {
+	out, err := execx.New("git", "ls-remote", repoURL, "refs/heads/"+branch).Context(ctx).Output()
 	if err != nil {
 		return "", err
 	}
@@ -265,6 +266,7 @@ func SameCommit(short, full string) bool {
 // Check is the cached result of the last update check.
 type Check struct {
 	CheckedAt     time.Time `json:"checked_at"`
+	Repo          string    `json:"repo,omitempty"`
 	NomctlLatest  string    `json:"nomctl_latest,omitempty"`
 	NodeRepo      string    `json:"node_repo,omitempty"`
 	NodeBranch    string    `json:"node_branch,omitempty"`
@@ -295,17 +297,17 @@ func Run(ctx context.Context, opts Options) Check {
 	if opts.CachePath == "" {
 		opts.CachePath = CachePath
 	}
-	if c, ok := load(opts.CachePath); ok && opts.Now().Sub(c.CheckedAt) < opts.TTL && c.NodeRepo == opts.NodeRepo && c.NodeBranch == opts.NodeBranch {
+	if c, ok := load(opts.CachePath); ok && opts.Now().Sub(c.CheckedAt) < opts.TTL && c.Repo == opts.Repo && c.NodeRepo == opts.NodeRepo && c.NodeBranch == opts.NodeBranch {
 		return c
 	}
-	c := Check{CheckedAt: opts.Now(), NodeRepo: opts.NodeRepo, NodeBranch: opts.NodeBranch}
+	c := Check{CheckedAt: opts.Now(), Repo: opts.Repo, NodeRepo: opts.NodeRepo, NodeBranch: opts.NodeBranch}
 	if tag, err := LatestTag(ctx, opts.Repo); err != nil {
 		c.NomctlErr = err.Error()
 	} else {
 		c.NomctlLatest = tag
 	}
 	if opts.NodeRepo != "" {
-		if head, err := RemoteHead(opts.NodeRepo, opts.NodeBranch); err != nil {
+		if head, err := RemoteHead(ctx, opts.NodeRepo, opts.NodeBranch); err != nil {
 			c.NodeRemoteErr = err.Error()
 		} else {
 			c.NodeRemote = head

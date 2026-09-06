@@ -287,3 +287,29 @@ func TestInfoAlertsAreNotReminded(t *testing.T) {
 		t.Fatalf("info alert sent %d times, want 1: %v", count, got)
 	}
 }
+
+func TestInfoAlertResendsWhenDetailChanges(t *testing.T) {
+	relay := &fakeRelay{secret: []byte("secret")}
+	d, now := newTestDaemon(t, relay, healthy)
+	d.cfg.Rules["update_available"] = RuleConfig{Enabled: true}
+	NewerVersion = func(string, string) bool { return true }
+	latest := "v9.9.9"
+	UpdateChecker = func() UpdateInfo { return UpdateInfo{NomctlLatest: latest, NomctlRunning: "0.4.0"} }
+	defer func() { NewerVersion = func(string, string) bool { return false }; UpdateChecker = nil }()
+	steps(d, now, 1) // baseline: already firing, silently
+	UpdateChecker = func() UpdateInfo { return UpdateInfo{} }
+	steps(d, now, 1) // clears
+	UpdateChecker = func() UpdateInfo { return UpdateInfo{NomctlLatest: latest, NomctlRunning: "0.4.0"} }
+	steps(d, now, 5) // fires once
+	latest = "v9.9.10"
+	steps(d, now, 5) // a newer release: announced again, once
+	count := 0
+	for _, n := range relay.names() {
+		if n == "update_available:firing" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected two announcements (one per release), got %d: %v", count, relay.names())
+	}
+}

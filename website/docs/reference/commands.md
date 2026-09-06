@@ -31,7 +31,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | Command | Notes |
 |---|---|
 | `nomctl status [--json] [--wait 2s] [--no-update-check]` | one-screen summary, with update lines when something is newer |
-| `nomctl top [--interval 2s]` | live dashboard, `q` to quit |
+| `nomctl top [--interval 2s] [--no-update-check]` | live dashboard, `q` to quit |
 | `nomctl support-bundle [--watch] [--since "12 hours ago"] [--output DIR] [--poll 10s] [--timeout 0]` | [Support bundle](/troubleshooting/support-bundle) |
 
 ## Alerts

@@ -28,7 +28,7 @@ var topCmd = &cobra.Command{
 			return errors.New("--interval must be at least 500ms")
 		}
 		var notes []string
-		if cfg.UpdateCheck {
+		if cfg.UpdateCheck && !flagNoUpdateCheck {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			c := update.Run(ctx, update.Options{Repo: cfg.ReleaseRepo, NodeRepo: cfg.RepoURL, NodeBranch: cfg.BranchName})
 			cancel()
@@ -42,5 +42,6 @@ var topCmd = &cobra.Command{
 
 func init() {
 	topCmd.Flags().DurationVar(&flagTopInterval, "interval", 2*time.Second, "refresh interval")
+	topCmd.Flags().BoolVar(&flagNoUpdateCheck, "no-update-check", false, "skip the GitHub update check (NOMCTL_UPDATE_CHECK=false)")
 	rootCmd.AddCommand(topCmd)
 }

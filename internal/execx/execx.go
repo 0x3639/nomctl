@@ -6,6 +6,7 @@ package execx
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -64,12 +65,16 @@ type Cmd struct {
 	dir   string
 	env   []string
 	stdin io.Reader
+	ctx   context.Context
 }
 
 // New starts building a command with the global runner.
 func New(name string, args ...string) *Cmd {
 	return &Cmd{r: runner(), name: name, args: args}
 }
+
+// Context bounds the command: it is killed when ctx is done.
+func (c *Cmd) Context(ctx context.Context) *Cmd { c.ctx = ctx; return c }
 
 // Dir sets the working directory.
 func (c *Cmd) Dir(dir string) *Cmd { c.dir = dir; return c }
@@ -85,7 +90,12 @@ func (c *Cmd) String() string {
 }
 
 func (c *Cmd) build() *exec.Cmd {
-	cmd := exec.Command(c.name, c.args...)
+	var cmd *exec.Cmd
+	if c.ctx != nil {
+		cmd = exec.CommandContext(c.ctx, c.name, c.args...)
+	} else {
+		cmd = exec.Command(c.name, c.args...)
+	}
 	cmd.Dir = c.dir
 	cmd.Env = append(os.Environ(), c.r.Env...)
 	cmd.Env = append(cmd.Env, c.env...)

@@ -12,6 +12,7 @@ import (
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/metrics"
 	"github.com/0x3639/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/update"
 )
 
 // historyLen is how many rate points the sparkline keeps.
@@ -127,7 +128,7 @@ func renderTop(s metrics.Sample, history []float64, width int, now time.Time, no
 		panel("PROCESS", processLines(s)...),
 		panel("HOST", hostLines(s.Host)...),
 	}
-	if NodeRemoteCommit != "" && s.Node.Commit != "" && !strings.HasPrefix(strings.ToLower(NodeRemoteCommit), strings.ToLower(s.Node.Commit)) {
+	if NodeRemoteCommit != "" && s.Node.Commit != "" && !update.SameCommit(s.Node.Commit, NodeRemoteCommit) {
 		notes = append(notes, fmt.Sprintf("go-zenon %s has new commits (deployed %s): sudo nomctl deploy", NodeBranch, s.Node.Commit))
 	}
 	for _, n := range notes {

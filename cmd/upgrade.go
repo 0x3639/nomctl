@@ -42,6 +42,9 @@ so the daemon uses the new code.`,
 		if resolved, err := filepath.EvalSymlinks(target); err == nil {
 			target = resolved
 		}
+		if flagUpgradeRollback && (flagUpgradeCheck || flagUpgradeVersion != "") {
+			return errors.New("--rollback cannot be combined with --check or --version")
+		}
 		if flagUpgradeRollback {
 			if err := update.Rollback(target); err != nil {
 				return err

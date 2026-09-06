@@ -2,6 +2,7 @@ package execx
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"syscall"
@@ -97,5 +98,16 @@ func TestStartToFile(t *testing.T) {
 	}
 	if _, err := New("definitely-missing-binary-xyz").StartToFile(path); err == nil {
 		t.Error("missing binary must fail to start")
+	}
+}
+
+func TestContextBoundsCommand(t *testing.T) {
+	Configure(false, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := New("sleep", "30").Context(ctx).Output()
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("command must be killed when the context ends: err=%v elapsed=%s", err, time.Since(start))
 	}
 }

@@ -181,6 +181,11 @@ func (d *Daemon) evaluate(ctx context.Context, now time.Time) {
 			prev = AlertState{Firing: res.Firing, Since: now}
 		}
 		if res.Firing {
+			// Informational alerts are never reminded, so a changed detail
+			// (a newer release than the one already announced) is a new event.
+			if info.Severity == alertproto.InfoSev && prev.Acked && prev.Detail != "" && prev.Detail != res.Detail {
+				prev.Acked = false
+			}
 			prev.Detail = res.Detail
 		}
 		remind := info.Severity != alertproto.InfoSev && (prev.LastSent.IsZero() || now.Sub(prev.LastSent) >= ReminderEvery)

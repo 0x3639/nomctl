@@ -179,6 +179,12 @@ func TestCachedCheckAndLines(t *testing.T) {
 	if c2 := Run(context.Background(), opts); c2.NomctlLatest != "v9.9.9" || !c2.CheckedAt.Equal(c.CheckedAt) {
 		t.Errorf("cache not used: %+v", c2)
 	}
+	// A different release repository must not reuse the entry.
+	other := opts
+	other.Repo = "someone/else"
+	if c4 := Run(context.Background(), other); c4.NomctlErr == "" {
+		t.Error("cache keyed on the wrong repository was reused")
+	}
 	now = now.Add(CacheTTL)
 	if c3 := Run(context.Background(), opts); c3.NomctlErr == "" {
 		t.Error("expired cache must re-check and record the failure")

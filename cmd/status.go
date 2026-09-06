@@ -41,7 +41,9 @@ CPU %% and the sync rate are measured over --wait (default 2s).`,
 			return enc.Encode(sample)
 		}
 		fmt.Fprint(cmd.OutOrStdout(), metrics.Format(sample))
-		for _, line := range updateLines(ctx, sample.Node.Commit) {
+		checkCtx, cancelCheck := context.WithTimeout(ctx, 20*time.Second)
+		defer cancelCheck()
+		for _, line := range updateLines(checkCtx, sample.Node.Commit) {
 			fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "Update", line)
 		}
 		return nil
