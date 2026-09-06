@@ -19,17 +19,19 @@ The interactive menu has the same under **Restore Zenon from a bootstrap snapsho
 2. The archive is downloaded into `<backup dir>/bootstrap/`, with progress logged every few seconds. Free space in the backup directory must cover the archive plus `NOMCTL_MIN_FREE_SPACE_KB`.
 3. The SHA-256 is verified. Nothing on the node is touched until it matches.
 4. The archive is inspected: it must contain `backup/nom.bak/`, `backup/network.bak/` and `backup/consensus.bak/`, nothing else, with no path traversal or symlinks. Its extracted size must fit in the data directory with the same margin.
-5. **Keep (default):** the snapshot is extracted into a staging directory while the node keeps running, then the service is stopped, the current `nom`, `network`, `consensus` and `cache` are moved to `<backup dir>/restore/<dir>.bak.<timestamp>`, the staged directories are renamed into place and the service starts.
+5. **Keep (default):** the snapshot is extracted into a staging directory while the node keeps running, then the service is stopped, the current `nom`, `network` and `consensus` are moved to `<backup dir>/restore/<dir>.bak.<timestamp>`, the staged directories are renamed into place and the service starts.
    **`--discard`:** the service is stopped and the current directories deleted first, then the snapshot is extracted and installed. Use it when the disk cannot hold both copies.
-6. The archive and sidecar are deleted. The wallet and `config.json` are never touched.
+6. Once the service has started, the archive and sidecar are deleted. The wallet, `config.json` and `cache` are never touched.
 
 If a run fails after the download, run it again: a verified archive already in `<backup dir>/bootstrap/` is reused, not downloaded again.
 
-Once the node has synced, delete the safety copy:
+Once the node has synced, delete the safety copy (`/backup` is the default `NOMCTL_BACKUP_DIR`):
 
 ```bash
 sudo rm -r /backup/restore/*.bak.*
 ```
+
+If the swap fails after the node was stopped, the previous data is put back and the node restarted; the verified download stays in `<backup dir>/bootstrap/` so running the command again skips the download. With `--discard` there is nothing to put back: the node stays stopped and running the command again finishes the job from the kept download.
 
 ## Snapshot source
 

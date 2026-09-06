@@ -225,24 +225,25 @@ func TestDownloadReportsAndCleansUp(t *testing.T) {
 }
 
 type fakeHost struct {
-	calls  []string
-	stopEr error
+	calls   []string
+	stopEr  error
+	startEr error
 }
 
 func (f *fakeHost) install(t *testing.T) {
 	t.Helper()
-	oldStop, oldStart, oldFree := stopService, startService, diskFree
+	oldStop, oldStart, oldFree, oldInstall := stopService, startService, diskFree, installDirs
 	stopService = func(name string) error { f.calls = append(f.calls, "stop "+name); return f.stopEr }
-	startService = func(name string) error { f.calls = append(f.calls, "start "+name); return nil }
+	startService = func(name string) error { f.calls = append(f.calls, "start "+name); return f.startEr }
 	diskFree = func(string) (int64, int, error) { return 1 << 40, 10, nil }
-	t.Cleanup(func() { stopService, startService, diskFree = oldStop, oldStart, oldFree })
+	t.Cleanup(func() { stopService, startService, diskFree, installDirs = oldStop, oldStart, oldFree, oldInstall })
 }
 
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
 	root := t.TempDir()
 	cfg := config.Config{ServiceName: "go-zenon", ZnnDir: filepath.Join(root, "znn"), BackupDir: filepath.Join(root, "backup"), MinFreeSpaceKB: 1}
-	for _, d := range []string{"nom", "network", "consensus", "wallet"} {
+	for _, d := range []string{"nom", "network", "consensus", "wallet", "cache"} {
 		if err := os.MkdirAll(filepath.Join(cfg.ZnnDir, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -285,8 +286,82 @@ func TestRunKeepsPreviousData(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cfg.BackupDir, "bootstrap", "snap.zip")); err == nil {
 		t.Error("archive must be removed on success")
 	}
-	if entries, _ := os.ReadDir(cfg.ZnnDir); len(entries) != 5 { // nom network consensus wallet config.json
+	if entries, _ := os.ReadDir(cfg.ZnnDir); len(entries) != 6 { // nom network consensus wallet cache config.json
 		t.Errorf("staging left behind: %v", entries)
+	}
+	if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, "cache", "old")); string(got) != "old-cache" {
+		t.Error("cache is not part of the snapshot and must stay in place")
+	}
+}
+
+func TestRunRollsBackWhenInstallFails(t *testing.T) {
+	data := makeZip(t, goodEntries())
+	srv := host(t, data, sum(data))
+	cfg := testConfig(t)
+	h := &fakeHost{}
+	h.install(t)
+	installDirs = func(config.Config, string) error { return errors.New("rename exploded") }
+	err := Run(context.Background(), cfg, Options{URL: srv.URL + "/b/snap.zip"})
+	if err == nil || !strings.Contains(err.Error(), "rename exploded") || !strings.Contains(err.Error(), "put back") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Join(h.calls, ",") != "stop go-zenon,start go-zenon" {
+		t.Errorf("calls = %v", h.calls)
+	}
+	for _, d := range Dirs {
+		if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, d, "old")); string(got) != "old-"+d {
+			t.Errorf("%s not put back: %q", d, got)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cfg.BackupDir, "restore")); len(entries) != 0 {
+		t.Errorf("restore dir should be empty after rollback: %v", entries)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.BackupDir, "bootstrap", "snap.zip")); err != nil {
+		t.Error("archive must be kept for a retry")
+	}
+}
+
+func TestRunKeepsArchiveWhenStartFails(t *testing.T) {
+	data := makeZip(t, goodEntries())
+	srv := host(t, data, sum(data))
+	cfg := testConfig(t)
+	h := &fakeHost{startEr: errors.New("unit failed")}
+	h.install(t)
+	err := Run(context.Background(), cfg, Options{URL: srv.URL + "/b/snap.zip"})
+	if err == nil || !strings.Contains(err.Error(), "unit failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.BackupDir, "bootstrap", "snap.zip")); err != nil {
+		t.Error("archive must be kept when the service does not start")
+	}
+	if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, "nom", "000001.log")); string(got) != "nom-data" {
+		t.Error("snapshot should stay installed")
+	}
+}
+
+func TestRunDiscardCountsReclaimableSpace(t *testing.T) {
+	data := makeZip(t, goodEntries())
+	srv := host(t, data, sum(data))
+	cfg := testConfig(t)
+	h := &fakeHost{}
+	h.install(t)
+	// Make the old data far larger than the snapshot and leave almost no
+	// free space: discard must still go ahead because the delete frees it.
+	if err := os.WriteFile(filepath.Join(cfg.ZnnDir, "nom", "big"), bytes.Repeat([]byte("b"), 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diskFree = func(string) (int64, int, error) { return 2, 99, nil } // KB: covers the 1 KB margin only
+	if err := Run(context.Background(), cfg, Options{URL: srv.URL + "/b/snap.zip", Discard: true}); err != nil {
+		t.Fatal(err)
+	}
+	h2 := &fakeHost{}
+	h2.install(t)
+	diskFree = func(string) (int64, int, error) { return 0, 99, nil }
+	cfg2 := testConfig(t)
+	if err := Run(context.Background(), cfg2, Options{URL: srv.URL + "/b/snap.zip", Discard: true}); err == nil {
+		t.Fatal("no space at all must still be refused")
+	} else if len(h2.calls) != 0 {
+		t.Errorf("service touched before the space check: %v", h2.calls)
 	}
 }
 
@@ -307,6 +382,9 @@ func TestRunDiscardsPreviousData(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, "wallet", "old")); string(got) != "old-wallet" {
 		t.Error("wallet must be untouched")
+	}
+	if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, "cache", "old")); string(got) != "old-cache" {
+		t.Error("cache must not be discarded; the snapshot does not replace it")
 	}
 }
 

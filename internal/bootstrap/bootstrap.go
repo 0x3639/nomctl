@@ -55,8 +55,21 @@ var (
 	stopService  = service.Stop
 	startService = service.Start
 	diskFree     = fsx.DiskFree
-	httpClient   = &http.Client{}
+	installDirs  = install
+	httpClient   = newClient()
 )
+
+// newClient bounds how long a peer may withhold response headers without
+// capping the body transfer, which takes as long as the snapshot is large.
+func newClient() *http.Client {
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{}
+	}
+	t = t.Clone()
+	t.ResponseHeaderTimeout = 30 * time.Second
+	return &http.Client{Transport: t}
+}
 
 // HashURL returns the sidecar URL: the archive URL with its extension
 // replaced by .hash.
@@ -390,21 +403,28 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	if opts.Discard {
-		// Free the disk first: the verified archive stays for a retry.
+		// The old data is deleted before extraction to make room, so it
+		// cannot be rolled back: check space (counting what will be freed)
+		// before stopping, and keep the verified archive so a failed run is
+		// retried by running again.
+		reclaim := dirsSize(cfg.ZnnDir, Dirs)
+		if err := ensureSpace(cfg.ZnnDir, manifest.Uncompressed-reclaim, cfg.MinFreeSpaceKB, "the extracted snapshot"); err != nil {
+			return err
+		}
 		if err := stopService(cfg.ServiceName); err != nil {
 			return err
 		}
-		for _, d := range backup.Folders {
+		for _, d := range Dirs {
 			if err := os.RemoveAll(filepath.Join(cfg.ZnnDir, d)); err != nil {
-				return fmt.Errorf("discard %s: %w", d, err)
+				return fmt.Errorf("discard %s: %w (the node is stopped; run bootstrap again)", d, err)
 			}
 		}
 		slog.Info("Previous chain data discarded")
-		if err := ensureSpace(cfg.ZnnDir, manifest.Uncompressed, cfg.MinFreeSpaceKB, "the extracted snapshot"); err != nil {
-			return err
-		}
 		if err := extractTo(archive, staging, manifest); err != nil {
-			return err
+			return fmt.Errorf("%w (the node is stopped and its chain data discarded; run bootstrap again)", err)
+		}
+		if err := installDirs(cfg, staging); err != nil {
+			return fmt.Errorf("%w (the node is stopped; run bootstrap again)", err)
 		}
 	} else {
 		if err := ensureSpace(cfg.ZnnDir, manifest.Uncompressed, cfg.MinFreeSpaceKB, "the extracted snapshot"); err != nil {
@@ -416,22 +436,62 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 		if err := stopService(cfg.ServiceName); err != nil {
 			return err
 		}
-		restoreDir, err := restore.MoveAside(cfg, opts.Now())
-		if err != nil {
-			return err
+		moved, err := restore.MoveAside(cfg, opts.Now(), Dirs)
+		if err == nil {
+			err = installDirs(cfg, staging)
 		}
-		slog.Info("Previous chain data kept in " + restoreDir + "; delete it once the node has synced")
+		if err != nil {
+			// Put the previous data back and restart so the node keeps
+			// running on what it had.
+			if backErr := restore.MoveBack(cfg, moved); backErr != nil {
+				return fmt.Errorf("%w; and the previous data could not all be put back: %w (the node is stopped)", err, backErr)
+			}
+			if startErr := startService(cfg.ServiceName); startErr != nil {
+				return fmt.Errorf("%w; previous data put back but the node did not start: %w", err, startErr)
+			}
+			return fmt.Errorf("%w; previous data put back and the node restarted", err)
+		}
+		if len(moved) > 0 {
+			slog.Info("Previous chain data kept in " + backup.RestoreDir(cfg) + "; delete it once the node has synced")
+		}
 	}
 
+	logx.Success("Snapshot installed; starting " + cfg.ServiceName)
+	if err := startService(cfg.ServiceName); err != nil {
+		return fmt.Errorf("%w (the snapshot is installed; the download is kept for a retry)", err)
+	}
+	_ = os.Remove(archive)
+	_ = os.Remove(hashFile)
+	return nil
+}
+
+// install renames the staged directories into the data directory. A failure
+// part-way leaves the ones already installed in place; the caller decides
+// whether to roll back.
+func install(cfg config.Config, staging string) error {
 	for _, d := range Dirs {
 		if err := os.Rename(filepath.Join(staging, d), filepath.Join(cfg.ZnnDir, d)); err != nil {
 			return fmt.Errorf("install %s: %w", d, err)
 		}
 	}
-	_ = os.Remove(archive)
-	_ = os.Remove(hashFile)
-	logx.Success("Snapshot installed; starting " + cfg.ServiceName)
-	return startService(cfg.ServiceName)
+	return nil
+}
+
+// dirsSize sums the file sizes under the named directories; errors count 0.
+func dirsSize(root string, dirs []string) int64 {
+	var total int64
+	for _, d := range dirs {
+		_ = filepath.WalkDir(filepath.Join(root, d), func(_ string, e os.DirEntry, err error) error {
+			if err != nil || e.IsDir() {
+				return nil
+			}
+			if info, err := e.Info(); err == nil {
+				total += info.Size()
+			}
+			return nil
+		})
+	}
+	return total
 }
 
 func extractTo(archive, staging string, m Manifest) error {

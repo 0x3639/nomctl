@@ -16,8 +16,9 @@ format:
   the hex SHA-256 of the zip (first whitespace-separated token; a
   `sha256sum`-style line is accepted too).
 
-No URL is baked into the binary. `NOMCTL_BOOTSTRAP_URL` supplies a default;
-the positional argument overrides it. Only `http` and `https` are accepted.
+The snapshot published for the release is the built-in default
+(`config.DefaultBootstrapURL`); `NOMCTL_BOOTSTRAP_URL` overrides it and the
+positional argument overrides both. Only `http` and `https` are accepted.
 
 ## Flow
 
@@ -37,14 +38,19 @@ the positional argument overrides it. Only `http` and `https` are accepted.
 5. Swap:
    - default (keep): extract into a staging directory inside the data
      directory while the node keeps running, stop the service, move the
-     current `nom`, `network`, `consensus` (and `cache`) into
-     `<backup dir>/restore/<dir>.bak.<unix>` exactly as `restore` does, rename
-     the staged directories into place, start the service;
-   - `--discard`: stop the service, delete the current directories, extract
-     into staging, rename into place, start. The verified archive stays on
-     disk until success so a failed extraction is retried by re-running.
-6. On success delete the archive and sidecar, then print where the safety
-   copy is and that it can be deleted once the node has synced.
+     current `nom`, `network` and `consensus` into
+     `<backup dir>/restore/<dir>.bak.<unix>` the way `restore` does, rename
+     the staged directories into place, start the service. If the move or
+     the rename fails, the moved folders are put back and the service
+     restarted, so the node keeps running on what it had;
+   - `--discard`: check space counting what the delete will free, stop the
+     service, delete the current directories, extract into staging, rename
+     into place, start. There is nothing to roll back, so on failure the
+     node stays stopped and re-running finishes the job.
+   `cache` is not part of a snapshot and is never touched.
+6. Only after the service has started are the archive and sidecar deleted;
+   until then a verified download is reused by the next run. Print where the
+   safety copy is and that it can be deleted once the node has synced.
 
 The interactive menu gains "Restore Zenon from a bootstrap snapshot": it
 prompts for the URL (prefilled from `NOMCTL_BOOTSTRAP_URL`), asks whether to
