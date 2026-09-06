@@ -33,7 +33,7 @@ func ReadCgroup(cgroupRoot, controlGroup string) CgroupStats {
 	c.Present = true
 	c.MemoryCurrent = cgroupUint(dir, "memory.current")
 	c.MemoryPeak = cgroupUint(dir, "memory.peak")
-	c.MemoryMax = cgroupUint(dir, "memory.max") // "max" parses as 0
+	c.MemoryMax = cgroupUint(dir, "memory.max")          // "max" parses as 0
 	c.PidsCurrent = int(cgroupUint(dir, "pids.current")) //nolint:gosec // small counter
 	return c
 }
