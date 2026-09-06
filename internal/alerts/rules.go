@@ -316,7 +316,10 @@ func pillarMissed(h []metrics.Sample, cfg RuleConfig) Result {
 		}
 	}
 	win = win[start:]
-	if len(win) < 2 {
+	// The post-rollover window must itself span the configured duration, so
+	// the rule keeps its "over the last N minutes" meaning after an epoch
+	// boundary (at most one delayed evaluation per day).
+	if !covers(win, d) {
 		return Result{}
 	}
 	for _, s := range win {

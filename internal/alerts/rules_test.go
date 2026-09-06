@@ -366,6 +366,20 @@ func TestPillarMissed(t *testing.T) {
 	if r.Evaluate(series(70, rollover), cfg).Firing {
 		t.Error("misses before the epoch rollover must not count")
 	}
+	// Two misses right after a rollover: not enough post-rollover history yet.
+	freshMisses := func(i int, s *metrics.Sample) {
+		if i < 60 {
+			s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64(500 + i/10), Produced: uint64(500 + i/10)}
+		} else {
+			s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Expected: uint64((i - 60) / 4), Produced: 0}
+		}
+	}
+	if r.Evaluate(series(70, freshMisses), cfg).Firing {
+		t.Error("misses in a 5 minute post-rollover window must wait for a full window")
+	}
+	if !r.Evaluate(series(125, freshMisses), cfg).Firing {
+		t.Error("once the post-rollover window spans 30 minutes the misses fire")
+	}
 	unconfigured := func(i int, s *metrics.Sample) { missing(i, s); s.Node.Pillar.Configured = false }
 	if r.Evaluate(series(70, unconfigured), cfg).Firing {
 		t.Error("no pillar configured means no alert")
