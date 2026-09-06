@@ -20,6 +20,7 @@ The daemon samples every 30 seconds and keeps 30 minutes of history. Each rule i
 | `backup_stale` | warning | the backup timer is enabled and the newest archive is older than cadence + 1 day | |
 | `rpc_unreachable` | warning | the service is active but the local RPC has not answered for the window | `minutes=5` |
 | `node_silent` | critical | raised by the relay: no heartbeat from the node for 5 minutes | relay setting |
+| `update_available` | info, **off by default** | a newer nomctl release exists, or the configured go-zenon branch has commits beyond the running build; sent once, no reminders | |
 
 ## Which alert for which failure
 

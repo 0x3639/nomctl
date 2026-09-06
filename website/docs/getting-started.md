@@ -55,6 +55,7 @@ sudo nomctl logs -f
 
 - **Alerts**: send `/start` to the nomctl Telegram bot, then `sudo nomctl alerts setup`. Five minutes, no bot to create. See [Alerts](/alerts/overview).
 - **Backups**: `sudo nomctl backup --schedule --cadence 7` installs a timer. See [Backups](/guide/backups).
+- **Later**: `sudo nomctl upgrade` keeps nomctl current; `status` tells you when there is something to upgrade. See [Upgrading](/guide/upgrading).
 
 ## The menu
 

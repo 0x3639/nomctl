@@ -19,6 +19,8 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_SERVICE_NAME` | `go-zenon` | systemd service name |
 | `NOMCTL_GO_VERSION` | `1.23.0` | Go toolchain version used to build the node |
 | `NOMCTL_PILLAR_NAME` | unset | Pillar shown by `status`/`top` when alerts are not set up (the alerts config takes precedence) |
+| `NOMCTL_REPO` | `0x3639/nomctl` | GitHub repository `nomctl upgrade` downloads releases from |
+| `NOMCTL_UPDATE_CHECK` | `true` | Check GitHub for newer nomctl and go-zenon in `status`/`top` and the `update_available` alert (cached 6 h) |
 | `NOMCTL_BACKUP_DIR` | `/backup` | Directory that stores backup archives |
 | `NOMCTL_MAX_BACKUPS` | `7` | Number of backups to retain |
 | `NOMCTL_BACKUP_CADENCE_DAYS` | `0` | Days between scheduled backups (0 = every run) |
@@ -42,6 +44,8 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `/etc/nomctl/alerts.json` (0600) | `alerts setup`, `alerts set`, `enable`, `disable` |
 | `/run/nomctl/alerts-state.json` | the alerts daemon, read by `alerts status` |
 | `/run/nomctl.lock` | backup, restore, resync, deploy while running |
+| `/run/nomctl/update-check.json` | the cached update check |
+| `/usr/local/bin/nomctl.previous` | `upgrade`, for `--rollback` |
 | `/etc/systemd/timesyncd.conf` | pre-flight, only if NTP is not `time.cloudflare.com` |
 
 ## The alerts file

@@ -8,7 +8,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Guide',
       collapsed: false,
-      items: ['guide/deploy', 'guide/service', 'guide/backups', 'guide/analytics', 'guide/menu'],
+      items: ['guide/deploy', 'guide/service', 'guide/backups', 'guide/analytics', 'guide/upgrading', 'guide/menu'],
     },
     {
       type: 'category',

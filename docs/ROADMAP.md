@@ -47,7 +47,7 @@ A `nomctl pillars` listing is still open.
 
 MyTonCtrl equivalent: validator section of `status`, `vl`.
 
-### 3. Self-update — planned
+### 3. Self-update — done (v0.5.0)
 
 `nomctl upgrade`: download the latest GitHub release for the host
 architecture, verify `checksums.txt`, replace the binary atomically (same

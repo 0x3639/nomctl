@@ -24,12 +24,13 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl backup [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | [Backups](/guide/backups) |
 | `nomctl restore [--file FILE]` | picker when `--file` is omitted |
 | `nomctl analytics install` | [Analytics stack](/guide/analytics) |
+| `nomctl upgrade [--check] [--version TAG] [--rollback]` | [Upgrading](/guide/upgrading) |
 
 ## Observability
 
 | Command | Notes |
 |---|---|
-| `nomctl status [--json] [--wait 2s]` | one-screen summary |
+| `nomctl status [--json] [--wait 2s] [--no-update-check]` | one-screen summary, with update lines when something is newer |
 | `nomctl top [--interval 2s]` | live dashboard, `q` to quit |
 | `nomctl support-bundle [--watch] [--since "12 hours ago"] [--output DIR] [--poll 10s] [--timeout 0]` | [Support bundle](/troubleshooting/support-bundle) |
 
