@@ -22,7 +22,7 @@ sudo bash install.sh
 To pin a version instead of `main`, fetch the script from the release tag and tell it which release to install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/v0.4.0/install.sh | sudo NOMCTL_VERSION=v0.4.0 bash
+curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/v0.5.0/install.sh | sudo NOMCTL_VERSION=v0.5.0 bash
 ```
 
 The installer honours `NOMCTL_VERSION` (a release tag, default `latest`), `NOMCTL_INSTALL_DIR` and `NOMCTL_REPO`. Rerunning it upgrades in place.

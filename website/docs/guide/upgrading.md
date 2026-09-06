@@ -8,7 +8,7 @@ description: "Upgrade nomctl in place with nomctl upgrade, roll back, and how st
 ```bash
 sudo nomctl upgrade            # latest release
 sudo nomctl upgrade --check    # only report
-sudo nomctl upgrade --version v0.4.0
+sudo nomctl upgrade --version v0.5.0
 sudo nomctl upgrade --rollback # restore the previous binary
 ```
 
