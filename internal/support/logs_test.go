@@ -35,6 +35,20 @@ func TestListLogsNewestFirstAndDepth(t *testing.T) {
 	}
 }
 
+func TestTailBytesBounded(t *testing.T) {
+	// 1 MiB stream, 100-byte tail: the result must be the last 100 bytes.
+	src := bytes.Repeat([]byte("0123456789"), 100*1024)
+	src = append(src, []byte("THE-END")...)
+	got, err := tailBytes(bytes.NewReader(src), 100)
+	if err != nil || len(got) != 100 || !bytes.HasSuffix(got, []byte("THE-END")) {
+		t.Errorf("tailBytes = %d bytes, %v", len(got), err)
+	}
+	// The working buffer may hold one extra read chunk, never the whole stream.
+	if cap(got) > 100+2*(64<<10) {
+		t.Errorf("buffer grew beyond the bound: cap %d", cap(got))
+	}
+}
+
 func TestTailLog(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "znnd.log")

@@ -37,7 +37,8 @@ type topModel struct {
 }
 
 func newTopModel(s *metrics.Sampler, interval time.Duration) topModel {
-	return topModel{sampler: s, interval: interval, width: 80}
+	// sampling starts true because Init issues the first Take.
+	return topModel{sampler: s, interval: interval, width: 80, sampling: true}
 }
 
 func (m topModel) Init() tea.Cmd { return tea.Batch(m.takeSample(), m.tick()) }

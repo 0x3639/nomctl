@@ -73,13 +73,22 @@ func Watch(ctx context.Context, cfg config.Config, opts WatchOptions) error {
 
 	slog.Info(fmt.Sprintf("Watching %s (pid %d, restart count %d); sampling every %s. Press Ctrl+C to stop and collect.",
 		cfg.ServiceUnit(), first.Service.MainPID, first.Service.NRestarts, opts.Poll))
-	start := time.Now()
 	ticker := time.NewTicker(opts.Poll)
 	defer ticker.Stop()
+	var deadline <-chan time.Time
+	if opts.Timeout > 0 {
+		timer := time.NewTimer(opts.Timeout)
+		defer timer.Stop()
+		deadline = timer.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Info("Watch interrupted; collecting the bundle now.")
+			return nil
+		case <-deadline:
+			slog.Info("Watch timeout reached without observing a restart.")
+			record(sampler.Take(ctx))
 			return nil
 		case <-ticker.C:
 		}
@@ -89,10 +98,6 @@ func Watch(ctx context.Context, cfg config.Config, opts WatchOptions) error {
 			slog.Info("Detected " + why)
 			time.Sleep(2 * time.Second)
 			record(sampler.Take(ctx))
-			return nil
-		}
-		if opts.Timeout > 0 && time.Since(start) >= opts.Timeout {
-			slog.Info("Watch timeout reached without observing a restart.")
 			return nil
 		}
 	}

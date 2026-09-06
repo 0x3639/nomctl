@@ -11,7 +11,7 @@ import (
 
 var (
 	// reAssign matches password=..., token: ... and friends.
-	reAssign = regexp.MustCompile(`(?i)((password|passwd|token|secret|api[-_]?key|authorization|mnemonic|private[-_]?key)[[:alnum:]_.-]*[=:])[^[:space:]"']+`)
+	reAssign = regexp.MustCompile(`(?i)((password|passwd|token|secret|api[-_]?key|authorization|mnemonic|private[-_]?key)[[:alnum:]_.-]*[=:][ \t]*)("[^"]*"|'[^']*'|[^[:space:]"']+)`)
 	// reEnv matches systemd Environment= settings carrying secrets.
 	reEnv = regexp.MustCompile(`(?i)(Environment="?[^" ]*(PASSWORD|TOKEN|SECRET|API_KEY|PRIVATE_KEY|MNEMONIC)=)[^" ]+`)
 )

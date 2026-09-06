@@ -13,6 +13,9 @@ func TestRedact(t *testing.T) {
 		`Environment="GRAFANA_PASSWORD=secret" User=root`:   `Environment="GRAFANA_PASSWORD=<redacted>" User=root`,
 		`Environment=API_KEY=k1 Environment=MNEMONIC=words`: `Environment=API_KEY=<redacted> Environment=MNEMONIC=<redacted>`,
 		`plain line without secrets`:                        `plain line without secrets`,
+		`--token="abc def" tail`:                            `--token=<redacted> tail`,
+		`password: 's3 cr3t' next`:                          `password: <redacted> next`,
+		"password:\nnextline":                               "password:\nnextline",
 	}
 	for in, want := range cases {
 		if got := Redact(in); got != want {

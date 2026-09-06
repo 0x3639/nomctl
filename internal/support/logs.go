@@ -2,6 +2,7 @@ package support
 
 import (
 	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -76,12 +77,35 @@ func TailLog(src, dst string, maxBytes int64) error {
 			return err
 		}
 	}
-	data, err := io.ReadAll(r)
+	data, err := tailBytes(r, maxBytes)
 	if err != nil {
 		return err
 	}
-	if int64(len(data)) > maxBytes {
-		data = data[int64(len(data))-maxBytes:]
-	}
 	return os.WriteFile(dst, data, 0o600)
+}
+
+// tailBytes returns at most maxBytes from the end of r without holding more
+// than about 2*maxBytes in memory, so a multi-gigabyte rotated log cannot
+// exhaust a host that is already under memory pressure.
+func tailBytes(r io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, nil
+	}
+	buf := make([]byte, 0, maxBytes)
+	chunk := make([]byte, 64<<10)
+	for {
+		n, err := r.Read(chunk)
+		if n > 0 {
+			buf = append(buf, chunk[:n]...)
+			if int64(len(buf)) > maxBytes {
+				buf = append(buf[:0], buf[int64(len(buf))-maxBytes:]...)
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return buf, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 }
