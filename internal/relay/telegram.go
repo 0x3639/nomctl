@@ -53,7 +53,12 @@ type apiResponse struct {
 	} `json:"parameters"`
 }
 
-func (t *Telegram) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+// call posts a Bot API method. retryTransport allows retrying when the
+// request itself failed (no response): safe for idempotent methods such as
+// getUpdates, not for sendMessage, where Telegram may already have
+// delivered the message. 429 and 5xx responses are always retried since
+// they mean the request was not processed.
+func (t *Telegram) call(ctx context.Context, method string, params any, retryTransport bool) (json.RawMessage, error) {
 	body, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
@@ -74,6 +79,9 @@ func (t *Telegram) call(ctx context.Context, method string, params any) (json.Ra
 		req.Header.Set("Content-Type", "application/json")
 		res, err := t.HTTP.Do(req)
 		if err != nil {
+			if !retryTransport {
+				return nil, fmt.Errorf("telegram %s: %w", method, err)
+			}
 			lastErr = err
 			lastWait = backoff(attempt)
 			continue
@@ -131,7 +139,7 @@ func (t *Telegram) Send(ctx context.Context, chatID int64, text string) error {
 		"text":                     text,
 		"parse_mode":               "MarkdownV2",
 		"disable_web_page_preview": true,
-	})
+	}, false)
 	return err
 }
 
@@ -141,7 +149,7 @@ func (t *Telegram) Updates(ctx context.Context, offset int64, timeout time.Durat
 		"offset":          offset,
 		"timeout":         int(timeout.Seconds()),
 		"allowed_updates": []string{"message"},
-	})
+	}, true)
 	if err != nil {
 		return nil, err
 	}

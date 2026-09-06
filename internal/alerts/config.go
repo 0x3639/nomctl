@@ -130,10 +130,7 @@ func Load(path string) (Config, error) {
 			if _, ok := rc.Thresholds[k]; !ok {
 				rc.Thresholds[k] = v
 			}
-			if isMinutes(k) && rc.Thresholds[k] > MaxWindowMinutes {
-				// Clamp a hand-edited value that could never fire.
-				rc.Thresholds[k] = MaxWindowMinutes
-			}
+			rc.Thresholds[k] = clampThreshold(k, rc.Thresholds[k], v)
 		}
 		c.Rules[name] = rc
 	}
@@ -212,6 +209,21 @@ func (c *Config) Set(key, value string) error {
 const MaxWindowMinutes = 30
 
 func isMinutes(field string) bool { return field == "minutes" || field == "window_minutes" }
+
+// clampThreshold applies the same bounds Set enforces to a hand-edited
+// value: negatives fall back to the default, pct is capped at 100 and
+// minute windows at MaxWindowMinutes.
+func clampThreshold(field string, value, def float64) float64 {
+	switch {
+	case value < 0:
+		return def
+	case field == "pct" && value > 100:
+		return 100
+	case isMinutes(field) && value > MaxWindowMinutes:
+		return MaxWindowMinutes
+	}
+	return value
+}
 
 // thresholdKeys lists the tunable settings of an alert, sorted.
 func thresholdKeys(alert string) []string {

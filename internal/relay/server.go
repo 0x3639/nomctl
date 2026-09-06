@@ -391,7 +391,9 @@ func (s *Server) deliver(ctx context.Context, node Node, a alertproto.AlertReque
 		}
 	}
 	if err := s.store.SetLastSent(ctx, node.ID, a.Alert, a.State, now); err != nil {
-		slog.Error("set last sent failed", "err", err)
+		// Without the record a later recovery would be suppressed; report the
+		// failure so the node retries this transition.
+		return fmt.Errorf("record last sent: %w", err)
 	}
 	return nil
 }

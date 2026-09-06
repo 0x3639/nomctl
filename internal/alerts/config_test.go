@@ -72,6 +72,22 @@ func TestLoadFillsDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadClampsInvalidThresholds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alerts.json")
+	raw := `{"alerts":{"disk_low":{"enabled":true,"thresholds":{"min_free_gb":-5}},"memory_high":{"enabled":true,"thresholds":{"pct":140}},"crash_loop":{"enabled":true,"thresholds":{"window_minutes":90,"count":-1}}}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Rules["disk_low"].Thresholds["min_free_gb"] != 15 || c.Rules["memory_high"].Thresholds["pct"] != 100 ||
+		c.Rules["crash_loop"].Thresholds["window_minutes"] != MaxWindowMinutes || c.Rules["crash_loop"].Thresholds["count"] != 2 {
+		t.Errorf("clamped values: %+v", c.Rules)
+	}
+}
+
 func TestSet(t *testing.T) {
 	c := DefaultConfig()
 	good := map[string]string{"disk_low.min_free_gb": "30", "memory_high.pct": "90", "service_down.enabled": "false", "crash_loop.count": "3"}

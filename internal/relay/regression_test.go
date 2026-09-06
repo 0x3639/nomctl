@@ -195,3 +195,45 @@ func TestAlertEndpointReportsDeliveryFailure(t *testing.T) {
 		t.Fatalf("retry: status=%d delivered=%d", status, failing.delivered)
 	}
 }
+
+// failingStore wraps a Store and fails SetLastSent on demand.
+type failingStore struct {
+	Store
+	failSet bool
+}
+
+func (f *failingStore) SetLastSent(ctx context.Context, nodeID, alert string, state alertproto.State, at time.Time) error {
+	if f.failSet {
+		return errors.New("disk full")
+	}
+	return f.Store.SetLastSent(ctx, nodeID, alert, state, at)
+}
+
+// A failed last-sent record must be reported so the node retries; otherwise
+// the relay never learns the alert fired and suppresses the recovery.
+func TestSetLastSentFailureIsReported(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	fs := &failingStore{Store: NewMemoryStore()}
+	m := &flakySender{}
+	s := NewServer(fs, m, Options{Now: func() time.Time { return now }})
+	n := Node{ID: "n", ChatID: 1, Name: "n", Secret: []byte("x"), Created: now, LastSeen: now}
+	ctx := context.Background()
+	if err := fs.CreateNode(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.SetMute(ctx, Mute{NodeID: n.ID, Alert: "disk_low", Until: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	fs.failSet = true
+	if err := s.deliver(ctx, n, alert("disk_low", alertproto.Firing)); err == nil {
+		t.Fatal("store failure must be reported")
+	}
+	fs.failSet = false
+	if err := s.deliver(ctx, n, alert("disk_low", alertproto.Firing)); err != nil {
+		t.Fatal(err)
+	}
+	_ = fs.ClearMute(ctx, n.ID, "disk_low")
+	if err := s.deliver(ctx, n, alert("disk_low", alertproto.OK)); err != nil || m.delivered != 1 {
+		t.Fatalf("recovery after retried record: %v delivered=%d", err, m.delivered)
+	}
+}

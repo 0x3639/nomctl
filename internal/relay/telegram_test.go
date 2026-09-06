@@ -111,6 +111,27 @@ func TestTelegramSend(t *testing.T) {
 	}
 }
 
+func TestSendDoesNotRetryTransportErrors(t *testing.T) {
+	api := newFakeBotAPI(t)
+	tg := api.client()
+	calls := 0
+	tg.HTTP.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return nil, errors.New("connection reset")
+	})
+	if err := tg.Send(context.Background(), 1, "x"); err == nil || calls != 1 {
+		t.Errorf("sendMessage transport error: err=%v calls=%d (must not retry: Telegram may have delivered)", err, calls)
+	}
+	calls = 0
+	if _, err := tg.Updates(context.Background(), 0, time.Second); err == nil || calls != 4 {
+		t.Errorf("getUpdates transport error: err=%v calls=%d (should retry)", err, calls)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestTelegramUpdates(t *testing.T) {
 	api := newFakeBotAPI(t)
 	api.updates = `[{"update_id":10,"message":{"text":"/start","chat":{"id":1},"from":{"username":"alice"}}},{"update_id":11,"message":{"text":"/nodes","chat":{"id":2}}},{"update_id":12}]`

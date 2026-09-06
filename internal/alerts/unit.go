@@ -51,6 +51,15 @@ func unitQuote(s string) string {
 	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
+// execStartPath quotes and escapes an executable path for ExecStart= when
+// it contains characters systemd would otherwise split or misparse.
+func execStartPath(p string) string {
+	if strings.ContainsAny(p, " \t\"\\") {
+		return `"` + unitQuote(p) + `"`
+	}
+	return p
+}
+
 // InstallUnit writes, enables and starts the daemon unit.
 func InstallUnit(cfg config.Config) error {
 	execPath, err := os.Executable()
@@ -60,10 +69,7 @@ func InstallUnit(cfg config.Config) error {
 	if resolved, err := filepath.EvalSymlinks(execPath); err == nil {
 		execPath = resolved
 	}
-	if strings.ContainsAny(execPath, " \t") {
-		execPath = `"` + execPath + `"`
-	}
-	if err := service.WriteUnit(UnitPath, UnitText(execPath, cfg)); err != nil {
+	if err := service.WriteUnit(UnitPath, UnitText(execStartPath(execPath), cfg)); err != nil {
 		return err
 	}
 	if err := service.DaemonReload(); err != nil {

@@ -7,6 +7,15 @@ import (
 	"github.com/0x3639/nomctl/internal/config"
 )
 
+func TestExecPathQuoting(t *testing.T) {
+	if got := execStartPath(`/opt/my "tools"/nomctl`); got != `"/opt/my \"tools\"/nomctl"` {
+		t.Errorf("quoted path = %s", got)
+	}
+	if got := execStartPath("/usr/local/bin/nomctl"); got != "/usr/local/bin/nomctl" {
+		t.Errorf("plain path = %s", got)
+	}
+}
+
 func TestUnitText(t *testing.T) {
 	cfg := config.Default()
 	cfg.ServiceName, cfg.ZnnDir = "custom-node", "/srv/zenon"

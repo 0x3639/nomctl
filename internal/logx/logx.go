@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -112,7 +113,8 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 // sanitize escapes control characters so untrusted text (relay errors,
 // command output) cannot forge extra log lines or move the cursor.
 func sanitize(s string) string {
-	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 && r != '\t' || r == 0x7f }) {
+	bad := func(r rune) bool { return r != '\t' && unicode.IsControl(r) }
+	if !strings.ContainsFunc(s, bad) {
 		return s
 	}
 	var b strings.Builder
@@ -122,8 +124,8 @@ func sanitize(s string) string {
 			b.WriteString(`\n`)
 		case r == '\r':
 			b.WriteString(`\r`)
-		case r < 0x20 && r != '\t' || r == 0x7f:
-			fmt.Fprintf(&b, `\x%02x`, r)
+		case bad(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
 		default:
 			b.WriteRune(r)
 		}
