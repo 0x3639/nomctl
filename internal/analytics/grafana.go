@@ -124,6 +124,22 @@ func (g *Grafana) CreateDatasource(def map[string]any) error {
 	return nil
 }
 
+// PluginLoaded reports whether the running Grafana has loaded the plugin.
+func (g *Grafana) PluginLoaded(id string) (bool, error) {
+	code, _, err := g.do(http.MethodGet, "/api/plugins/"+url.PathEscape(id)+"/settings", nil)
+	if err != nil {
+		return false, err
+	}
+	switch code {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("query plugin %s: HTTP %d", id, code)
+	}
+}
+
 // DashboardExists searches dashboards by title and reports a non-empty result.
 func (g *Grafana) DashboardExists(title string) (bool, error) {
 	code, data, err := g.do(http.MethodGet, "/api/search?query="+url.QueryEscape(title), nil)

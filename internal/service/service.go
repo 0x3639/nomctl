@@ -164,6 +164,25 @@ func Enable(unit string) error { return execx.Run("systemctl", "enable", unit) }
 // EnableNow enables and starts a unit.
 func EnableNow(unit string) error { return execx.Run("systemctl", "enable", "--now", unit) }
 
+// IsEnabled reports whether the unit is enabled to start at boot.
+func IsEnabled(unit string) bool {
+	return execx.New("systemctl", "is-enabled", "--quiet", unit).Quiet() == nil
+}
+
+// EnsureRunning enables and starts the unit if it is not both enabled and
+// active. reload forces a daemon-reload first (after writing a unit file).
+func EnsureRunning(unit string, reload bool) error {
+	if reload {
+		if err := DaemonReload(); err != nil {
+			return err
+		}
+	}
+	if IsEnabled(unit) && IsActive(unit) {
+		return nil
+	}
+	return EnableNow(unit)
+}
+
 // RestartUnit restarts any unit without the not-running shortcut.
 func RestartUnit(unit string) error { return execx.Run("systemctl", "restart", unit) }
 

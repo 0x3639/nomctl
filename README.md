@@ -147,6 +147,7 @@ The Go module path is declared in `go.mod`; the Makefile and goreleaser read it 
 - Interactive prompt inputs are trimmed of surrounding whitespace before validation.
 - Out-of-range environment values are rejected when used, so a valid flag can override them; the bash version had no validation at all.
 - Backup, restore, resync and deploy are mutually exclusive via a lock file; the bash version let a scheduled backup overlap a manual operation.
+- `analytics install` converges: every step (binary, user, unit file, service, scrape job, plugin load) checks its own precondition, so an interrupted run is completed on the next run. The bash version skipped the whole component whenever its binary or service already existed, which could leave a half-installed component permanently broken.
 
 ## License
 

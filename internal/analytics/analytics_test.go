@@ -86,6 +86,10 @@ func TestGrafanaClient(t *testing.T) {
 			} else {
 				_, _ = w.Write([]byte(`[]`))
 			}
+		case r.URL.Path == "/api/plugins/"+infinityPlugin+"/settings":
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/api/plugins/other/settings":
+			w.WriteHeader(http.StatusNotFound)
 		case r.URL.Path == "/api/dashboards/import":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -126,6 +130,12 @@ func TestGrafanaClient(t *testing.T) {
 	}
 	if ok, _ := g.DashboardExists("nope"); ok {
 		t.Error("nope dashboard should not exist")
+	}
+	if ok, err := g.PluginLoaded(infinityPlugin); err != nil || !ok {
+		t.Errorf("plugin should be loaded: %v %v", ok, err)
+	}
+	if ok, err := g.PluginLoaded("other"); err != nil || ok {
+		t.Errorf("plugin should not be loaded: %v %v", ok, err)
 	}
 	if err := g.ImportDashboard([]byte(`{}`)); err != nil {
 		t.Error(err)

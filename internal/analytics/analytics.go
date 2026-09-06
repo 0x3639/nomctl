@@ -107,49 +107,51 @@ func ensureSystemUser(name string) error {
 
 func releaseArch() string { return "linux-" + runtime.GOARCH }
 
+// ensureUnitFile writes the unit if it is missing and reports whether it did.
+func ensureUnitFile(path, content string) (bool, error) {
+	if fsx.Exists(path) {
+		return false, nil
+	}
+	slog.Info("Writing " + path)
+	return true, service.WriteUnit(path, content)
+}
+
+// installNodeExporter converges the node_exporter installation: every step
+// checks its own precondition, so an interrupted earlier run is completed
+// rather than skipped.
 func installNodeExporter(cfg config.Config) error {
 	const unit = "node_exporter"
-	if service.IsActive(unit) {
-		slog.Info("Node Exporter already running – skipping installation.")
-		return nil
-	}
-	if fsx.Exists("/usr/local/bin/node_exporter") {
-		slog.Info("Node Exporter binary exists, starting service...")
-		if err := service.DaemonReload(); err != nil {
+	const binary = "/usr/local/bin/node_exporter"
+
+	if !fsx.Exists(binary) {
+		slog.Info(fmt.Sprintf("Installing Node Exporter %s…", cfg.NodeExporterVersion))
+		dirName := fmt.Sprintf("node_exporter-%s.%s", cfg.NodeExporterVersion, releaseArch())
+		url := fmt.Sprintf("https://github.com/prometheus/node_exporter/releases/download/v%s/%s.tar.gz", cfg.NodeExporterVersion, dirName)
+		tarball := "/tmp/node_exporter.tar.gz"
+		if err := fsx.Download(url, tarball, 5*time.Minute); err != nil {
+			return fmt.Errorf("unable to download Node Exporter: %w", err)
+		}
+		defer func() { _ = os.Remove(tarball); _ = os.RemoveAll(filepath.Join("/tmp", dirName)) }()
+		if err := execx.Run("tar", "-xzf", tarball, "-C", "/tmp"); err != nil {
 			return err
 		}
-		return service.EnableNow(unit)
-	}
-	slog.Info(fmt.Sprintf("Installing Node Exporter %s…", cfg.NodeExporterVersion))
-	dirName := fmt.Sprintf("node_exporter-%s.%s", cfg.NodeExporterVersion, releaseArch())
-	url := fmt.Sprintf("https://github.com/prometheus/node_exporter/releases/download/v%s/%s.tar.gz", cfg.NodeExporterVersion, dirName)
-	tarball := "/tmp/node_exporter.tar.gz"
-	if err := fsx.Download(url, tarball, 5*time.Minute); err != nil {
-		return fmt.Errorf("unable to download Node Exporter: %w", err)
-	}
-	defer func() { _ = os.Remove(tarball); _ = os.RemoveAll(filepath.Join("/tmp", dirName)) }()
-	if err := execx.Run("tar", "-xzf", tarball, "-C", "/tmp"); err != nil {
-		return err
-	}
-	if err := fsx.CopyFile(filepath.Join("/tmp", dirName, "node_exporter"), "/usr/local/bin/node_exporter", 0o755); err != nil {
-		return err
+		if err := fsx.CopyFile(filepath.Join("/tmp", dirName, "node_exporter"), binary, 0o755); err != nil {
+			return err
+		}
+	} else {
+		slog.Info("Node Exporter binary already present.")
 	}
 	if err := ensureSystemUser(unit); err != nil {
 		return err
 	}
-	unitPath := "/etc/systemd/system/node_exporter.service"
-	if !fsx.Exists(unitPath) {
-		if err := service.WriteUnit(unitPath, NodeExporterUnit()); err != nil {
-			return err
-		}
-	}
-	if err := service.DaemonReload(); err != nil {
+	wrote, err := ensureUnitFile("/etc/systemd/system/node_exporter.service", NodeExporterUnit())
+	if err != nil {
 		return err
 	}
-	if err := service.EnableNow(unit); err != nil {
+	if err := service.EnsureRunning(unit, wrote); err != nil {
 		return err
 	}
-	logx.Success("Node Exporter installed.")
+	logx.Success("Node Exporter installed and running.")
 	return nil
 }
 
@@ -201,73 +203,81 @@ func NeedsNodeScrapeJob(promYML string) bool {
 	return !strings.Contains(promYML, `job_name: "node"`)
 }
 
+// installPrometheus converges the Prometheus installation (see
+// installNodeExporter for the approach).
 func installPrometheus(cfg config.Config) error {
 	const unit = "prometheus"
-	if service.IsActive(unit) {
-		slog.Info("Prometheus already running – skipping installation.")
-		return nil
-	}
-	if fsx.Exists("/usr/local/bin/prometheus") {
-		slog.Info("Prometheus binary exists, starting service...")
-		if err := service.DaemonReload(); err != nil {
-			return err
-		}
-		return service.EnableNow(unit)
-	}
-	slog.Info(fmt.Sprintf("Installing Prometheus %s…", cfg.PrometheusVersion))
+	const promYML = "/etc/prometheus/prometheus.yml"
 	for _, d := range []string{"/etc/prometheus", "/var/lib/prometheus"} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
 	}
-	dirName := fmt.Sprintf("prometheus-%s.%s", cfg.PrometheusVersion, releaseArch())
-	url := fmt.Sprintf("https://github.com/prometheus/prometheus/releases/download/v%s/%s.tar.gz", cfg.PrometheusVersion, dirName)
-	tarball := "/tmp/prometheus.tar.gz"
-	if err := fsx.Download(url, tarball, 5*time.Minute); err != nil {
-		return fmt.Errorf("unable to download Prometheus: %w", err)
+
+	// Pieces from the release tarball, and where each lands.
+	binaries := []string{"prometheus", "promtool"}
+	dirs := []string{"consoles", "console_libraries"}
+	missing := false
+	for _, b := range binaries {
+		missing = missing || !fsx.Exists("/usr/local/bin/"+b)
 	}
-	src := filepath.Join("/tmp", dirName)
-	defer func() { _ = os.Remove(tarball); _ = os.RemoveAll(src) }()
-	if err := execx.Run("tar", "-xzf", tarball, "-C", "/tmp"); err != nil {
-		return err
+	for _, d := range dirs {
+		missing = missing || !fsx.IsDir("/etc/prometheus/"+d)
 	}
-	for _, bin := range []string{"prometheus", "promtool"} {
-		if err := fsx.CopyFile(filepath.Join(src, bin), "/usr/local/bin/"+bin, 0o755); err != nil {
+	missing = missing || !fsx.Exists(promYML)
+
+	if missing {
+		slog.Info(fmt.Sprintf("Installing Prometheus %s…", cfg.PrometheusVersion))
+		dirName := fmt.Sprintf("prometheus-%s.%s", cfg.PrometheusVersion, releaseArch())
+		url := fmt.Sprintf("https://github.com/prometheus/prometheus/releases/download/v%s/%s.tar.gz", cfg.PrometheusVersion, dirName)
+		tarball := "/tmp/prometheus.tar.gz"
+		if err := fsx.Download(url, tarball, 5*time.Minute); err != nil {
+			return fmt.Errorf("unable to download Prometheus: %w", err)
+		}
+		src := filepath.Join("/tmp", dirName)
+		defer func() { _ = os.Remove(tarball); _ = os.RemoveAll(src) }()
+		if err := execx.Run("tar", "-xzf", tarball, "-C", "/tmp"); err != nil {
 			return err
 		}
-	}
-	for _, dir := range []string{"consoles", "console_libraries"} {
-		if !fsx.IsDir("/etc/prometheus/" + dir) {
-			if err := execx.Run("cp", "-r", filepath.Join(src, dir), "/etc/prometheus/"); err != nil {
+		for _, b := range binaries {
+			if !fsx.Exists("/usr/local/bin/" + b) {
+				if err := fsx.CopyFile(filepath.Join(src, b), "/usr/local/bin/"+b, 0o755); err != nil {
+					return err
+				}
+			}
+		}
+		for _, d := range dirs {
+			if !fsx.IsDir("/etc/prometheus/" + d) {
+				if err := execx.Run("cp", "-r", filepath.Join(src, d), "/etc/prometheus/"); err != nil {
+					return err
+				}
+			}
+		}
+		if !fsx.Exists(promYML) {
+			if err := fsx.CopyFile(filepath.Join(src, "prometheus.yml"), promYML, 0o644); err != nil {
 				return err
 			}
 		}
+	} else {
+		slog.Info("Prometheus files already present.")
 	}
-	const promYML = "/etc/prometheus/prometheus.yml"
-	if !fsx.Exists(promYML) {
-		if err := fsx.CopyFile(filepath.Join(src, "prometheus.yml"), promYML, 0o644); err != nil {
-			return err
-		}
-	}
+
 	if err := ensureSystemUser(unit); err != nil {
 		return err
 	}
-	unitPath := "/etc/systemd/system/prometheus.service"
-	if !fsx.Exists(unitPath) {
-		if err := service.WriteUnit(unitPath, PrometheusUnit()); err != nil {
-			return err
-		}
+	wrote, err := ensureUnitFile("/etc/systemd/system/prometheus.service", PrometheusUnit())
+	if err != nil {
+		return err
 	}
 	if err := execx.Run("chown", "-R", "prometheus:prometheus", "/etc/prometheus", "/var/lib/prometheus"); err != nil {
 		return err
 	}
-	if err := service.DaemonReload(); err != nil {
-		return err
-	}
-	if err := service.EnableNow(unit); err != nil {
+	if err := service.EnsureRunning(unit, wrote); err != nil {
 		return err
 	}
 
+	// The node_exporter scrape job is checked on every run, including when
+	// Prometheus was already installed by other means.
 	current, err := os.ReadFile(promYML)
 	if err != nil {
 		return err
@@ -289,51 +299,47 @@ func installPrometheus(cfg config.Config) error {
 			return err
 		}
 	}
-	logx.Success("Prometheus installed.")
+	logx.Success("Prometheus installed and running.")
 	return nil
 }
 
+// installGrafana converges the Grafana package install and service state.
 func installGrafana(g *Grafana) error {
 	const unit = "grafana-server"
-	if service.IsActive(unit) {
-		slog.Info("Grafana already running – skipping installation.")
-		return nil
-	}
-	if dpkgInstalled("grafana") {
-		slog.Info("Grafana package already installed, starting service...")
-		if err := service.EnableNow(unit); err != nil {
+	if !dpkgInstalled("grafana") {
+		slog.Info("Installing Grafana…")
+		if err := os.MkdirAll(filepath.Dir(grafanaKeyring), 0o755); err != nil {
 			return err
 		}
-		return g.WaitReady(grafanaWait)
-	}
-	slog.Info("Installing Grafana…")
-	if err := os.MkdirAll(filepath.Dir(grafanaKeyring), 0o755); err != nil {
-		return err
-	}
-	if !fsx.Exists(grafanaKeyring) {
-		if err := fsx.Download("https://apt.grafana.com/gpg.key", grafanaKeyring, time.Minute); err != nil {
-			return err
+		if !fsx.Exists(grafanaKeyring) {
+			if err := fsx.Download("https://apt.grafana.com/gpg.key", grafanaKeyring, time.Minute); err != nil {
+				return err
+			}
 		}
-	}
-	if !fsx.Exists(grafanaSourcesList) {
-		line := fmt.Sprintf("deb [signed-by=%s] https://apt.grafana.com stable main\n", grafanaKeyring)
-		if err := os.WriteFile(grafanaSourcesList, []byte(line), 0o644); err != nil {
-			return err
+		if !fsx.Exists(grafanaSourcesList) {
+			line := fmt.Sprintf("deb [signed-by=%s] https://apt.grafana.com stable main\n", grafanaKeyring)
+			if err := os.WriteFile(grafanaSourcesList, []byte(line), 0o644); err != nil {
+				return err
+			}
 		}
+		// Always refresh: the sources file may exist from an earlier run
+		// that never got as far as apt-get update.
 		if err := execx.Run("apt-get", "update", "-qq"); err != nil {
 			return err
 		}
+		if err := execx.Run("apt-get", "install", "-y", "grafana"); err != nil {
+			return fmt.Errorf("failed to install Grafana: %w", err)
+		}
+	} else {
+		slog.Info("Grafana package already installed.")
 	}
-	if err := execx.Run("apt-get", "install", "-y", "grafana"); err != nil {
-		return fmt.Errorf("failed to install Grafana: %w", err)
-	}
-	if err := service.EnableNow(unit); err != nil {
+	if err := service.EnsureRunning(unit, false); err != nil {
 		return err
 	}
 	if err := g.WaitReady(grafanaWait); err != nil {
 		return err
 	}
-	logx.Success("Grafana installed.")
+	logx.Success("Grafana installed and running.")
 	return nil
 }
 
@@ -356,24 +362,43 @@ func configurePrometheusDatasource(g *Grafana) error {
 	return nil
 }
 
+// installInfinityPlugin installs the plugin if grafana-cli does not list it,
+// fixes ownership, and restarts Grafana whenever the running instance has
+// not loaded the plugin yet (e.g. an earlier run installed it but was
+// interrupted before the restart).
 func installInfinityPlugin(cfg config.Config, g *Grafana) error {
 	out, err := execx.Output("grafana-cli", "plugins", "ls")
-	if err == nil && strings.Contains(out, infinityPlugin) {
+	if err != nil || !strings.Contains(out, infinityPlugin) {
+		slog.Info("Installing Infinity datasource plugin…")
+		if err := execx.Run("grafana-cli", "plugins", "install", infinityPlugin, cfg.InfinityPluginVersion); err != nil {
+			return fmt.Errorf("failed to install Infinity plugin: %w", err)
+		}
+	} else {
 		slog.Info("Infinity plugin already installed.")
-		return nil
 	}
-	slog.Info("Installing Infinity datasource plugin…")
-	if err := execx.Run("grafana-cli", "plugins", "install", infinityPlugin, cfg.InfinityPluginVersion); err != nil {
-		return fmt.Errorf("failed to install Infinity plugin: %w", err)
+	if fsx.IsDir("/var/lib/grafana/plugins") {
+		if err := execx.Run("chown", "-R", "grafana:grafana", "/var/lib/grafana/plugins"); err != nil {
+			return err
+		}
 	}
-	if err := execx.Run("chown", "-R", "grafana:grafana", "/var/lib/grafana/plugins"); err != nil {
+	loaded, err := g.PluginLoaded(infinityPlugin)
+	if err != nil {
 		return err
 	}
-	if err := service.RestartUnit("grafana-server"); err != nil {
-		return err
-	}
-	if err := g.WaitReady(grafanaWait); err != nil {
-		return err
+	if !loaded {
+		slog.Info("Restarting Grafana to load the Infinity plugin…")
+		if err := service.RestartUnit("grafana-server"); err != nil {
+			return err
+		}
+		if err := g.WaitReady(grafanaWait); err != nil {
+			return err
+		}
+		if loaded, err = g.PluginLoaded(infinityPlugin); err != nil {
+			return err
+		}
+		if !loaded {
+			return fmt.Errorf("Grafana did not load plugin %s after restart", infinityPlugin)
+		}
 	}
 	logx.Success("Infinity plugin installed.")
 	return nil
