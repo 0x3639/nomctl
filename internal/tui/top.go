@@ -141,6 +141,13 @@ func nodeLines(n metrics.NodeSample, history []float64, inner int) []string {
 	}
 	lines = append(lines, rateLine,
 		fmt.Sprintf("frontier %s, %s ago", metrics.Commas(n.FrontierHeight), metrics.HumanDuration(n.FrontierAge)))
+	if n.Pillar.Configured {
+		text := "pillar " + metrics.PillarText(n.Pillar)
+		if !n.Pillar.Found || n.Pillar.Expected > n.Pillar.Produced {
+			text = styleWarn.Render(text)
+		}
+		lines = append(lines, text)
+	}
 	return lines
 }
 
