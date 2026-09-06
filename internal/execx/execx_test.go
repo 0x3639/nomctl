@@ -81,3 +81,21 @@ func TestInteractiveUntilInterruptForwardsSIGINT(t *testing.T) {
 		t.Fatal("child did not receive SIGINT; nomctl would hang on Ctrl+C")
 	}
 }
+
+func TestStartToFile(t *testing.T) {
+	Configure(false, nil)
+	path := t.TempDir() + "/out.log"
+	stop, err := New("sh", "-c", "echo started; sleep 30").StartToFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	stop()
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "started") {
+		t.Errorf("output not captured: %q %v", data, err)
+	}
+	if _, err := New("definitely-missing-binary-xyz").StartToFile(path); err == nil {
+		t.Error("missing binary must fail to start")
+	}
+}

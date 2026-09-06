@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // Runner holds the process-wide execution settings.
@@ -177,6 +178,38 @@ func (c *Cmd) InteractiveUntilInterrupt() error {
 		return &Error{Cmd: c.String(), Err: err}
 	}
 	return nil
+}
+
+// StartToFile starts the command with stdout and stderr appended to path and
+// returns a function that stops it (SIGTERM, then SIGKILL after 2 s) and
+// waits for it to exit.
+func (c *Cmd) StartToFile(path string) (stop func(), err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	cmd := c.build()
+	cmd.Stdout = f
+	cmd.Stderr = f
+	if err := cmd.Start(); err != nil {
+		_ = f.Close()
+		return nil, &Error{Cmd: c.String(), Err: err}
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		_ = f.Close()
+		close(done)
+	}()
+	return func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
+	}, nil
 }
 
 // Quiet runs the command discarding all output; only the exit status matters.
