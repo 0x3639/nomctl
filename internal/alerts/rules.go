@@ -9,7 +9,7 @@ import (
 )
 
 // HistoryWindow is how much sample history the daemon keeps for rules.
-const HistoryWindow = 30 * time.Minute
+const HistoryWindow = MaxWindowMinutes * time.Minute
 
 // Result of evaluating a rule.
 type Result struct {
@@ -191,6 +191,9 @@ func notEnoughPeers(h []metrics.Sample, cfg RuleConfig) Result {
 		}
 	}
 	n := win[len(win)-1].Node
+	if n.State == node.NotEnoughPeers {
+		return Result{Firing: true, Detail: fmt.Sprintf("node reports 'not enough peers' (%d connected) for %s; check that port 35995/TCP is reachable", n.NumPeers, metrics.HumanDuration(d))}
+	}
 	return Result{Firing: true, Detail: fmt.Sprintf("%d peers connected (minimum %d) for %s; check that port 35995/TCP is reachable", n.NumPeers, minPeers, metrics.HumanDuration(d))}
 }
 

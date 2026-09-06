@@ -164,7 +164,7 @@ sudo nomctl alerts list                   # alerts and thresholds
 sudo nomctl alerts set disk_low.min_free_gb 30
 sudo nomctl alerts disable backup_stale
 sudo nomctl alerts test
-sudo nomctl alerts unpair
+sudo nomctl alerts unpair                 # keeps credentials if the relay is unreachable; --force removes them anyway
 ```
 
 In Telegram: `/nodes` lists your nodes with their last heartbeat and sync summary, `/mute NAME ALERT [DURATION]` and `/unmute NAME ALERT` silence one alert or `all` (default 24h), `/unpair NAME` forgets a node.

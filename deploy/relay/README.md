@@ -34,6 +34,16 @@ pasting `docker-compose.yml` from this directory. Then:
   relay long-polls.
 - **Health check**: HTTP `GET /healthz` on port 8080, or the image's built-in
   `HEALTHCHECK`.
+- **Trusted proxy**: the pairing endpoint is rate limited per client IP.
+  Behind Coolify's proxy every request arrives from the proxy's address, so
+  set `RELAY_TRUSTED_PROXIES` to the proxy's network (for the default Docker
+  networks `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` covers it). The relay
+  then uses the right-most non-proxy address in `X-Forwarded-For`. With the
+  variable unset the header is ignored, which is safe but limits all
+  operators as one client.
+- **Volume ownership**: the container runs as uid 65532 and the image ships
+  `/data` owned by that uid, which a fresh named volume inherits. If you
+  bind-mount a host directory instead, `chown 65532:65532` it first.
 
 Environment variables:
 
@@ -44,6 +54,7 @@ Environment variables:
 | `RELAY_LISTEN` | `:8080` | HTTP listen address |
 | `RELAY_SILENT_AFTER` | `5m` | heartbeat gap before `node_silent` fires |
 | `RELAY_PUBLIC_URL` | empty | shown in the `/start` reply |
+| `RELAY_TRUSTED_PROXIES` | empty | comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` is trusted for rate limiting (see below) |
 | `RELAY_LOG_LEVEL` | `info` | `info` or `debug` |
 
 ## 3. Point nomctl at it

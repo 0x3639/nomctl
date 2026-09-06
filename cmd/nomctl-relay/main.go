@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -42,16 +43,25 @@ func main() {
 		slog.Error("bad RELAY_SILENT_AFTER", "err", err)
 		os.Exit(2)
 	}
+	proxies, err := relay.ParseCIDRs(os.Getenv("RELAY_TRUSTED_PROXIES"))
+	if err != nil {
+		slog.Error("bad RELAY_TRUSTED_PROXIES", "err", err)
+		os.Exit(2)
+	}
 	dbPath := envOr("RELAY_DB", "/data/relay.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
+		slog.Error("database directory is not writable; mount a volume owned by uid 65532 or set RELAY_DB", "dir", filepath.Dir(dbPath), "err", err)
+		os.Exit(1)
+	}
 	store, err := relay.OpenSQLite(dbPath)
 	if err != nil {
-		slog.Error("open database", "path", dbPath, "err", err)
+		slog.Error("open database (is the /data volume writable by uid 65532?)", "path", dbPath, "err", err)
 		os.Exit(1)
 	}
 	defer func() { _ = store.Close() }()
 
 	tg := relay.NewTelegram(token)
-	srv := relay.NewServer(store, tg, relay.Options{SilentAfter: silentAfter, PublicURL: os.Getenv("RELAY_PUBLIC_URL")})
+	srv := relay.NewServer(store, tg, relay.Options{SilentAfter: silentAfter, PublicURL: os.Getenv("RELAY_PUBLIC_URL"), TrustedProxies: proxies})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -74,7 +84,9 @@ func main() {
 	_ = httpServer.Shutdown(shutdownCtx)
 }
 
-// pollTelegram long-polls getUpdates and dispatches commands.
+// pollTelegram long-polls getUpdates and dispatches commands. An update is
+// acknowledged (the offset advances) only after it was handled, or after
+// three failed attempts so one bad update cannot wedge the loop.
 func pollTelegram(ctx context.Context, tg *relay.Telegram, srv *relay.Server) {
 	var offset int64
 	for ctx.Err() == nil {
@@ -92,10 +104,23 @@ func pollTelegram(ctx context.Context, tg *relay.Telegram, srv *relay.Server) {
 			continue
 		}
 		for _, u := range updates {
-			offset = u.UpdateID + 1
-			if err := srv.HandleUpdate(ctx, u); err != nil {
-				slog.Warn("handle update", "chat", u.ChatID, "err", err)
+			for attempt := 1; attempt <= 3; attempt++ {
+				err := srv.HandleUpdate(ctx, u)
+				if err == nil {
+					break
+				}
+				slog.Warn("handle update", "chat", u.ChatID, "attempt", attempt, "err", err)
+				if attempt == 3 {
+					slog.Error("giving up on update", "update", u.UpdateID, "chat", u.ChatID)
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(attempt) * 2 * time.Second):
+				}
 			}
+			offset = u.UpdateID + 1
 		}
 	}
 }

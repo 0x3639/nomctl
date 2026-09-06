@@ -10,6 +10,7 @@ services:
       RELAY_LISTEN: ":8080"
       RELAY_SILENT_AFTER: 5m
       RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-}
+      RELAY_TRUSTED_PROXIES: ${RELAY_TRUSTED_PROXIES:-}
     volumes:
       - relay-data:/data
 volumes:

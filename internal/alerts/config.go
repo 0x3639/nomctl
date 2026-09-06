@@ -130,6 +130,10 @@ func Load(path string) (Config, error) {
 			if _, ok := rc.Thresholds[k]; !ok {
 				rc.Thresholds[k] = v
 			}
+			if isMinutes(k) && rc.Thresholds[k] > MaxWindowMinutes {
+				// Clamp a hand-edited value that could never fire.
+				rc.Thresholds[k] = MaxWindowMinutes
+			}
 		}
 		c.Rules[name] = rc
 	}
@@ -192,6 +196,9 @@ func (c *Config) Set(key, value string) error {
 	if field == "pct" && f > 100 {
 		return fmt.Errorf("%s must be between 0 and 100", key)
 	}
+	if isMinutes(field) && f > MaxWindowMinutes {
+		return fmt.Errorf("%s must be at most %d minutes (the daemon keeps %d minutes of history)", key, MaxWindowMinutes, MaxWindowMinutes)
+	}
 	if rc.Thresholds == nil {
 		rc.Thresholds = map[string]float64{}
 	}
@@ -199,6 +206,12 @@ func (c *Config) Set(key, value string) error {
 	c.Rules[alert] = rc
 	return nil
 }
+
+// MaxWindowMinutes is the longest duration threshold that can fire: the
+// daemon keeps exactly this much history (see HistoryWindow).
+const MaxWindowMinutes = 30
+
+func isMinutes(field string) bool { return field == "minutes" || field == "window_minutes" }
 
 // thresholdKeys lists the tunable settings of an alert, sorted.
 func thresholdKeys(alert string) []string {

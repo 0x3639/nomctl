@@ -69,7 +69,7 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 		if a.Key == "" {
 			return
 		}
-		fmt.Fprintf(&kv, " %s=%v", styleKey.Render(a.Key), a.Value)
+		fmt.Fprintf(&kv, " %s=%s", styleKey.Render(a.Key), sanitize(fmt.Sprint(a.Value)))
 	}
 	for _, a := range h.attrs {
 		add(a)
@@ -77,7 +77,7 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	r.Attrs(func(a slog.Attr) bool { add(a); return true })
 
 	label, style := levelLabel(r.Level)
-	msg := r.Message
+	msg := sanitize(r.Message)
 	if r.Level == LevelSuccess {
 		msg = "✓ " + msg
 	}
@@ -98,12 +98,37 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	if h.file != nil {
 		plain := strings.Builder{}
 		for _, a := range h.attrs {
-			fmt.Fprintf(&plain, " %s=%v", a.Key, a.Value)
+			fmt.Fprintf(&plain, " %s=%s", a.Key, sanitize(fmt.Sprint(a.Value)))
 		}
-		r.Attrs(func(a slog.Attr) bool { fmt.Fprintf(&plain, " %s=%v", a.Key, a.Value); return true })
+		r.Attrs(func(a slog.Attr) bool {
+			fmt.Fprintf(&plain, " %s=%s", a.Key, sanitize(fmt.Sprint(a.Value)))
+			return true
+		})
 		fmt.Fprintf(h.file, "%s %s %s %s%s\n", ts.Format(time.RFC3339), label, Prefix, msg, plain.String())
 	}
 	return nil
+}
+
+// sanitize escapes control characters so untrusted text (relay errors,
+// command output) cannot forge extra log lines or move the cursor.
+func sanitize(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 && r != '\t' || r == 0x7f }) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r < 0x20 && r != '\t' || r == 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func levelLabel(l slog.Level) (string, lipgloss.Style) {

@@ -85,6 +85,10 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// UnknownNodeMessage is the error body of a 401 that means "this node is
+// not paired" (as opposed to a stale timestamp or a bad signature).
+const UnknownNodeMessage = "unknown node"
+
 // Signing errors.
 var (
 	ErrStale        = errors.New("request timestamp outside the replay window")

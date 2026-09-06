@@ -160,6 +160,17 @@ func TestUnits(t *testing.T) {
 	}
 }
 
+func TestParseCadence(t *testing.T) {
+	cfg := config.Default()
+	cfg.BackupCadenceDays = 7
+	if n, ok := ParseCadence(ServiceUnit(cfg, "/usr/local/bin/nomctl")); !ok || n != 7 {
+		t.Errorf("cadence = %d %v", n, ok)
+	}
+	if _, ok := ParseCadence("[Service]\nExecStart=/bin/true\n"); ok {
+		t.Error("no cadence flag")
+	}
+}
+
 func TestSHA256File(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "f")
 	if err := os.WriteFile(p, []byte("abc"), 0o644); err != nil {

@@ -33,7 +33,7 @@ type Telegram struct {
 
 // NewTelegram builds a client for the given bot token.
 func NewTelegram(token string) *Telegram {
-	return &Telegram{Token: token, BaseURL: DefaultTelegramURL, HTTP: &http.Client{Timeout: 70 * time.Second}, Sleep: time.Sleep}
+	return &Telegram{Token: token, BaseURL: DefaultTelegramURL, HTTP: &http.Client{Timeout: 70 * time.Second}}
 }
 
 // Update is the part of a Telegram update the relay uses.
@@ -58,8 +58,15 @@ func (t *Telegram) call(ctx context.Context, method string, params any) (json.Ra
 	if err != nil {
 		return nil, err
 	}
+	var lastWait time.Duration
 	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
+	const attempts = 4
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			if err := t.wait(ctx, lastWait); err != nil {
+				return nil, err
+			}
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/bot%s/%s", strings.TrimRight(t.BaseURL, "/"), t.Token, method), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
@@ -68,7 +75,7 @@ func (t *Telegram) call(ctx context.Context, method string, params any) (json.Ra
 		res, err := t.HTTP.Do(req)
 		if err != nil {
 			lastErr = err
-			t.backoff(attempt)
+			lastWait = backoff(attempt)
 			continue
 		}
 		data, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
@@ -86,11 +93,11 @@ func (t *Telegram) call(ctx context.Context, method string, params any) (json.Ra
 				wait = time.Duration(api.Parameters.RetryAfter) * time.Second
 			}
 			lastErr = fmt.Errorf("telegram %s: rate limited", method)
-			t.Sleep(wait)
+			lastWait = wait
 			continue
 		case res.StatusCode >= 500:
 			lastErr = fmt.Errorf("telegram %s: HTTP %d", method, res.StatusCode)
-			t.backoff(attempt)
+			lastWait = backoff(attempt)
 			continue
 		default:
 			return nil, fmt.Errorf("telegram %s: %s (HTTP %d)", method, api.Description, res.StatusCode)
@@ -99,8 +106,22 @@ func (t *Telegram) call(ctx context.Context, method string, params any) (json.Ra
 	return nil, lastErr
 }
 
-func (t *Telegram) backoff(attempt int) {
-	t.Sleep(time.Duration(1<<attempt) * time.Second)
+func backoff(attempt int) time.Duration { return time.Duration(1<<attempt) * time.Second }
+
+// wait sleeps for d unless ctx ends first. Sleep (tests) may shortcut it.
+func (t *Telegram) wait(ctx context.Context, d time.Duration) error {
+	if t.Sleep != nil {
+		t.Sleep(d)
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // Send delivers a MarkdownV2 message; callers escape user text with Escape.

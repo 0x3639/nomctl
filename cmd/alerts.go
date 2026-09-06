@@ -107,15 +107,24 @@ func alertsSetup(cmd *cobra.Command) error {
 	}
 	logx.Success(fmt.Sprintf("Paired as %q with relay %s", name, relayURL))
 
-	if err := alerts.InstallUnit(); err != nil {
-		return fmt.Errorf("install %s: %w", alerts.UnitName, err)
-	}
-	logx.Success(alerts.UnitName + ".service enabled and started")
-
 	client, err := alerts.NewClient(acfg, versionString())
 	if err != nil {
 		return err
 	}
+	if err := alerts.InstallUnit(cfg); err != nil {
+		// The relay already knows this node; without a daemon it would raise
+		// node_silent in five minutes, so undo the pairing.
+		_ = alerts.UninstallUnit()
+		unpairCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if uerr := client.Unpair(unpairCtx); uerr != nil && !errors.Is(uerr, alerts.ErrUnpaired) {
+			return fmt.Errorf("install %s failed (%w) and the relay could not be told (%w); the credentials are kept in %s, run: sudo nomctl alerts unpair", alerts.UnitName, err, uerr, alerts.DefaultConfigPath)
+		}
+		_ = os.Remove(alerts.DefaultConfigPath)
+		return fmt.Errorf("install %s: %w (pairing rolled back)", alerts.UnitName, err)
+	}
+	logx.Success(alerts.UnitName + ".service enabled and started")
+
 	if err := client.Alert(ctx, alertproto.AlertRequest{Alert: "test", State: alertproto.Info, Severity: alertproto.InfoSev,
 		Title: "test alert", Detail: "sent by nomctl alerts setup", At: time.Now()}); err != nil {
 		return fmt.Errorf("paired, but the test alert failed: %w", err)
@@ -163,10 +172,14 @@ var alertsRunCmd = &cobra.Command{
 }
 
 // backupChecker feeds the backup_stale rule from the timer state and archives.
+// The cadence comes from the installed timer unit, not this process's env.
 func backupChecker() alerts.BackupInfo {
 	info := alerts.BackupInfo{TimerEnabled: service.IsEnabled(backup.TimerName + ".timer"), CadenceDays: cfg.BackupCadenceDays}
 	if !info.TimerEnabled {
 		return info
+	}
+	if days, ok := backup.InstalledCadence(); ok {
+		info.CadenceDays = days
 	}
 	if archives, err := backup.List(cfg); err == nil && len(archives) > 0 {
 		info.Newest = archives[0].ModTime
@@ -329,20 +342,32 @@ var alertsTestCmd = &cobra.Command{
 	},
 }
 
+var flagAlertsForce bool
+
 var alertsUnpairCmd = &cobra.Command{
-	Use:         "unpair",
-	Short:       "Stop the alerts service and forget the pairing",
+	Use:   "unpair",
+	Short: "Stop the alerts service and forget the pairing",
+	Long: `Tells the relay to forget this node, then stops the service and removes the
+local credentials. If the relay cannot be reached the credentials are kept so
+you can retry; --force removes them anyway (use /unpair in Telegram to clean
+up the relay side).`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
 		acfg, err := alerts.Load(alerts.DefaultConfigPath)
 		if err == nil && acfg.Paired() {
-			if client, err := alerts.NewClient(acfg, versionString()); err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				if err := client.Unpair(ctx); err != nil && !errors.Is(err, alerts.ErrUnpaired) {
-					fmt.Fprintln(os.Stderr, "relay could not be told (continuing):", err)
+			client, err := alerts.NewClient(acfg, versionString())
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			err = client.Unpair(ctx)
+			cancel()
+			if err != nil && !errors.Is(err, alerts.ErrUnpaired) {
+				if !flagAlertsForce {
+					return fmt.Errorf("relay could not be told (%w); credentials kept, retry later or use --force and then /unpair %s in Telegram", err, acfg.Name)
 				}
-				cancel()
+				fmt.Fprintln(os.Stderr, "relay could not be told; removing local state anyway (--force):", err)
 			}
 		}
 		if err := alerts.UninstallUnit(); err != nil {
@@ -367,6 +392,7 @@ func init() {
 	alertsSetupCmd.Flags().StringVar(&flagAlertsCode, "code", "", "pairing code from the Telegram bot (prompted if omitted)")
 	alertsSetupCmd.Flags().StringVar(&flagAlertsName, "name", "", "node name shown in alerts (prompted if omitted; default hostname)")
 	alertsSetupCmd.Flags().StringVar(&flagAlertsRelay, "relay", "", "relay URL (NOMCTL_RELAY_URL; default built in)")
+	alertsUnpairCmd.Flags().BoolVar(&flagAlertsForce, "force", false, "remove local credentials even if the relay cannot be reached")
 	alertsCmd.AddCommand(alertsSetupCmd, alertsRunCmd, alertsStatusCmd, alertsListCmd, alertsEnableCmd, alertsDisableCmd, alertsSetCmd, alertsTestCmd, alertsUnpairCmd)
 	rootCmd.AddCommand(alertsCmd)
 }

@@ -28,6 +28,8 @@ func (s *Server) HandleUpdate(ctx context.Context, u Update) error {
 	if u.ChatID == 0 || !strings.HasPrefix(u.Text, "/") {
 		return nil
 	}
+	// An incoming message proves the chat can reach the bot; lift any block.
+	s.clearBlocked(ctx, u.ChatID)
 	fields := strings.Fields(u.Text)
 	cmd := strings.ToLower(fields[0])
 	if i := strings.IndexByte(cmd, '@'); i > 0 { // /start@botname
@@ -177,6 +179,9 @@ func (s *Server) cmdUnmute(ctx context.Context, chatID int64, args []string) (st
 		return Escape(fmt.Sprintf("No node named %q in this chat. See /nodes.", args[0])), nil
 	}
 	alert := strings.ToLower(args[1])
+	if !validAlert(alert) {
+		return Escape(fmt.Sprintf("Unknown alert %q. Use one of: %s, or all.", args[1], strings.Join(alertNames(), ", "))), nil
+	}
 	if err := s.store.ClearMute(ctx, node.ID, alert); err != nil {
 		return "", err
 	}

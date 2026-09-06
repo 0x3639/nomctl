@@ -7,9 +7,13 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/0x3639/nomctl/internal/relay.Version=${VERSION}" -o /nomctl-relay ./cmd/nomctl-relay
+# /data must be owned by the non-root user; a named volume copies this
+# ownership on first use.
+RUN mkdir -p /data && chown 65532:65532 /data
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /nomctl-relay /nomctl-relay
+COPY --from=build --chown=65532:65532 /data /data
 USER 65532:65532
 VOLUME /data
 EXPOSE 8080

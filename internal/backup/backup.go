@@ -356,6 +356,34 @@ func unitQuote(s string) string {
 	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
+// InstalledCadence reads the cadence baked into the installed timer's
+// service unit, so other components see the scheduled value rather than
+// the environment default. ok is false when no timer unit is installed.
+func InstalledCadence() (days int, ok bool) {
+	data, err := os.ReadFile("/etc/systemd/system/" + TimerName + ".service")
+	if err != nil {
+		return 0, false
+	}
+	return ParseCadence(string(data))
+}
+
+// ParseCadence extracts "--cadence N" from a unit's ExecStart line.
+func ParseCadence(unit string) (int, bool) {
+	for _, line := range strings.Split(unit, "\n") {
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i, f := range fields {
+			if f == "--cadence" && i+1 < len(fields) {
+				n, err := strconv.Atoi(fields[i+1])
+				return n, err == nil
+			}
+		}
+	}
+	return 0, false
+}
+
 // Schedule installs and enables the backup timer using this executable.
 func Schedule(cfg config.Config) error {
 	execPath, err := os.Executable()

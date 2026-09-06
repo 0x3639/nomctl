@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/service"
 )
 
@@ -15,8 +17,11 @@ const UnitName = "nomctl-alerts"
 // UnitPath is where the unit file is written.
 const UnitPath = "/etc/systemd/system/" + UnitName + ".service"
 
-// UnitText renders the daemon's unit for the given nomctl executable.
-func UnitText(execPath string) string {
+// UnitText renders the daemon's unit. The monitoring settings in effect at
+// setup time (service name, data and backup directories, log file) are
+// written into the unit so the daemon watches the same node the operator
+// configured, exactly as the backup timer unit does.
+func UnitText(execPath string, cfg config.Config) string {
 	return fmt.Sprintf(`[Unit]
 Description=nomctl alerts daemon
 After=network-online.target
@@ -29,14 +34,25 @@ Restart=always
 RestartSec=10
 RuntimeDirectory=nomctl
 Environment=NOMCTL_SKIP_PREFLIGHT=true
+Environment="NOMCTL_SERVICE_NAME=%s"
+Environment="NOMCTL_BINARY_NAME=%s"
+Environment="NOMCTL_ZNN_DIR=%s"
+Environment="NOMCTL_BACKUP_DIR=%s"
+Environment="NOMCTL_LOG_FILE=%s"
 
 [Install]
 WantedBy=multi-user.target
-`, execPath)
+`, execPath, unitQuote(cfg.ServiceName), unitQuote(cfg.BinaryName), unitQuote(cfg.ZnnDir), unitQuote(cfg.BackupDir), unitQuote(cfg.LogFile))
+}
+
+// unitQuote escapes a value for a double-quoted systemd setting.
+func unitQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
 // InstallUnit writes, enables and starts the daemon unit.
-func InstallUnit() error {
+func InstallUnit(cfg config.Config) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return err
@@ -44,7 +60,10 @@ func InstallUnit() error {
 	if resolved, err := filepath.EvalSymlinks(execPath); err == nil {
 		execPath = resolved
 	}
-	if err := service.WriteUnit(UnitPath, UnitText(execPath)); err != nil {
+	if strings.ContainsAny(execPath, " \t") {
+		execPath = `"` + execPath + `"`
+	}
+	if err := service.WriteUnit(UnitPath, UnitText(execPath, cfg)); err != nil {
 		return err
 	}
 	if err := service.DaemonReload(); err != nil {
@@ -57,9 +76,12 @@ func InstallUnit() error {
 	return service.RestartUnit(UnitName + ".service")
 }
 
-// UninstallUnit stops, disables and removes the daemon unit.
+// UninstallUnit stops, disables and removes the daemon unit. A unit that
+// was never installed is not an error; other systemd failures are.
 func UninstallUnit() error {
-	_ = service.Stop(UnitName)
+	if _, err := os.Stat(UnitPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err := service.Disable(UnitName + ".service"); err != nil {
 		return err
 	}

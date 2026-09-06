@@ -20,9 +20,12 @@ const ReminderEvery = 10 * time.Minute
 // errorLogEvery bounds how often relay failures are logged.
 const errorLogEvery = 10 * time.Minute
 
-// AlertState is the daemon's memory of one alert.
+// AlertState is the daemon's memory of one alert. Acked is false while the
+// relay has not yet accepted the current Firing value; the daemon keeps
+// retrying on every step until it has.
 type AlertState struct {
 	Firing   bool      `json:"firing"`
+	Acked    bool      `json:"acked"`
 	Since    time.Time `json:"since,omitempty"`
 	LastSent time.Time `json:"last_sent,omitempty"`
 	Detail   string    `json:"detail,omitempty"`
@@ -87,16 +90,37 @@ func (d *Daemon) Run(ctx context.Context, reload <-chan struct{}) error {
 		case <-reload:
 			cfg, err := Load(d.cfgPath)
 			if err != nil {
-				slog.Error("reload failed; keeping previous config: " + err.Error())
+				slog.Error("reload failed; keeping previous config", "err", err)
 				continue
 			}
-			d.cfg = cfg
+			if err := d.apply(cfg); err != nil {
+				slog.Error("reload failed; keeping previous config", "err", err)
+				continue
+			}
 			ticker.Reset(d.cfg.Interval)
 			slog.Info("configuration reloaded")
 		case <-ticker.C:
 			d.Step(ctx)
 		}
 	}
+}
+
+// apply installs a new config, rebuilding the relay client when the
+// credentials changed and clearing a stale unpaired state in that case.
+func (d *Daemon) apply(cfg Config) error {
+	if cfg.RelayURL != d.cfg.RelayURL || cfg.NodeID != d.cfg.NodeID || cfg.Secret != d.cfg.Secret {
+		client, err := NewClient(cfg, d.client.Version)
+		if err != nil {
+			return err
+		}
+		client.Now = d.client.Now
+		client.HTTP = d.client.HTTP
+		d.client = client
+		d.state.Unpaired = false
+		d.state.LastError = ""
+	}
+	d.cfg = cfg
+	return nil
 }
 
 // Step performs one sample, evaluation and report cycle.
@@ -114,7 +138,7 @@ func (d *Daemon) Step(ctx context.Context) {
 				continue
 			}
 			res := r.Evaluate(d.history, rc)
-			d.state.Alerts[r.Name()] = AlertState{Firing: res.Firing, Since: now, Detail: res.Detail}
+			d.state.Alerts[r.Name()] = AlertState{Firing: res.Firing, Acked: true, Since: now, Detail: res.Detail}
 		}
 		d.evaluated = true
 		d.send(ctx, alertproto.AlertRequest{Alert: "started", State: alertproto.Info, Severity: alertproto.InfoSev,
@@ -137,24 +161,26 @@ func (d *Daemon) evaluate(ctx context.Context, now time.Time) {
 		}
 		info, _ := alertproto.Lookup(name)
 		res := r.Evaluate(d.history, rc)
-		prev := d.state.Alerts[name]
-		switch {
-		case res.Firing && !prev.Firing:
-			prev = AlertState{Firing: true, Since: now, Detail: res.Detail}
-			if d.send(ctx, alertproto.AlertRequest{Alert: name, State: alertproto.Firing, Severity: info.Severity, Title: info.Title, Detail: res.Detail, At: now}) {
-				prev.LastSent = now
-			}
-		case !res.Firing && prev.Firing:
-			prev = AlertState{Firing: false, Since: now}
-			if d.send(ctx, alertproto.AlertRequest{Alert: name, State: alertproto.OK, Severity: info.Severity, Title: info.OKTitle, At: now}) {
-				prev.LastSent = now
-			}
-		case res.Firing && prev.Firing:
+		prev, known := d.state.Alerts[name]
+		if !known {
+			// Rule enabled after start: take its current value as baseline.
+			prev = AlertState{Firing: res.Firing, Acked: true, Since: now}
+		}
+		if res.Firing != prev.Firing {
+			prev = AlertState{Firing: res.Firing, Since: now}
+		}
+		if res.Firing {
 			prev.Detail = res.Detail
-			if prev.LastSent.IsZero() || now.Sub(prev.LastSent) >= ReminderEvery {
-				if d.send(ctx, alertproto.AlertRequest{Alert: name, State: alertproto.Firing, Severity: info.Severity, Title: info.Title, Detail: res.Detail, At: now}) {
-					prev.LastSent = now
-				}
+		}
+		needSend := !prev.Acked || (res.Firing && (prev.LastSent.IsZero() || now.Sub(prev.LastSent) >= ReminderEvery))
+		if needSend {
+			req := alertproto.AlertRequest{Alert: name, State: alertproto.OK, Severity: info.Severity, Title: info.OKTitle, At: now}
+			if res.Firing {
+				req.State, req.Title, req.Detail = alertproto.Firing, info.Title, res.Detail
+			}
+			if d.send(ctx, req) {
+				prev.Acked = true
+				prev.LastSent = now
 			}
 		}
 		d.state.Alerts[name] = prev
@@ -206,7 +232,7 @@ func (d *Daemon) noteError(err error) {
 	}
 	d.state.LastError = err.Error()
 	if d.now().Sub(d.lastErrorLog) >= errorLogEvery {
-		slog.Warn("relay request failed: " + err.Error())
+		slog.Warn("relay request failed", "err", err)
 		d.lastErrorLog = d.now()
 	}
 }

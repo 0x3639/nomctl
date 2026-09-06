@@ -34,3 +34,13 @@ func TestLevelLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeControlCharacters(t *testing.T) {
+	var console bytes.Buffer
+	l := slog.New(New(&console, nil, slog.LevelInfo))
+	l.Error("relay said: line one\nERRO forged line", "err", "x\r\ny")
+	out := console.String()
+	if strings.Count(out, "\n") != 1 || !strings.Contains(out, `line one\nERRO forged line`) || !strings.Contains(out, `x\r\ny`) {
+		t.Errorf("control characters must be escaped: %q", out)
+	}
+}

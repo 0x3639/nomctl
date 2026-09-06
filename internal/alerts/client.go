@@ -105,11 +105,13 @@ func (c *Client) post(ctx context.Context, path string, v any) error {
 	defer func() { _ = res.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 	switch {
-	case res.StatusCode == http.StatusUnauthorized:
+	case res.StatusCode == http.StatusUnauthorized && relayError(res.StatusCode, data) == alertproto.UnknownNodeMessage:
 		return ErrUnpaired
 	case res.StatusCode >= 200 && res.StatusCode < 300:
 		return nil
 	default:
+		// Includes 401s for clock skew or a bad signature: transient from the
+		// node's point of view, retried on the next step.
 		return fmt.Errorf("relay %s: %s", path, relayError(res.StatusCode, data))
 	}
 }

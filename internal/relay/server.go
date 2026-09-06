@@ -39,6 +39,9 @@ type Options struct {
 	SilentAfter time.Duration
 	PublicURL   string
 	Now         func() time.Time
+	// TrustedProxies lists CIDRs of reverse proxies whose X-Forwarded-For
+	// header is honoured. Empty means the header is ignored.
+	TrustedProxies []*net.IPNet
 }
 
 // Server holds the relay state.
@@ -100,15 +103,65 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	return body, true
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
+// clientIP returns the peer address, or, when the peer is a trusted proxy,
+// the right-most X-Forwarded-For entry that is not itself a trusted proxy.
+// Anything a client could have forged on the left is never used.
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if len(s.opts.TrustedProxies) == 0 || !s.trusted(host) {
+		return host
+	}
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ip := strings.TrimSpace(parts[i])
+		if ip == "" {
+			continue
+		}
+		if !s.trusted(ip) {
+			return ip
+		}
 	}
 	return host
+}
+
+func (s *Server) trusted(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, n := range s.opts.TrustedProxies {
+		if n.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseCIDRs parses a comma-separated list of CIDRs or single addresses.
+func ParseCIDRs(list string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, item := range strings.Split(list, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if !strings.Contains(item, "/") {
+			if strings.Contains(item, ":") {
+				item += "/128"
+			} else {
+				item += "/32"
+			}
+		}
+		_, n, err := net.ParseCIDR(item)
+		if err != nil {
+			return nil, fmt.Errorf("bad trusted proxy %q: %w", item, err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // --- pairing ---------------------------------------------------------------
@@ -158,7 +211,7 @@ func validName(name string) bool {
 }
 
 func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
-	if !s.pairLimit.allow(clientIP(r)) {
+	if !s.pairLimit.allow(s.clientIP(r)) {
 		writeError(w, http.StatusTooManyRequests, "too many pairing attempts; try again in a minute")
 		return
 	}
@@ -223,8 +276,12 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 		}
 		ctx := r.Context()
 		node, err := s.store.GetNode(ctx, id)
+		if errors.Is(err, ErrNotFound) {
+			writeError(w, http.StatusUnauthorized, alertproto.UnknownNodeMessage)
+			return
+		}
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unknown node")
+			writeError(w, http.StatusInternalServerError, "store error")
 			return
 		}
 		ts, err := strconv.ParseInt(r.Header.Get(alertproto.HeaderTimestamp), 10, 64)
@@ -246,13 +303,17 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 		}
 		if wasSilent {
 			info, _ := alertproto.Lookup("node_silent")
-			s.deliver(ctx, node, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.OK, Severity: info.Severity, Title: info.OKTitle, At: now})
+			if err := s.deliver(ctx, node, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.OK, Severity: info.Severity, Title: info.OKTitle, At: now}); err != nil {
+				// Leave it flagged so the recovery is retried on the next request.
+				node.Silent = true
+				_ = s.store.UpdateNode(ctx, node)
+			}
 		}
 		h(w, r, node, body)
 	}
 }
 
-func (s *Server) handleAlert(w http.ResponseWriter, _ *http.Request, node Node, body []byte) {
+func (s *Server) handleAlert(w http.ResponseWriter, r *http.Request, node Node, body []byte) {
 	var req alertproto.AlertRequest
 	if err := json.Unmarshal(body, &req); err != nil || req.Alert == "" {
 		writeError(w, http.StatusBadRequest, "bad alert")
@@ -261,7 +322,13 @@ func (s *Server) handleAlert(w http.ResponseWriter, _ *http.Request, node Node, 
 	if req.At.IsZero() {
 		req.At = s.opts.Now()
 	}
-	s.deliver(context.WithoutCancel(context.Background()), node, req)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
+	if err := s.deliver(ctx, node, req); err != nil {
+		// Tell the node so it retries on its next sample.
+		writeError(w, http.StatusBadGateway, "delivery failed: "+err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -291,33 +358,42 @@ func (s *Server) handleUnpair(w http.ResponseWriter, r *http.Request, node Node,
 
 // --- delivery --------------------------------------------------------------
 
-// deliver applies the delivery rules and sends the alert to the node's chat.
-func (s *Server) deliver(ctx context.Context, node Node, a alertproto.AlertRequest) {
+// deliver applies the delivery rules and sends the alert to the node's
+// chat. The (alert, state) is recorded as sent only after Telegram accepted
+// it, or when it was intentionally muted, so a failed send is retried by
+// the next transition or reminder. It returns an error only for a failed
+// send; suppressed or muted deliveries return nil.
+func (s *Server) deliver(ctx context.Context, node Node, a alertproto.AlertRequest) error {
 	now := s.opts.Now()
-	if a.State != alertproto.Info {
-		lastState, lastAt, err := s.store.LastSent(ctx, node.ID, a.Alert)
-		if err != nil {
-			slog.Error("last sent lookup failed", "err", err)
-			return
-		}
-		unchanged := a.State == lastState
-		switch {
-		case unchanged && a.State == alertproto.OK:
-			return // ok after ok: nothing new
-		case unchanged && now.Sub(lastAt) < ReminderEvery:
-			return // still firing, too soon for a reminder
-		case a.State == alertproto.OK && lastState == "":
-			return // never fired as far as the relay knows
-		}
-		if err := s.store.SetLastSent(ctx, node.ID, a.Alert, a.State, now); err != nil {
-			slog.Error("set last sent failed", "err", err)
-		}
-		muted, err := s.store.Muted(ctx, node.ID, a.Alert, now)
-		if err == nil && muted {
-			return
+	if a.State == alertproto.Info {
+		return s.notify(ctx, node, FormatMessage(node, a))
+	}
+	lastState, lastAt, err := s.store.LastSent(ctx, node.ID, a.Alert)
+	if err != nil {
+		return fmt.Errorf("last sent lookup: %w", err)
+	}
+	unchanged := a.State == lastState
+	switch {
+	case unchanged && a.State == alertproto.OK:
+		return nil // ok after ok: nothing new
+	case unchanged && now.Sub(lastAt) < ReminderEvery:
+		return nil // still firing, too soon for a reminder
+	case a.State == alertproto.OK && lastState == "":
+		return nil // never fired as far as the relay knows
+	}
+	muted, err := s.store.Muted(ctx, node.ID, a.Alert, now)
+	if err != nil {
+		return fmt.Errorf("mute lookup: %w", err)
+	}
+	if !muted {
+		if err := s.notify(ctx, node, FormatMessage(node, a)); err != nil {
+			return err
 		}
 	}
-	_ = s.notify(ctx, node, FormatMessage(node, a))
+	if err := s.store.SetLastSent(ctx, node.ID, a.Alert, a.State, now); err != nil {
+		slog.Error("set last sent failed", "err", err)
+	}
+	return nil
 }
 
 // notify sends text to the node's chat, applying the per-chat rate limit.
@@ -355,6 +431,21 @@ func (s *Server) notify(ctx context.Context, node Node, text string) error {
 	return err
 }
 
+// clearBlocked resets the blocked flag on every node of a chat; called
+// when the chat proves it can talk to the bot again.
+func (s *Server) clearBlocked(ctx context.Context, chatID int64) {
+	nodes, err := s.store.ListNodes(ctx, chatID)
+	if err != nil {
+		return
+	}
+	for _, n := range nodes {
+		if n.Blocked {
+			n.Blocked = false
+			_ = s.store.UpdateNode(ctx, n)
+		}
+	}
+}
+
 // FormatMessage renders an alert for Telegram (MarkdownV2).
 func FormatMessage(node Node, a alertproto.AlertRequest) string {
 	icon := "ℹ️"
@@ -386,12 +477,16 @@ func (s *Server) CheckSilent(ctx context.Context) error {
 	}
 	info, _ := alertproto.Lookup("node_silent")
 	for _, n := range nodes {
+		err := s.deliver(ctx, n, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.Firing, Severity: info.Severity, Title: info.Title,
+			Detail: fmt.Sprintf("no heartbeat for %s (last seen %s)", now.Sub(n.LastSeen).Round(time.Second), n.LastSeen.UTC().Format("15:04:05 UTC")), At: now})
+		if err != nil {
+			slog.Warn("node_silent delivery failed; will retry", "node", n.Name, "err", err)
+			continue // stays a candidate for the next tick
+		}
 		n.Silent = true
 		if err := s.store.UpdateNode(ctx, n); err != nil {
-			continue
+			slog.Error("mark silent failed", "node", n.Name, "err", err)
 		}
-		s.deliver(ctx, n, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.Firing, Severity: info.Severity, Title: info.Title,
-			Detail: fmt.Sprintf("no heartbeat for %s (last seen %s)", now.Sub(n.LastSeen).Round(time.Second), n.LastSeen.UTC().Format("15:04:05 UTC")), At: now})
 	}
 	return nil
 }
