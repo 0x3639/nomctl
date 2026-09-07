@@ -20,6 +20,7 @@ import (
 	"github.com/0x3639/nomctl/internal/bootstrap"
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/deploy"
+	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/lock"
 	"github.com/0x3639/nomctl/internal/orchestrator"
 	"github.com/0x3639/nomctl/internal/restore"
@@ -382,11 +383,27 @@ func Bootstrap(cfg config.Config) error {
 
 // Restore lets the user pick an archive and restores it.
 func Restore(cfg config.Config) error {
-	archive, err := PickBackup(cfg)
-	if err != nil {
-		return err
+	for {
+		archive, err := PickBackup(cfg)
+		if err != nil {
+			return err
+		}
+		// The picker runs outside the lock, so a scheduled backup may have
+		// pruned the chosen archive meanwhile: check under the lock and
+		// offer the list again rather than failing.
+		gone := false
+		err = withLock("restore", func() error {
+			if !fsx.Exists(archive) {
+				gone = true
+				return nil
+			}
+			return restore.Run(cfg, archive)
+		})
+		if err != nil || !gone {
+			return err
+		}
+		slog.Warn(archive + " was removed by a backup run in the meantime; pick another")
 	}
-	return withLock("restore", func() error { return restore.Run(cfg, archive) })
 }
 
 var (
