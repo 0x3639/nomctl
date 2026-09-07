@@ -70,14 +70,13 @@ data only, which is replaceable; the wallet is not.
 
 MyTonCtrl equivalent: `create_backup`, `restore_backup`.
 
-### 5. Config editor — planned
+### 5. Config editor — done (v0.12.0)
 
-`nomctl config show|get|set`: read and change `config.json` keys with
-validation, a timestamped copy of the previous file, and a restart prompt.
-Initial keys: RPC enable/bind/ports, log level, min/max peers, seeders,
-producing address. nomctl does not touch `config.json` today.
-
-MyTonCtrl equivalent: `installer` sub-commands, `set`/`get`.
+`nomctl config show|get|set|unset|edit` and a Config submenu. Typed,
+validated edits against go-zenon's schema (ports, peers, log level, types,
+sections), unknown keys refused, Producer.* reserved for pillar setup,
+backup of every previous file, atomic 0600 writes, `--restart` on the CLI
+and a prompt in the menu. `edit` works on a copy like visudo.
 
 ### 6. Network check — planned
 

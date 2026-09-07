@@ -22,6 +22,7 @@ import (
 	"github.com/0x3639/nomctl/internal/deploy"
 	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/lock"
+	"github.com/0x3639/nomctl/internal/nodeconfig"
 	"github.com/0x3639/nomctl/internal/orchestrator"
 	"github.com/0x3639/nomctl/internal/producer"
 	"github.com/0x3639/nomctl/internal/restore"
@@ -51,6 +52,7 @@ const (
 	ActionOrch      Action = "orchestrator"
 	ActionPillar    Action = "pillar"
 	ActionPillarDep Action = "pillar-deploy"
+	ActionConfig    Action = "config"
 	ActionAnalytics Action = "analytics"
 	ActionExit      Action = "exit"
 )
@@ -76,6 +78,7 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 		{ActionBootstrap, "Restore Zenon from a bootstrap snapshot"},
 		{ActionAnalytics, "Set up a Grafana dashboard"},
 		{ActionPillar, "Pillar (producer key setup and status)"},
+		{ActionConfig, "Edit config.json (show, set, edit in editor)"},
 		{ActionOrch, "Orchestrator (hard reset, status, logs)"},
 		{ActionExit, ""},
 	}
@@ -159,6 +162,8 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return OrchestratorMenu(*cfg)
 	case ActionPillar:
 		return PillarMenu(*cfg)
+	case ActionConfig:
+		return ConfigMenu(*cfg)
 	case ActionPillarDep:
 		return withLock("pillar deploy", func() error { return PillarDeploy(*cfg) })
 	case ActionExit:
@@ -208,6 +213,127 @@ func ProducerPrompts() producer.Prompts {
 			return Secret(title)
 		},
 	}
+}
+
+// RetryEdit asks whether to reopen the editor after a validation failure.
+func RetryEdit(problem error) (bool, error) {
+	fmt.Fprintln(os.Stderr, ui.StyleBox.Width(76).Render("config.json is not valid:\n\n"+problem.Error()))
+	return Confirm("Reopen the editor and fix it? (No discards the edit)")
+}
+
+// ConfigMenu shows config.json actions.
+func ConfigMenu(cfg config.Config) error {
+	path := producer.ConfigPath(cfg.ZnnDir)
+	choice, err := Select("config.json", []huh.Option[string]{
+		huh.NewOption("Show every setting", "show"),
+		huh.NewOption("Set one setting", "set"),
+		huh.NewOption("Edit in $EDITOR", "edit"),
+		huh.NewOption("Back", "back"),
+	})
+	if err != nil {
+		return err
+	}
+	switch choice {
+	case "show":
+		d, err := nodeconfig.Load(path)
+		if err != nil {
+			return err
+		}
+		for _, s := range nodeconfig.Schema {
+			v, fromFile := nodeconfig.Effective(d, s)
+			if s.Reserved != "" && !fromFile {
+				continue
+			}
+			text := nodeconfig.Format(v)
+			if s.Key == "Producer.Password" {
+				text = "********"
+			}
+			src := "default"
+			if fromFile {
+				src = "file"
+			}
+			fmt.Fprintf(os.Stderr, "%-22s %-8s %s\n", s.Key, src, text)
+		}
+		if err := nodeconfig.ValidateStrict(d); err != nil {
+			fmt.Fprintln(os.Stderr, "\nProblems:\n  "+strings.ReplaceAll(err.Error(), "\n", "\n  "))
+		}
+		return nil
+	case "set":
+		return withLock("config", func() error { return configSet(cfg, path) })
+	case "edit":
+		return withLock("config", func() error {
+			outcome, backup, err := nodeconfig.Edit(path, EditorRunner, RetryEdit, time.Now())
+			if err != nil {
+				return err
+			}
+			switch outcome {
+			case nodeconfig.EditUnchanged:
+				slog.Info("No changes.")
+				return nil
+			case nodeconfig.EditAborted:
+				slog.Warn("Edit discarded; config.json is unchanged.")
+				return nil
+			}
+			ui.Success("config.json written (previous file: " + backup + ")")
+			return offerRestart(cfg)
+		})
+	}
+	return nil
+}
+
+// EditorRunner opens path in the user's editor; the cmd package sets it.
+var EditorRunner nodeconfig.Editor = func(string) error { return errors.New("no editor available") }
+
+func configSet(cfg config.Config, path string) error {
+	d, err := nodeconfig.Load(path)
+	if err != nil {
+		return err
+	}
+	opts := make([]huh.Option[string], 0, len(nodeconfig.Schema))
+	for _, s := range nodeconfig.Schema {
+		if s.Reserved != "" {
+			continue
+		}
+		v, _ := nodeconfig.Effective(d, s)
+		opts = append(opts, huh.NewOption(fmt.Sprintf("%-22s %s", s.Key, nodeconfig.Format(v)), s.Key))
+	}
+	key, err := Select("Which setting?", opts)
+	if err != nil {
+		return err
+	}
+	s, _ := nodeconfig.Lookup(key)
+	current, _ := nodeconfig.Effective(d, s)
+	text, err := Input(key+" ("+s.Kind.String()+"): "+s.Help, nodeconfig.Format(current))
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(text) == "" {
+		text = nodeconfig.Format(current)
+	}
+	value, err := nodeconfig.ParseValue(s, text)
+	if err != nil {
+		return err
+	}
+	if err := d.Set(key, value); err != nil {
+		return err
+	}
+	backup, err := nodeconfig.Save(path, d, time.Now())
+	if err != nil {
+		return err
+	}
+	ui.Success(key + " = " + nodeconfig.Format(value) + " (previous file: " + backup + ")")
+	return offerRestart(cfg)
+}
+
+func offerRestart(cfg config.Config) error {
+	if !service.IsActive(cfg.ServiceName) {
+		return nil
+	}
+	ok, err := Confirm(cfg.ServiceName + " reads config.json at start. Restart it now?")
+	if err != nil || !ok {
+		return err
+	}
+	return service.Restart(cfg.ServiceName)
 }
 
 // PillarDeploy runs the one-step Pillar deployment and prints the result.
