@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/0x3639/nomctl/dashboards"
@@ -208,5 +210,44 @@ func TestClientURL(t *testing.T) {
 func TestGrafanaDropIn(t *testing.T) {
 	if got := GrafanaDropIn("127.0.0.1"); got != "[Service]\nEnvironment=GF_SERVER_HTTP_ADDR=127.0.0.1\n" {
 		t.Errorf("drop-in = %q", got)
+	}
+}
+
+func TestAppendManagedRefusesLinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "prometheus.yml")
+	if err := os.WriteFile(target, []byte("global:\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendManaged(target, "scrape:\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(target)
+	if string(got) != "global:\nscrape:\n" {
+		t.Errorf("content = %q", got)
+	}
+	if info, _ := os.Stat(target); info.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %v", info.Mode())
+	}
+	// A symlink planted where the config should be must not redirect the write.
+	sentinel := filepath.Join(dir, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked.yml")
+	if err := os.Symlink(sentinel, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendManaged(link, "evil\n"); err == nil {
+		t.Fatal("symlink accepted")
+	}
+	if got, _ := os.ReadFile(sentinel); string(got) != "keep" {
+		t.Errorf("sentinel modified: %q", got)
+	}
+	if err := AppendManaged(filepath.Join(dir, "missing.yml"), "x"); err == nil {
+		t.Error("missing file accepted")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 3 { // yml, sentinel, link: nothing temporary
+		t.Errorf("temp file left behind: %v", entries)
 	}
 }
