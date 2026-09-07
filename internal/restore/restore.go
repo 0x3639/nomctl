@@ -86,12 +86,21 @@ func MoveAside(cfg config.Config, now time.Time, folders []string) (map[string]s
 	return moved, nil
 }
 
-// MoveBack returns folders moved by MoveAside to the data directory. It
-// keeps going after a failure and reports every folder it could not restore.
+// MoveBack returns folders moved by MoveAside to the data directory. It is
+// the rollback of a failed install, so anything already installed at a
+// destination is removed first: mv into an existing directory would nest
+// the safety copy inside it. It keeps going after a failure and reports
+// every folder it could not restore.
 func MoveBack(cfg config.Config, moved map[string]string) error {
 	var errs []error
 	for folder, src := range moved {
 		dst := filepath.Join(cfg.ZnnDir, folder)
+		if fsx.Exists(dst) {
+			if err := os.RemoveAll(dst); err != nil {
+				errs = append(errs, fmt.Errorf("clear %s before putting the previous data back: %w", dst, err))
+				continue
+			}
+		}
 		if err := execx.Run("mv", src, dst); err != nil {
 			errs = append(errs, fmt.Errorf("put back %s from %s: %w", folder, src, err))
 		}
@@ -103,6 +112,7 @@ func MoveBack(cfg config.Config, moved map[string]string) error {
 var (
 	stopService  = service.Stop
 	startService = service.Start
+	installDir   = os.Rename
 )
 
 // Run restores archive into the node data directory: verify the hash,
@@ -141,7 +151,7 @@ func Run(cfg config.Config, archive string) error {
 	moved, err := MoveAside(cfg, now, manifest.Folders)
 	if err == nil {
 		for _, folder := range manifest.Folders {
-			if err = os.Rename(filepath.Join(staging, folder), filepath.Join(cfg.ZnnDir, folder)); err != nil {
+			if err = installDir(filepath.Join(staging, folder), filepath.Join(cfg.ZnnDir, folder)); err != nil {
 				err = fmt.Errorf("install %s: %w", folder, err)
 				break
 			}

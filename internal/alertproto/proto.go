@@ -143,6 +143,9 @@ func ValidAlert(a AlertRequest) bool {
 	if _, ok := Lookup(a.Alert); !ok && !Events[a.Alert] {
 		return false
 	}
+	if Events[a.Alert] && (a.State != Info || a.Severity != InfoSev) {
+		return false
+	}
 	switch a.State {
 	case Firing, OK, Info:
 	default:

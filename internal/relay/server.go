@@ -292,10 +292,6 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "store error")
 			return
 		}
-		if !s.nodeLimit.allow(node.ID) {
-			writeError(w, http.StatusTooManyRequests, "rate limited")
-			return
-		}
 		ts, err := strconv.ParseInt(r.Header.Get(alertproto.HeaderTimestamp), 10, 64)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "bad timestamp")
@@ -303,6 +299,11 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 		}
 		if err := alertproto.Verify(node.Secret, ts, body, r.Header.Get(alertproto.HeaderSignature), s.opts.Now()); err != nil {
 			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		// Only a request proven to come from the node counts against it.
+		if !s.nodeLimit.allow(node.ID) {
+			writeError(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
 		now := s.opts.Now()

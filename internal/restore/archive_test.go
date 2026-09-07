@@ -206,3 +206,55 @@ func TestRunRefusesHostileArchiveBeforeStopping(t *testing.T) {
 		}
 	}
 }
+
+func TestInspectRejectsFileNamedLikeFolder(t *testing.T) {
+	a := tgz(t, dir("./"), file("./nom", "not a directory"), dir("./network/"), file("./network/a", "x"))
+	if _, err := Inspect(a); err == nil {
+		t.Fatal("file in place of a folder accepted")
+	}
+	if err := Extract(a, t.TempDir()); err == nil {
+		t.Fatal("extracted")
+	}
+}
+
+func TestRunRollbackAfterPartialInstall(t *testing.T) {
+	cfg := testConfig(t)
+	calls := stubService(t)
+	a := tgz(t, good()...)
+	// The first folder installs, the second rename fails.
+	oldInstall := installDir
+	n := 0
+	installDir = func(src, dst string) error {
+		n++
+		if n == 2 {
+			return errors.New("rename exploded")
+		}
+		return os.Rename(src, dst)
+	}
+	t.Cleanup(func() { installDir = oldInstall })
+	err := Run(cfg, a)
+	if err == nil || !strings.Contains(err.Error(), "rename exploded") || !strings.Contains(err.Error(), "put back") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Join(*calls, ",") != "stop,start" {
+		t.Errorf("calls = %v", *calls)
+	}
+	for _, folder := range []string{"nom", "network", "consensus"} {
+		if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, folder, "old")); string(got) != "old-"+folder {
+			t.Errorf("%s not put back: %q", folder, got)
+		}
+		// The safety copy must not have been nested inside the installed folder.
+		entries, _ := os.ReadDir(filepath.Join(cfg.ZnnDir, folder))
+		for _, e := range entries {
+			if strings.Contains(e.Name(), ".bak.") {
+				t.Errorf("%s: safety copy nested as %s", folder, e.Name())
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ZnnDir, "nom", "000001.log")); err == nil {
+		t.Error("installed data still live after rollback")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cfg.BackupDir, "restore")); len(entries) != 0 {
+		t.Errorf("restore dir should be empty after rollback: %v", entries)
+	}
+}

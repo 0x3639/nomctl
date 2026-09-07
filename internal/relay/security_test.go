@@ -148,3 +148,42 @@ func TestRateLimiterBounded(t *testing.T) {
 		t.Errorf("after sweep %d keys, want 1", len(r.counts))
 	}
 }
+
+// Events are informational: a "started" or "test" request cannot be dressed
+// up as a firing critical alert.
+func TestEventsMustBeInformational(t *testing.T) {
+	h := newHarness(t)
+	creds := h.pair(1, "a")
+	for _, a := range []alertproto.AlertRequest{
+		{Alert: "started", State: alertproto.Firing, Severity: alertproto.Critical, Title: "x"},
+		{Alert: "test", State: alertproto.OK, Severity: alertproto.InfoSev, Title: "x"},
+		{Alert: "test", State: alertproto.Info, Severity: alertproto.Warning, Title: "x"},
+	} {
+		if status, _ := h.signed(creds, "/v1/alert", a); status != http.StatusBadRequest {
+			t.Errorf("%s %s/%s: status = %d", a.Alert, a.State, a.Severity, status)
+		}
+	}
+}
+
+// Badly signed requests naming a real node must not eat that node's quota.
+func TestBadSignaturesDoNotConsumeNodeQuota(t *testing.T) {
+	h := newHarness(t)
+	creds := h.pair(1, "a")
+	for i := 0; i < nodeRatePerMin+5; i++ {
+		req, _ := http.NewRequest(http.MethodPost, h.http.URL+"/v1/heartbeat", strings.NewReader("{}"))
+		req.Header.Set(alertproto.HeaderNode, creds.NodeID)
+		req.Header.Set(alertproto.HeaderTimestamp, fmt.Sprint(h.now.Unix()))
+		req.Header.Set(alertproto.HeaderSignature, "00")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("forged request %d: %d", i, res.StatusCode)
+		}
+	}
+	if status, _ := h.signed(creds, "/v1/heartbeat", alertproto.HeartbeatRequest{At: h.now}); status != http.StatusNoContent {
+		t.Fatalf("genuine request after forgeries: %d", status)
+	}
+}
