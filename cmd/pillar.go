@@ -47,7 +47,12 @@ Syrius or znn-cli. One address serves one Pillar.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		opts := producer.Options{Password: flagPillarPassword}
+		password := flagPillarPassword
+		if password == "" {
+			// For scripts: keeps the secret out of the command line.
+			password = os.Getenv("NOMCTL_PRODUCER_PASSWORD")
+		}
+		opts := producer.Options{Password: password}
 		if ui.Interactive() && !flagPillarYes {
 			opts.Prompts = tui.ProducerPrompts()
 		}
@@ -100,7 +105,9 @@ var pillarStatusCmd = &cobra.Command{
 		keyState := "present"
 		if _, err := os.Stat(keyPath); err != nil {
 			keyState = "MISSING"
-		} else if addr, err := producer.Address(keyPath); err == nil && addr != pc.Address {
+		} else if addr, err := producer.Address(keyPath); err != nil {
+			keyState = "present but UNREADABLE: " + err.Error()
+		} else if addr != pc.Address {
 			keyState = "present but holds " + addr + ", not the configured address"
 		}
 		fmt.Fprintf(out, "%-18s %s\n", "Producer address", pc.Address)
@@ -134,7 +141,7 @@ var pillarStatusCmd = &cobra.Command{
 }
 
 func init() {
-	pillarSetupCmd.Flags().StringVar(&flagPillarPassword, "password", "", "password for the key file (generated when creating a new one; verified for an existing one)")
+	pillarSetupCmd.Flags().StringVar(&flagPillarPassword, "password", "", "password for the key file (generated when creating a new one; verified for an existing one); prefer NOMCTL_PRODUCER_PASSWORD in scripts, which stays out of shell history")
 	pillarSetupCmd.Flags().BoolVar(&flagPillarYes, "yes", false, "keep an existing producer configuration without asking")
 	pillarStatusCmd.Flags().BoolVar(&flagPillarShowPassword, "show-password", false, "print the key file password from config.json")
 	pillarCmd.AddCommand(pillarSetupCmd, pillarStatusCmd)

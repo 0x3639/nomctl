@@ -8,18 +8,22 @@ A Pillar produces momentums through a node that holds its **producer key**. `nom
 ```bash
 sudo nomctl pillar setup                 # create or configure, prompts on a terminal
 sudo nomctl pillar setup --yes           # keep an existing configuration without asking
-sudo nomctl pillar setup --password P    # use P for a new key, or verify an existing key with it
 sudo nomctl pillar status                # address, key file, and which Pillar uses it
-sudo nomctl pillar status --show-password
 ```
+
+:::warning[The password unlocks the producer key]
+
+On a terminal, let `setup` prompt: the answer is not echoed and never lands in shell history. In scripts pass it through the environment, `NOMCTL_PRODUCER_PASSWORD=... sudo -E nomctl pillar setup`, rather than `--password`, which shows up in shell history and process lists. `pillar status --show-password` prints it to the terminal; do not run that where output is logged.
+
+:::
 
 The menu has the same under **Pillar**.
 
 ## What setup does
 
 1. If `config.json` already names a producer whose key file exists, it asks whether to keep it (kept without asking with `--yes`). Nothing is rewritten then.
-2. Otherwise, if `wallet/producer` exists, it asks for that file's password (three attempts, hidden input; `--password` in scripts), verifies it by opening the file, and configures the node with the address inside.
-3. Otherwise it creates `wallet/producer` with a generated 16-character password, or the one you pass, and prints the password once.
+2. Otherwise, if `wallet/producer` exists, it asks for that file's password (three attempts, hidden input; `NOMCTL_PRODUCER_PASSWORD` or `--password` in scripts), verifies it by opening the file, and configures the node with the address inside.
+3. Otherwise it creates `wallet/producer` with a generated 16-character password, or the one you supply, and prints the password once.
 4. It backs up `config.json` to `config.json.bak.<timestamp>`, writes the `Producer` section (`Index` 0, `KeyFilePath` `producer`, the password, the address), and restarts the node if it is running so it loads the key.
 
 Then it prints the producer address. **Set that address as your Pillar's producer address** in Syrius or with `znn-cli`. One producer address serves one Pillar.

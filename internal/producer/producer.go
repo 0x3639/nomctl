@@ -191,5 +191,8 @@ func readRaw(configPath string) (map[string]json.RawMessage, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("%s is not a JSON object: %w", configPath, err)
 	}
+	if raw == nil { // the literal null
+		return nil, fmt.Errorf("%s is not a JSON object", configPath)
+	}
 	return raw, nil
 }

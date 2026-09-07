@@ -106,6 +106,20 @@ func TestSetupConfiguresExistingKey(t *testing.T) {
 	}
 }
 
+func TestSetupRefusesNullConfigBeforeCreatingKey(t *testing.T) {
+	cfg := testCfg(t)
+	stubHost(t, false)
+	if err := os.WriteFile(ConfigPath(cfg.ZnnDir), []byte("null\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Setup(cfg, Options{}); err == nil || !strings.Contains(err.Error(), "not a JSON object") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(KeyFilePath(cfg.ZnnDir)); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a key was created although config.json cannot be written")
+	}
+}
+
 func TestSetupReplaceExistingWhenAsked(t *testing.T) {
 	cfg := testCfg(t)
 	stubHost(t, false)

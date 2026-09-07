@@ -31,7 +31,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 
 | Command | Notes |
 |---|---|
-| `nomctl pillar setup [--password P] [--yes]` | [Pillar producer](/guide/pillar): create or configure the producer key, write `config.json`, restart the node |
+| `nomctl pillar setup [--yes] [--password P]` (or `NOMCTL_PRODUCER_PASSWORD`) | [Pillar producer](/guide/pillar): create or configure the producer key, write `config.json`, restart the node |
 | `nomctl pillar status [--show-password]` | producer address, key file, which Pillar uses it |
 
 ## Orchestrator
