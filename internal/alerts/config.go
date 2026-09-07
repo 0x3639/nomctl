@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -159,20 +160,34 @@ func (c Config) Save(path string) error {
 	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	// Written by root: keep it readable by the daemon's user once that
-	// user exists (see Converge). Before setup has run there is no user
-	// and the file stays root-only.
+	// Written by root: the daemon's user must be able to read it, so the
+	// modes are set on the temp file before it is published. Before setup
+	// has created the user the file stays root-only, which is correct.
 	if os.Geteuid() == 0 {
-		if u, err := lookupUser(RunUser); err == nil {
-			if gid, err := strconv.Atoi(u.Gid); err == nil {
-				return SecureConfig(path, gid)
-			}
+		if err := secureIfUser(tmp); err != nil {
+			_ = os.Remove(tmp)
+			return err
 		}
 	}
-	return nil
+	return os.Rename(tmp, path)
+}
+
+// secureIfUser applies root:nomctl 0640 when the run user exists. A
+// missing user is not an error; a lookup failure or a bad gid is.
+func secureIfUser(path string) error {
+	u, err := lookupUser(RunUser)
+	if err != nil {
+		var unknown user.UnknownUserError
+		if errors.As(err, &unknown) {
+			return nil
+		}
+		return fmt.Errorf("look up %s: %w", RunUser, err)
+	}
+	gid, err := strconv.Atoi(u.Gid)
+	if err != nil {
+		return fmt.Errorf("gid of %s: %w", RunUser, err)
+	}
+	return SecureConfig(path, gid)
 }
 
 // Paired reports whether the node has relay credentials.

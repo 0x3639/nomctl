@@ -141,6 +141,11 @@ type Sampler struct {
 	readProps func(unit string) (ServiceProps, error)
 	diskFree  func(path string) (free, total uint64, err error)
 
+	// probe cache, loaded at most once per Take.
+	probeLoaded bool
+	probeCache  Probe
+	probeOK     bool
+
 	prevTicks uint64
 	prevTime  time.Time
 	prevPID   int
@@ -183,6 +188,7 @@ func diskFree(path string) (uint64, uint64, error) {
 // Take samples everything now. Failures are recorded inside the Sample.
 func (s *Sampler) Take(ctx context.Context) Sample {
 	now := s.Now()
+	s.probeLoaded = false
 	smp := Sample{Taken: now}
 	smp.Service = s.takeService()
 	if smp.Service.MainPID > 0 {
@@ -190,7 +196,7 @@ func (s *Sampler) Take(ctx context.Context) Sample {
 	} else {
 		s.prevPID = 0
 	}
-	smp.Host = s.takeHost()
+	smp.Host = s.takeHost(now)
 	smp.Node = s.takeNode(ctx, now)
 	return smp
 }
@@ -243,27 +249,34 @@ func (s *Sampler) takeProcess(pid int, controlGroup string, now time.Time) Proce
 	p.FDLimit, _ = ReadFDLimit(s.ProcRoot, pid)
 	if fds, err := CountFDs(s.ProcRoot, pid); err == nil {
 		p.OpenFDs = fds
-	} else if s.ProbePath != "" {
-		if probe, err := ReadProbe(s.ProbePath, pid, now); err == nil {
-			p.OpenFDs, p.FDLimit = probe.OpenFDs, probe.FDLimit
-			if p.ReadBytes == 0 && p.WriteBytes == 0 {
-				p.ReadBytes, p.WriteBytes = probe.ReadBytes, probe.WriteBytes
-			}
-			p.FromProbe = true
+	} else if probe, ok := s.probe(now); ok && probe.ForPID(pid) {
+		p.OpenFDs, p.FDLimit = probe.OpenFDs, probe.FDLimit
+		if p.ReadBytes == 0 && p.WriteBytes == 0 {
+			p.ReadBytes, p.WriteBytes = probe.ReadBytes, probe.WriteBytes
 		}
+		p.FromProbe = true
 	}
 	p.Cgroup = ReadCgroup(s.CgroupRoot, controlGroup)
 	return p
 }
 
-func (s *Sampler) takeHost() HostSample {
+func (s *Sampler) takeHost(now time.Time) HostSample {
 	var h HostSample
 	h.Load1, h.Load5, h.Load15, _ = ReadLoadAvg(s.ProcRoot)
 	if m, err := ReadMemInfo(s.ProcRoot); err == nil {
 		h.MemTotal, h.MemAvailable = m.Total, m.Available
 	}
 	h.DataDir = s.dataDir
-	h.DataDirFree, h.DataDirTotal, _ = s.diskFree(MountPoint(s.MountInfo, s.dataDir))
+	// The mount holding the data directory needs no access to the directory
+	// itself; when even the mount is hidden from an unprivileged daemon (a
+	// data disk mounted under /root), the root probe supplies the figures.
+	free, total, err := s.diskFree(MountPoint(s.MountInfo, s.dataDir))
+	if err != nil || total == 0 {
+		if probe, ok := s.probe(now); ok && probe.DiskTotal > 0 {
+			free, total = probe.DiskFree, probe.DiskTotal
+		}
+	}
+	h.DataDirFree, h.DataDirTotal = free, total
 	h.Pressure = ReadPressure(s.ProcRoot)
 	return h
 }
@@ -320,6 +333,19 @@ func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
 		n.ETAKnown = true
 	}
 	return n
+}
+
+// probe returns the root probe when configured and fresh, read once per
+// Take.
+func (s *Sampler) probe(now time.Time) (Probe, bool) {
+	if s.ProbePath == "" {
+		return Probe{}, false
+	}
+	if !s.probeLoaded {
+		p, err := ReadProbe(s.ProbePath, now)
+		s.probeLoaded, s.probeCache, s.probeOK = true, p, err == nil
+	}
+	return s.probeCache, s.probeOK
 }
 
 // rate is the height change per second between the oldest and newest point.

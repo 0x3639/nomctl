@@ -45,7 +45,7 @@ func TestUnitIsUnprivilegedAndHardened(t *testing.T) {
 		t.Error("the daemon must not get ptrace")
 	}
 	p := ProbeText("/usr/local/bin/nomctl", config.Default())
-	for _, want := range []string{"Type=oneshot", "ExecStart=/usr/local/bin/nomctl alerts probe", "PrivateNetwork=true", "ReadWritePaths=/run/nomctl", "ProtectHome=true"} {
+	for _, want := range []string{"Type=oneshot", "ExecStart=/usr/local/bin/nomctl alerts probe", "PrivateNetwork=true", "ReadWritePaths=/run/nomctl", "ProtectHome=read-only", `Environment="NOMCTL_ZNN_DIR=`} {
 		if !strings.Contains(p, want) {
 			t.Errorf("probe unit missing %q", want)
 		}

@@ -180,12 +180,9 @@ from there for the fds_high alert.`,
 		if err != nil {
 			return err
 		}
-		if props.MainPID == 0 {
-			// Nothing to record; a stale file would be refused by age anyway.
-			_ = os.Remove(metrics.DefaultProbePath)
-			return nil
-		}
-		p, err := metrics.TakeProbe(metrics.DefaultProcRoot, props.MainPID, time.Now().UTC())
+		// Written even when the node is down: the disk figures are still
+		// wanted, and the daemon checks the pid before using the rest.
+		p, err := metrics.TakeProbe(metrics.DefaultProcRoot, props.MainPID, cfg.ZnnDir, time.Now().UTC())
 		if err != nil {
 			return err
 		}

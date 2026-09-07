@@ -76,8 +76,8 @@ reading `/proc` directly.
 
 ## Migration
 
-`alerts.Converge` runs from `nomctl alerts setup|enable|disable|set|unpair`
-and from `nomctl upgrade`. It ensures the user, file modes, the three unit
+`alerts.Converge` runs from `nomctl alerts setup|enable|disable|set` and
+from `nomctl upgrade` whenever the daemon unit file exists (active or not). It ensures the user, file modes, the three unit
 files and the timer, reloads systemd and restarts the daemon when a unit
 changed. A node on an older release gets the new layout on its next
 `nomctl upgrade` with no manual step. `alerts status` shows the user the

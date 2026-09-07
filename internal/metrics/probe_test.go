@@ -9,12 +9,16 @@ import (
 
 func TestProbeRoundTrip(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
-	p, err := TakeProbe("testdata/proc", 1234, now)
+	p, err := TakeProbe("testdata/proc", 1234, t.TempDir(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.PID != 1234 || p.OpenFDs == 0 || p.FDLimit == 0 {
+	if p.PID != 1234 || p.OpenFDs == 0 || p.FDLimit == 0 || p.DiskTotal == 0 {
 		t.Fatalf("probe = %+v", p)
+	}
+	// Down node: disk figures only, no error.
+	if d, err := TakeProbe("testdata/proc", 0, t.TempDir(), now); err != nil || d.PID != 0 || d.DiskTotal == 0 || d.OpenFDs != 0 {
+		t.Fatalf("down probe = %+v, %v", d, err)
 	}
 	path := filepath.Join(t.TempDir(), "probe.json")
 	if err := WriteProbe(path, p); err != nil {
@@ -23,17 +27,17 @@ func TestProbeRoundTrip(t *testing.T) {
 	if info, _ := os.Stat(path); info.Mode().Perm() != 0o644 {
 		t.Errorf("mode = %v", info.Mode())
 	}
-	got, err := ReadProbe(path, 1234, now.Add(time.Minute))
+	got, err := ReadProbe(path, now.Add(time.Minute))
 	if err != nil || got != p {
 		t.Fatalf("read = %+v, %v", got, err)
 	}
-	if _, err := ReadProbe(path, 999, now); err == nil {
-		t.Error("other pid accepted")
+	if got.ForPID(999) || !got.ForPID(1234) || got.ForPID(0) {
+		t.Error("ForPID")
 	}
-	if _, err := ReadProbe(path, 1234, now.Add(ProbeMaxAge+time.Second)); err == nil {
+	if _, err := ReadProbe(path, now.Add(ProbeMaxAge+time.Second)); err == nil {
 		t.Error("stale probe accepted")
 	}
-	if _, err := ReadProbe(filepath.Join(t.TempDir(), "none"), 1234, now); err == nil {
+	if _, err := ReadProbe(filepath.Join(t.TempDir(), "none"), now); err == nil {
 		t.Error("missing probe accepted")
 	}
 	// A leftover symlink at the path is replaced, not written through.
@@ -77,13 +81,32 @@ func TestSamplerFallsBackToProbe(t *testing.T) {
 	if p := s.Take(t.Context()).Process; p.OpenFDs != 0 || p.FromProbe {
 		t.Fatalf("without a probe: %+v", p)
 	}
-	if err := WriteProbe(probe, Probe{At: now, PID: 1234, OpenFDs: 777, FDLimit: 32768, ReadBytes: 5, WriteBytes: 6}); err != nil {
+	if err := WriteProbe(probe, Probe{At: now, PID: 1234, OpenFDs: 777, FDLimit: 32768, ReadBytes: 5, WriteBytes: 6, DiskFree: 7 << 30, DiskTotal: 9 << 30}); err != nil {
 		t.Fatal(err)
 	}
-	p := s.Take(t.Context()).Process
+	smp := s.Take(t.Context())
+	p := smp.Process
 	if !p.FromProbe || p.OpenFDs != 777 || p.FDLimit != 32768 {
 		t.Fatalf("with a probe: %+v", p)
 	}
+	// Disk figures come from statfs when the mount is visible…
+	if smp.Host.DataDirTotal == 9<<30 {
+		t.Error("probe disk figures used although statfs worked")
+	}
+	// …and from the probe when it is not (a data disk under /root).
+	s.diskFree = func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }
+	if h := s.Take(t.Context()).Host; h.DataDirFree != 7<<30 || h.DataDirTotal != 9<<30 {
+		t.Errorf("hidden mount: %+v", h)
+	}
+	// A probe for another pid still serves disk figures but not process ones.
+	if err := WriteProbe(probe, Probe{At: now, PID: 0, DiskFree: 1 << 30, DiskTotal: 2 << 30}); err != nil {
+		t.Fatal(err)
+	}
+	smp = s.Take(t.Context())
+	if smp.Process.FromProbe || smp.Host.DataDirTotal != 2<<30 {
+		t.Errorf("down-node probe: process=%+v host=%+v", smp.Process, smp.Host)
+	}
+	s.diskFree = func(string) (uint64, uint64, error) { return 210 << 30, 500 << 30, nil }
 	// Direct /proc access wins when available.
 	s.ProcRoot = "testdata/proc"
 	if p := s.Take(t.Context()).Process; p.FromProbe || p.OpenFDs == 777 {

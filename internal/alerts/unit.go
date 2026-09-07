@@ -84,6 +84,8 @@ WantedBy=multi-user.target
 // another user's open files needs CAP_SYS_PTRACE, which would also let the
 // daemon read the node's memory; confining it to a 30-second oneshot that
 // can only write /run/nomctl keeps that out of the long-running process.
+// Home is read-only rather than hidden so a data directory under /root can
+// be measured for disk space, which the daemon cannot see at all.
 func ProbeText(execPath string, cfg config.Config) string {
 	return fmt.Sprintf(`[Unit]
 Description=nomctl alerts probe (open files and I/O of the node process)
@@ -95,14 +97,15 @@ RuntimeDirectory=nomctl
 RuntimeDirectoryPreserve=yes
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 PrivateTmp=true
 PrivateNetwork=true
 ReadWritePaths=/run/nomctl
 Environment=NOMCTL_SKIP_PREFLIGHT=true
 Environment=NOMCTL_LOG_FILE=
 Environment="NOMCTL_SERVICE_NAME=%s"
-`, execPath, unitQuote(cfg.ServiceName))
+Environment="NOMCTL_ZNN_DIR=%s"
+`, execPath, unitQuote(cfg.ServiceName), unitQuote(cfg.ZnnDir))
 }
 
 // ProbeTimerText renders the probe timer.
@@ -275,24 +278,26 @@ func Converge(cfg config.Config, configPath string) (bool, error) {
 		}
 		changed = changed || wrote
 	}
-	if !changed {
-		return false, nil
-	}
-	if err := service.DaemonReload(); err != nil {
-		return true, err
-	}
-	if service.IsActive(UnitName) {
-		slog.Info("Unit files changed; restarting " + UnitName)
-		if err := service.RestartUnit(UnitName + ".service"); err != nil {
+	if changed {
+		if err := service.DaemonReload(); err != nil {
 			return true, err
 		}
+		if service.IsActive(UnitName) {
+			slog.Info("Unit files changed; restarting " + UnitName)
+			if err := service.RestartUnit(UnitName + ".service"); err != nil {
+				return true, err
+			}
+		}
 	}
+	// The timer is checked on every run, not only when a unit changed: a
+	// daemon without its probe silently loses fds_high.
 	if service.IsEnabled(UnitName+".service") && !service.IsEnabled(ProbeName+".timer") {
+		slog.Info("Enabling " + ProbeName + ".timer")
 		if err := service.EnableNow(ProbeName + ".timer"); err != nil {
-			return true, err
+			return changed, err
 		}
 	}
-	return true, nil
+	return changed, nil
 }
 
 // UninstallUnit stops, disables and removes the daemon and probe units. A

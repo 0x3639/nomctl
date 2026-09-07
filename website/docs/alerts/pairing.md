@@ -78,7 +78,7 @@ The daemon talks to the internet every 30 seconds from the machine that holds th
 
 Counting another user's open files needs `CAP_SYS_PTRACE`, which would also allow reading the node process's memory. Rather than grant that to the daemon, the root probe records the count every 30 seconds and the daemon reads the file; that is what feeds `fds_high`. `nomctl alerts status` shows the user the daemon runs as and whether the probe timer is installed.
 
-Nodes set up on releases before 0.9.0 ran the daemon as root. They migrate on their next `sudo nomctl upgrade` or any `nomctl alerts` command: the user is created, file modes fixed, the units rewritten and the daemon restarted, with nothing to do by hand.
+Nodes set up on releases before 0.9.0 ran the daemon as root. They migrate on their next `sudo nomctl upgrade`, or when `nomctl alerts setup`, `enable`, `disable` or `set` runs: the user is created, file modes fixed, the units rewritten and the daemon restarted, with nothing to do by hand. A data directory on its own mount under `/root` is hidden from the daemon; its disk figures then come from the probe too.
 
 ## If something fails during setup
 

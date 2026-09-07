@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/0x3639/nomctl/internal/alerts"
+	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/service"
 	"github.com/0x3639/nomctl/internal/update"
@@ -101,13 +102,18 @@ so the daemon uses the new code.`,
 
 // restartAlertsIfRunning restarts the alerts daemon so it runs the new code.
 func restartAlertsIfRunning() error {
-	if !service.IsActive(alerts.UnitName) {
+	if !fsx.Exists(alerts.UnitPath) {
 		return nil
 	}
 	// A new binary may bring a new unit layout (run user, probe timer):
-	// converge before restarting so the daemon starts under it.
-	if _, err := alerts.Converge(cfg, alerts.DefaultConfigPath); err != nil {
+	// converge first. That covers an installed-but-stopped daemon too, and
+	// restarts an active one when a unit changed.
+	changed, err := alerts.Converge(cfg, alerts.DefaultConfigPath)
+	if err != nil {
 		return errors.New("nomctl was upgraded but the " + alerts.UnitName + " units could not be updated: " + err.Error())
+	}
+	if changed || !service.IsActive(alerts.UnitName) {
+		return nil
 	}
 	if err := service.RestartUnit(alerts.UnitName + ".service"); err != nil {
 		return errors.New("nomctl was upgraded but " + alerts.UnitName + " could not be restarted: " + err.Error())

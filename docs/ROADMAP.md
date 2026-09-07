@@ -161,6 +161,8 @@ The daemon runs as a locked `nomctl` system user with an empty capability
 set, `ProtectSystem=strict` and `ProtectHome=true`. Disk free is measured
 on the data directory's mount point. Per-process open files and I/O, which
 need `CAP_SYS_PTRACE` from another user, come from a root oneshot probe on a
-30-second timer that can only write `/run/nomctl`. `alerts.Converge` runs
-from every root alerts command and from `nomctl upgrade`, so older nodes
+30-second timer that can only write `/run/nomctl`; it also records disk
+figures for a data directory on a mount the daemon cannot see.
+`alerts.Converge` runs from `alerts setup|enable|disable|set` and from
+`nomctl upgrade` whenever the daemon unit is installed, so older nodes
 migrate without a manual step.
