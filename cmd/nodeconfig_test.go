@@ -38,6 +38,9 @@ func TestSetConfigValue(t *testing.T) {
 	if _, err := setConfigValue(dir, "RPC.HttpPort", "1", true); err != nil {
 		t.Errorf("forced unknown key: %v", err)
 	}
+	if _, err := setConfigValue(dir, "Producer.Custom", "x", true); err == nil || !strings.Contains(err.Error(), "pillar setup") {
+		t.Errorf("--force must not enter the Producer section: %v", err)
+	}
 	if _, err := setConfigValue(dir, "Net.Seeders", "enode://a,enode://b", false); err != nil {
 		t.Fatal(err)
 	}

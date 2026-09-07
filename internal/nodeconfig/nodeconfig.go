@@ -92,6 +92,13 @@ func Lookup(key string) (Setting, bool) {
 	return Setting{}, false
 }
 
+// ReservedPrefix is the section managed by `nomctl pillar setup`; no
+// config command writes under it, known key or not.
+const ReservedPrefix = "Producer."
+
+// IsReserved reports whether key is under the reserved section.
+func IsReserved(key string) bool { return key == "Producer" || strings.HasPrefix(key, ReservedPrefix) }
+
 // LogLevels go-zenon accepts.
 var LogLevels = []string{"debug", "dbug", "info", "warn", "error", "eror", "crit"}
 
@@ -423,7 +430,10 @@ func SaveUnchecked(path string, d *Document, now time.Time) (string, error) {
 	}
 	backup := ""
 	if current, err := os.ReadFile(path); err == nil {
-		backup = backupName(path, now)
+		backup, err = backupName(path, now)
+		if err != nil {
+			return "", err
+		}
 		if err := os.WriteFile(backup, current, 0o600); err != nil {
 			return "", fmt.Errorf("back up config.json: %w", err)
 		}
@@ -472,16 +482,23 @@ func Format(v any) string {
 }
 
 // backupName picks path.bak.<unix>, or path.bak.<unix>-N when a write in
-// the same second already used it, so no backup overwrites another.
-func backupName(path string, now time.Time) string {
+// the same second already used it, so no backup overwrites another. The
+// search is bounded and any error other than "does not exist" (a path too
+// long, say) is returned rather than treated as a collision.
+func backupName(path string, now time.Time) (string, error) {
 	base := fmt.Sprintf("%s.bak.%d", path, now.Unix())
 	name := base
-	for n := 1; ; n++ {
-		if _, err := os.Lstat(name); errors.Is(err, os.ErrNotExist) {
-			return name
+	for n := 1; n <= 100; n++ {
+		_, err := os.Lstat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			return name, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("choose a backup name: %w", err)
 		}
 		name = fmt.Sprintf("%s-%d", base, n)
 	}
+	return "", fmt.Errorf("too many backups named %s.*; remove some", base)
 }
 
 func split(key string) (section, field string) {

@@ -74,7 +74,8 @@ MyTonCtrl equivalent: `create_backup`, `restore_backup`.
 
 `nomctl config show|get|set|unset|edit` and a Config submenu. Typed,
 validated edits against go-zenon's schema (ports, peers, log level, types,
-sections), unknown keys refused, Producer.* reserved for pillar setup,
+sections), unknown keys refused by default (`--force` writes them
+unchecked), the whole Producer section reserved for pillar setup,
 backup of every previous file, atomic 0600 writes, `--restart` on the CLI
 and a prompt in the menu. `edit` works on a copy like visudo.
 

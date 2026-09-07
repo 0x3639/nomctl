@@ -46,7 +46,10 @@ func TestEditFlow(t *testing.T) {
 		if calls == 1 {
 			return os.WriteFile(p, []byte(`{"LogLevel": "loud"}`), 0o600)
 		}
-		return os.WriteFile(p, []byte(`{"LogLevel": "warn", "Net": {"MaxPeers": 70}}`), 0o600)
+		// Valid, and the Producer section is kept as it was.
+		fixed := strings.Replace(sample, `"LogLevel": "info"`, `"LogLevel": "warn"`, 1)
+		fixed = strings.Replace(fixed, `"ListenPort": 35995`, `"ListenPort": 35995, "MaxPeers": 70`, 1)
+		return os.WriteFile(p, []byte(fixed), 0o600)
 	}
 	var seen error
 	out, backup, err = Edit(path, editor, func(e error) (bool, error) { seen = e; return true, nil }, now)
@@ -60,12 +63,28 @@ func TestEditFlow(t *testing.T) {
 	if b, _ := os.ReadFile(backup); string(b) != sample {
 		t.Error("backup is not the previous file")
 	}
+	// Changing the Producer section is refused; reformatting it is fine.
+	if err := os.WriteFile(path, []byte(sample), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = Edit(path, write(strings.Replace(sample, `"pw"`, `"other"`, 1)), noRetry, now)
+	if err != nil || out != EditAborted {
+		t.Fatalf("producer change: %v %v", out, err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != sample {
+		t.Error("producer change written")
+	}
+	reformatted := strings.ReplaceAll(sample, "\n", "\n ")
+	out, _, err = Edit(path, write(reformatted+"\n"), noRetry, now)
+	if err != nil || out != EditSaved {
+		t.Fatalf("reformat only: %v %v", out, err)
+	}
 	// Editor failure surfaces.
 	if _, _, err := Edit(path, func(string) error { return errors.New("no tty") }, noRetry, now); err == nil {
 		t.Error("editor failure swallowed")
 	}
-	// Missing file: the copy starts as an empty object.
-	missing := filepath.Join(dir, "new.json")
+	// Missing file in a missing directory: the copy starts as an empty object.
+	missing := filepath.Join(dir, "newdir", "new.json")
 	out, _, err = Edit(missing, func(p string) error {
 		b, _ := os.ReadFile(p)
 		if strings.TrimSpace(string(b)) != "{\n}" {
