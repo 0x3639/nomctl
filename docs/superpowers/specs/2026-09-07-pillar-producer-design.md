@@ -19,8 +19,8 @@ stored in `config.json` in clear because znnd needs it to unlock the key.
 
 ## config.json
 
-Read as `map[string]json.RawMessage` so every other section is preserved
-byte for byte; `Producer` is set to
+Read as `map[string]json.RawMessage` so every other section keeps its
+content (re-indented on write); `Producer` is set to
 `{"Index": 0, "KeyFilePath": "producer", "Password": ..., "Address": ...}`;
 written with four-space indent and mode 0600 after copying the previous
 file to `config.json.bak.<unix>`. A missing `config.json` is created with

@@ -10,6 +10,7 @@ import (
 
 	"github.com/0x3639/nomctl/internal/alerts"
 	"github.com/0x3639/nomctl/internal/metrics"
+	"github.com/0x3639/nomctl/internal/producer"
 	"github.com/0x3639/nomctl/internal/update"
 )
 
@@ -41,6 +42,9 @@ CPU %% and the sync rate are measured over --wait (default 2s).`,
 			return enc.Encode(sample)
 		}
 		fmt.Fprint(cmd.OutOrStdout(), metrics.Format(sample))
+		if pc, err := producer.ReadConfig(producer.ConfigPath(cfg.ZnnDir)); err == nil && pc != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s (wallet/%s, index %d)\n", "Producer", pc.Address, pc.KeyFilePath, pc.Index)
+		}
 		checkCtx, cancelCheck := context.WithTimeout(ctx, 20*time.Second)
 		defer cancelCheck()
 		for _, line := range updateLines(checkCtx, sample.Node.Commit) {

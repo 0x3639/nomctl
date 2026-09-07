@@ -23,6 +23,7 @@ import (
 	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/lock"
 	"github.com/0x3639/nomctl/internal/orchestrator"
+	"github.com/0x3639/nomctl/internal/producer"
 	"github.com/0x3639/nomctl/internal/restore"
 	"github.com/0x3639/nomctl/internal/resync"
 	"github.com/0x3639/nomctl/internal/service"
@@ -48,6 +49,7 @@ const (
 	ActionRestore   Action = "restore"
 	ActionBootstrap Action = "bootstrap"
 	ActionOrch      Action = "orchestrator"
+	ActionPillar    Action = "pillar"
 	ActionAnalytics Action = "analytics"
 	ActionExit      Action = "exit"
 )
@@ -71,6 +73,7 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 		{ActionRestore, "Restore Zenon from a backup"},
 		{ActionBootstrap, "Restore Zenon from a bootstrap snapshot"},
 		{ActionAnalytics, "Set up a Grafana dashboard"},
+		{ActionPillar, "Pillar (producer key setup and status)"},
 		{ActionOrch, "Orchestrator (hard reset, status, logs)"},
 		{ActionExit, ""},
 	}
@@ -152,6 +155,8 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return analytics.Install(*cfg)
 	case ActionOrch:
 		return OrchestratorMenu(*cfg)
+	case ActionPillar:
+		return PillarMenu(*cfg)
 	case ActionExit:
 		return nil
 	}
@@ -183,6 +188,64 @@ func AlertsAction() error {
 		return AlertsStatus()
 	}
 	return AlertsSetup()
+}
+
+// ProducerPrompts answers producer.Setup's questions from the terminal.
+func ProducerPrompts() producer.Prompts {
+	return producer.Prompts{
+		KeepExisting: func(address string) (bool, error) {
+			return Confirm("A producer is already configured: " + address + "\nKeep it?")
+		},
+		PasswordFor: func(path string, attempt int) (string, error) {
+			title := "Password for the existing key file " + path
+			if attempt > 1 {
+				title += fmt.Sprintf(" (attempt %d of 3)", attempt)
+			}
+			return Secret(title)
+		},
+	}
+}
+
+// PillarMenu shows the producer functions.
+func PillarMenu(cfg config.Config) error {
+	choice, err := Select("Pillar", []huh.Option[string]{
+		huh.NewOption("Set up the producer key (create or configure)", "setup"),
+		huh.NewOption("Show the producer configuration", "status"),
+		huh.NewOption("Back", "back"),
+	})
+	if err != nil {
+		return err
+	}
+	switch choice {
+	case "setup":
+		var res producer.Result
+		err := withLock("pillar", func() error {
+			var err error
+			res, err = producer.Setup(cfg, producer.Options{Prompts: ProducerPrompts()})
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "\nProducer address  %s\nKey file          %s\n", res.Address, res.KeyFile)
+		if res.Password != "" {
+			fmt.Fprintf(os.Stderr, "Password          %s\n                  (also stored in config.json; keep a copy elsewhere)\n", res.Password)
+		}
+		fmt.Fprintln(os.Stderr, "\n"+producer.NextSteps(res.Address))
+		return nil
+	case "status":
+		pc, err := producer.ReadConfig(producer.ConfigPath(cfg.ZnnDir))
+		if err != nil {
+			return err
+		}
+		if pc == nil {
+			fmt.Fprintln(os.Stderr, "No producer configured.")
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "Producer address  %s\nKey file          %s, index %d\nPassword          stored in config.json (nomctl pillar status --show-password)\n", pc.Address, producer.KeyFilePath(cfg.ZnnDir), pc.Index)
+		return nil
+	}
+	return nil
 }
 
 // Orchestrator submenu actions.

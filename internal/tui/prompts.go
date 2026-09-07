@@ -58,6 +58,16 @@ func Confirm(question string) (bool, error) {
 	return ok, nil
 }
 
+// Secret asks for a single line of text without echoing it.
+func Secret(title string) (string, error) {
+	var v string
+	in := huh.NewInput().Title(title).EchoMode(huh.EchoModePassword).Value(&v)
+	if err := runForm(in); err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
 // Input asks for a single line of text.
 func Input(title, placeholder string) (string, error) {
 	var v string
