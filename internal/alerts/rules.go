@@ -294,26 +294,36 @@ func rpcUnreachable(h []metrics.Sample, cfg RuleConfig) Result {
 	return Result{Firing: true, Detail: fmt.Sprintf("service active but %s not answering for %s: %s", n.URL, metrics.HumanDuration(d), n.Error)}
 }
 
-// momentumsStalled fires when the frontier height has not moved across the
+// momentumsStalled fires when the node's height has not moved across the
 // window while the service is up and RPC answers, whatever sync state the
 // node claims. This catches a running node that silently stopped syncing.
+// The sync height from stats.syncInfo is used because it answers even when
+// the ledger call is blocked by insertion; a ledger blocked for the whole
+// window with no height change is the hung-insert case and is reported.
 func momentumsStalled(h []metrics.Sample, cfg RuleConfig) Result {
 	d := minutes(cfg, "momentums_stalled", "minutes")
 	win := since(h, d)
 	if !covers(win, d) {
 		return Result{}
 	}
-	first := win[0].Node.FrontierHeight
+	first := win[0].Node.CurrentHeight
+	ledgerBlocked := true
 	for _, s := range win {
 		if s.Service.ActiveState != "active" || !s.Node.Reachable {
 			return Result{}
 		}
-		if s.Node.FrontierHeight != first {
+		if s.Node.CurrentHeight != first {
 			return Result{}
+		}
+		if s.Node.FrontierKnown {
+			ledgerBlocked = false
 		}
 	}
 	n := win[len(win)-1].Node
-	return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s, frontier %s old (state: %s)", metrics.Commas(n.FrontierHeight), metrics.HumanDuration(d), metrics.HumanDuration(n.FrontierAge), n.StateText)}
+	if ledgerBlocked {
+		return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s and the ledger has not answered in that time (state: %s); a momentum insert may be hung", metrics.Commas(n.CurrentHeight), metrics.HumanDuration(d), n.StateText)}
+	}
+	return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s, frontier %s old (state: %s)", metrics.Commas(n.CurrentHeight), metrics.HumanDuration(d), metrics.HumanDuration(n.FrontierAge), n.StateText)}
 }
 
 // pillarMissed fires when, over the window, the pillar's expected momentums

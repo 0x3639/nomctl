@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // EnvPrefix is the prefix shared by every environment variable nomctl reads.
@@ -41,6 +42,7 @@ const (
 	DefaultGrafanaAdminPassword  = "admin"
 	DefaultGrafanaHTTPAddr       = "127.0.0.1"
 	DefaultReleaseRepo           = "0x3639/nomctl"
+	DefaultRPCTimeout            = 3 * time.Second
 	DefaultOrchestratorService   = "orchestrator"
 	DefaultOrchestratorDir       = "/root/.orchestrator"
 	DefaultBootstrapURL          = "https://hypercore.nyc3.digitaloceanspaces.com/bootstrap/2026-09-01/bootstrap-20260901010001.zip"
@@ -88,6 +90,9 @@ type Config struct {
 	// BootstrapURL is the default snapshot for `nomctl bootstrap`.
 	// Env: NOMCTL_BOOTSTRAP_URL.
 	BootstrapURL string
+	// RPCTimeout bounds each call to the node's JSON-RPC. Env:
+	// NOMCTL_RPC_TIMEOUT (a duration such as 3s or 10s).
+	RPCTimeout time.Duration
 	// OrchestratorService is the orchestrator's systemd unit (without
 	// .service) and OrchestratorDir its state directory. Env:
 	// NOMCTL_ORCHESTRATOR_SERVICE, NOMCTL_ORCHESTRATOR_DIR.
@@ -144,6 +149,7 @@ func Default() Config {
 		GrafanaHTTPAddr:       DefaultGrafanaHTTPAddr,
 		ReleaseRepo:           DefaultReleaseRepo,
 		BootstrapURL:          DefaultBootstrapURL,
+		RPCTimeout:            DefaultRPCTimeout,
 		OrchestratorService:   DefaultOrchestratorService,
 		OrchestratorDir:       DefaultOrchestratorDir,
 		UpdateCheck:           true,
@@ -189,6 +195,18 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 		}
 		*dst = n
 	}
+	duration := func(key string, dst *time.Duration) {
+		v, ok := lookup(EnvPrefix + key)
+		if !ok || strings.TrimSpace(v) == "" {
+			return
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(v))
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Sprintf("%s%s: %q is not a positive duration such as 3s", EnvPrefix, key, v))
+			return
+		}
+		*dst = d
+	}
 	integer64 := func(key string, dst *int64) {
 		v, ok := lookup(EnvPrefix + key)
 		if !ok || strings.TrimSpace(v) == "" {
@@ -217,6 +235,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("REPO", &c.ReleaseRepo)
 	boolean("UPDATE_CHECK", &c.UpdateCheck)
 	str("BOOTSTRAP_URL", &c.BootstrapURL)
+	duration("RPC_TIMEOUT", &c.RPCTimeout)
 	str("ORCHESTRATOR_SERVICE", &c.OrchestratorService)
 	str("ORCHESTRATOR_DIR", &c.OrchestratorDir)
 	str("BACKUP_DIR", &c.BackupDir)
@@ -325,6 +344,7 @@ func Vars() []Var {
 		{"NOMCTL_REPO", DefaultReleaseRepo, "GitHub repository nomctl upgrade downloads releases from"},
 		{"NOMCTL_UPDATE_CHECK", "true", "Check GitHub for newer nomctl and go-zenon in status/top (cached 6h)"},
 		{"NOMCTL_BOOTSTRAP_URL", DefaultBootstrapURL, "Snapshot for nomctl bootstrap (.zip with a .hash sidecar next to it)"},
+		{"NOMCTL_RPC_TIMEOUT", DefaultRPCTimeout.String(), "Per-call timeout for the node's JSON-RPC (raise on slow disks)"},
 		{"NOMCTL_ORCHESTRATOR_SERVICE", DefaultOrchestratorService, "systemd unit of the orchestrator (nomctl orchestrator ...)"},
 		{"NOMCTL_ORCHESTRATOR_DIR", DefaultOrchestratorDir, "Orchestrator state directory; hard-reset deletes queues/ and events/ under it"},
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},

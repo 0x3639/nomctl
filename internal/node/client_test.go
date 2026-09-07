@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func rpcServer(t *testing.T) *httptest.Server {
@@ -133,5 +135,54 @@ func TestSnapshot(t *testing.T) {
 	down := New("http://127.0.0.1:1").Snapshot(context.Background())
 	if down.Err == nil {
 		t.Error("unreachable node must set Err")
+	}
+}
+
+// busyLedger answers the stats calls at once and never answers the ledger
+// call, the way a node holding the chain lock during insertion behaves.
+func busyLedger(t *testing.T) *httptest.Server {
+	t.Helper()
+	inner := rpcServer(t)
+	t.Cleanup(inner.Close)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(raw), "ledger.getFrontierMomentum") {
+			<-r.Context().Done()
+			return
+		}
+		res, err := http.Post(inner.URL, "application/json", strings.NewReader(string(raw)))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer func() { _ = res.Body.Close() }()
+		_, _ = io.Copy(w, res.Body)
+	}))
+}
+
+func TestSnapshotBusyLedgerIsNotUnreachable(t *testing.T) {
+	srv := busyLedger(t)
+	defer srv.Close()
+	snap := NewWithTimeout(srv.URL, 200*time.Millisecond).Snapshot(context.Background())
+	if snap.Err != nil {
+		t.Fatalf("stats answered, so Err must be nil: %v", snap.Err)
+	}
+	if snap.Sync == nil || snap.Network == nil || snap.Process == nil || snap.Os == nil {
+		t.Errorf("stats missing: %+v", snap)
+	}
+	if snap.Frontier != nil || snap.FrontierErr == nil {
+		t.Errorf("frontier should be unknown with an error: %+v", snap)
+	}
+	if snap.Sync.CurrentHeight != 100 {
+		t.Errorf("sync height = %d", snap.Sync.CurrentHeight)
+	}
+}
+
+func TestNewWithTimeout(t *testing.T) {
+	if c := NewWithTimeout("http://x", 0); c.HTTP.Timeout != DefaultTimeout {
+		t.Errorf("zero timeout should fall back to the default, got %s", c.HTTP.Timeout)
+	}
+	if c := NewWithTimeout("http://x", 10*time.Second); c.HTTP.Timeout != 10*time.Second {
+		t.Errorf("timeout = %s", c.HTTP.Timeout)
 	}
 }

@@ -28,6 +28,7 @@ func series(n int, mut func(i int, s *metrics.Sample)) []metrics.Sample {
 	for i := range n {
 		s := healthy(base.Add(time.Duration(i) * 30 * time.Second))
 		// A live chain adds about three momentums per 30 s sample.
+		s.Node.FrontierKnown = true
 		s.Node.FrontierHeight = uint64(1000 + 3*i)
 		s.Node.CurrentHeight = s.Node.FrontierHeight
 		s.Node.TargetHeight = s.Node.FrontierHeight
@@ -297,7 +298,7 @@ func TestMomentumsStalled(t *testing.T) {
 		t.Error("advancing frontier must not fire")
 	}
 	stuck := func(_ int, s *metrics.Sample) {
-		s.Node.FrontierHeight = 5000
+		s.Node.FrontierHeight, s.Node.CurrentHeight = 5000, 5000
 		s.Node.State, s.Node.StateText = node.Syncing, "syncing"
 	}
 	if r.Evaluate(series(5, stuck), cfg).Firing {
@@ -308,9 +309,27 @@ func TestMomentumsStalled(t *testing.T) {
 		t.Errorf("stuck while claiming to sync: %+v", res)
 	}
 	h := series(12, stuck)
-	h[11].Node.FrontierHeight = 5001
+	h[11].Node.CurrentHeight = 5001
 	if r.Evaluate(h, cfg).Firing {
 		t.Error("any movement in the window clears it")
+	}
+	// A ledger blocked for the whole window (frontier never read) with the
+	// height frozen is the hung-insert case and says so.
+	h = series(12, func(i int, s *metrics.Sample) {
+		stuck(i, s)
+		s.Node.FrontierKnown, s.Node.FrontierHeight, s.Node.LedgerError = false, 0, "context deadline exceeded"
+	})
+	res = r.Evaluate(h, cfg)
+	if !res.Firing || !strings.Contains(res.Detail, "ledger has not answered") {
+		t.Errorf("hung insert: %+v", res)
+	}
+	// A ledger blocked while the height keeps climbing is catch-up, not a stall.
+	h = series(12, func(i int, s *metrics.Sample) {
+		s.Node.FrontierKnown, s.Node.FrontierHeight, s.Node.LedgerError = false, 0, "context deadline exceeded"
+		s.Node.State, s.Node.StateText = node.Syncing, "syncing"
+	})
+	if r.Evaluate(h, cfg).Firing {
+		t.Error("busy ledger during catch-up must not fire")
 	}
 	h = series(12, stuck)
 	h[6].Node.Reachable = false

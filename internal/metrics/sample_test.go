@@ -237,3 +237,44 @@ func TestHelpers(t *testing.T) {
 		t.Error("Commas")
 	}
 }
+
+func TestBusyLedgerSample(t *testing.T) {
+	// Stats answer, the ledger call hangs: reachable, frontier unknown.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Method string }
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		var res string
+		switch req.Method {
+		case "stats.syncInfo":
+			res = `{"state":1,"currentHeight":11107882,"targetHeight":14135103}`
+		case "stats.networkInfo":
+			res = `{"numPeers":14,"peers":[],"self":null}`
+		case "stats.processInfo":
+			res = `{"version":"v0.0.7","commit":"a1b2c3d"}`
+		case "stats.osInfo":
+			res = `{"numGoroutine":42,"numCPU":4}`
+		default:
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":` + res + `}`))
+	}))
+	defer srv.Close()
+	s := testSampler(t, srv.URL)
+	s.Node = node.NewWithTimeout(srv.URL, 200*time.Millisecond)
+	smp := s.Take(context.Background())
+	n := smp.Node
+	if !n.Reachable || n.Error != "" {
+		t.Fatalf("node must count as reachable: %+v", n)
+	}
+	if n.FrontierKnown || n.LedgerError == "" || n.Stalled {
+		t.Errorf("frontier should be unknown, not stalled: %+v", n)
+	}
+	if n.CurrentHeight != 11107882 || n.NumPeers != 14 {
+		t.Errorf("stats not carried over: %+v", n)
+	}
+	text := Format(smp)
+	if strings.Contains(text, "unreachable") || !strings.Contains(text, "ledger busy") || !strings.Contains(text, "11,107,882 / 14,135,103") {
+		t.Errorf("Format:\n%s", text)
+	}
+}
