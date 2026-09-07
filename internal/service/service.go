@@ -28,6 +28,18 @@ const (
 	NotFound
 )
 
+// String names the state the way systemctl does.
+func (s State) String() string {
+	switch s {
+	case Active:
+		return "active"
+	case NotFound:
+		return "not found"
+	default:
+		return "inactive"
+	}
+}
+
 // Status queries the unit state. Exit codes 0 (active), 3 (inactive/failed;
 // also what is-active reports for an unknown unit) and 4 (no such unit) are
 // answers; anything else, including a missing systemctl, is an error so

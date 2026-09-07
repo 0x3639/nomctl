@@ -27,6 +27,14 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl analytics install` | [Analytics stack](/guide/analytics) |
 | `nomctl upgrade [--check] [--version TAG] [--rollback]` | [Upgrading](/guide/upgrading) |
 
+## Orchestrator
+
+| Command | Notes |
+|---|---|
+| `nomctl orchestrator status` | refuses when the unit is not installed |
+| `nomctl orchestrator logs [-f] [-n 20]` | |
+| `nomctl orchestrator hard-reset` | [Orchestrator](/guide/orchestrator): stop, delete `queues/` and `events/`, start |
+
 ## Observability
 
 | Command | Notes |

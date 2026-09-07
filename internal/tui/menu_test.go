@@ -8,7 +8,7 @@ import (
 
 func TestMenuOptions(t *testing.T) {
 	opts := MenuOptions(config.Default())
-	if len(opts) != 14 || opts[0].Value != "deploy" || opts[5].Value != "status" || opts[6].Value != "alerts" || opts[7].Value != "support" || opts[11].Value != "bootstrap" || opts[13].Value != "exit" {
+	if len(opts) != 15 || opts[0].Value != "deploy" || opts[5].Value != "status" || opts[6].Value != "alerts" || opts[7].Value != "support" || opts[11].Value != "bootstrap" || opts[13].Value != "orchestrator" || opts[14].Value != "exit" {
 		t.Errorf("unexpected options: %+v", opts)
 	}
 	if opts[1].Key != "restart → Restart the go-zenon service" {

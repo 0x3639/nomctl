@@ -113,6 +113,14 @@ MyTonCtrl equivalent: `benchmark`.
 the README "common signatures" table and print the diagnosis and suggested
 fix. Turns the troubleshooting section into a command.
 
+### 12. Orchestrator — done (v0.7.0)
+
+`nomctl orchestrator {status,logs,hard-reset}` and an Orchestrator submenu.
+Hard reset ports the script: stop the unit, wait 10 s, delete `queues/` and
+`events/` under `/root/.orchestrator`, start. Every function refuses on a
+node without the unit. Further orchestrator functions are added to this
+submenu as they are needed.
+
 ### 10. Bootstrap sync — done (v0.6.0)
 
 `nomctl bootstrap [URL] [--discard]`: download the snapshot zip and its
