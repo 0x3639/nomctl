@@ -381,7 +381,7 @@ func WalletBackup(cfg config.Config) error {
 }
 
 // WalletRestore picks a wallet backup, asks for its passphrase, restores
-// it and offers a restart.
+// it and restarts a previously running node while holding the operation lock.
 func WalletRestore(cfg config.Config) error {
 	infos, err := walletbackup.List(cfg)
 	if err != nil {
@@ -409,24 +409,24 @@ func WalletRestore(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	ok, err := Confirm("Replace the whole wallet directory and config.json with this backup?\n(The current ones are kept aside under the restore directory.)")
+	ok, err := Confirm("Replace the whole wallet directory and config.json with this backup?\nThe node is stopped before replacement and restarted afterward if it was running.\nCurrent files are kept in a recovery directory under the node data directory.")
 	if err != nil || !ok {
 		return err
 	}
 	var res walletbackup.RestoreResult
 	err = withLock("restore wallet", func() error {
 		var err error
-		res, err = walletbackup.Restore(cfg, archive, false, time.Now())
+		res, err = walletbackup.Restore(cfg, archive, true, time.Now())
 		return err
 	})
 	if err != nil {
 		if res.SafetyDir != "" {
-			fmt.Fprintln(os.Stderr, "Previous wallet files are under "+res.SafetyDir)
+			fmt.Fprintln(os.Stderr, "Wallet recovery directory: "+res.SafetyDir)
 		}
 		return err
 	}
 	ui.Success("Restored " + strings.Join(res.Files, ", ") + " (previous files: " + res.SafetyDir + ")")
-	return offerRestart(cfg)
+	return nil
 }
 
 // PillarDeploy runs the one-step Pillar deployment and prints the result.
