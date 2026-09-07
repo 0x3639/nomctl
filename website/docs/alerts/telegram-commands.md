@@ -28,7 +28,7 @@ Node znnd v0.0.7 (a1b2c3d) · nomctl 0.7.1
 Host load 1.2 · mem 3.1 GB / 7.8 GB free · disk 190.0 GB / 500.0 GB free (38%)
 Process cpu 45% · rss 2.1 GB
 Update nomctl 0.7.2 available
-```text
+```
 
 - **Sync**: state, height against the target, momentum rate and ETA while syncing.
 - **Frontier**: the newest momentum and its age, or `ledger busy` while the node is inserting momentums flat out (see [First look](/troubleshooting/first-look)).
