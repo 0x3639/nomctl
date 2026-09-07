@@ -342,7 +342,7 @@ func Vars() []Var {
 		{"NOMCTL_GO_VERSION", DefaultGoVersion, "Go toolchain version used to build the node"},
 		{"NOMCTL_PILLAR_NAME", "(unset)", "Pillar name for status/top production stats (alerts config takes precedence)"},
 		{"NOMCTL_REPO", DefaultReleaseRepo, "GitHub repository nomctl upgrade downloads releases from"},
-		{"NOMCTL_UPDATE_CHECK", "true", "Check GitHub for newer nomctl and go-zenon in status/top (cached 6h)"},
+		{"NOMCTL_UPDATE_CHECK", "true", "Check GitHub for newer nomctl and go-zenon in status/top (cached 1h)"},
 		{"NOMCTL_BOOTSTRAP_URL", DefaultBootstrapURL, "Snapshot for nomctl bootstrap (.zip with a .hash sidecar next to it)"},
 		{"NOMCTL_RPC_TIMEOUT", DefaultRPCTimeout.String(), "Per-call timeout for the node's JSON-RPC (raise on slow disks)"},
 		{"NOMCTL_ORCHESTRATOR_SERVICE", DefaultOrchestratorService, "systemd unit of the orchestrator (nomctl orchestrator ...)"},

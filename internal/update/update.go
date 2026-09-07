@@ -33,7 +33,7 @@ const DefaultRepo = "0x3639/nomctl"
 const CachePath = "/run/nomctl/update-check.json"
 
 // CacheTTL is how long a check result is reused.
-const CacheTTL = 6 * time.Hour
+const CacheTTL = time.Hour
 
 // HTTP is the client used for GitHub requests.
 var HTTP = &http.Client{Timeout: 30 * time.Second}

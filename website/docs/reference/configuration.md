@@ -20,7 +20,7 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_GO_VERSION` | `1.23.0` | Go toolchain version used to build the node |
 | `NOMCTL_PILLAR_NAME` | unset | Pillar shown by `status`/`top` when alerts are not set up (the alerts config takes precedence) |
 | `NOMCTL_REPO` | `0x3639/nomctl` | GitHub repository `nomctl upgrade` downloads releases from |
-| `NOMCTL_UPDATE_CHECK` | `true` | Check GitHub for newer nomctl and go-zenon in `status`/`top` and the `update_available` alert (cached 6 h) |
+| `NOMCTL_UPDATE_CHECK` | `true` | Check GitHub for newer nomctl and go-zenon in `status`/`top` and the `update_available` alert (cached 1 h) |
 | `NOMCTL_BOOTSTRAP_URL` | the snapshot published for this release | Snapshot `.zip` for [`nomctl bootstrap`](/guide/bootstrap); a `.hash` sidecar must sit next to it |
 | `NOMCTL_RPC_TIMEOUT` | `3s` | Per-call timeout for the node's JSON-RPC; raise it on slow disks |
 | `NOMCTL_ORCHESTRATOR_SERVICE` | `orchestrator` | systemd unit for [`nomctl orchestrator`](/guide/orchestrator) |
