@@ -61,6 +61,9 @@ func main() {
 	defer func() { _ = store.Close() }()
 
 	tg := relay.NewTelegram(token)
+	if u := os.Getenv("RELAY_TELEGRAM_URL"); u != "" {
+		tg.BaseURL = u // a stand-in Bot API for tests
+	}
 	srv := relay.NewServer(store, tg, relay.Options{SilentAfter: silentAfter, PublicURL: os.Getenv("RELAY_PUBLIC_URL"), TrustedProxies: proxies})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

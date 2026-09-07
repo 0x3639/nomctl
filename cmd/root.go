@@ -179,5 +179,9 @@ func diagnostic() map[string]string {
 	return map[string]string{annotationRoot: "true", annotationNoPreflight: "true"}
 }
 
+// unprivileged marks a command that any user may run and that skips
+// pre-flight checks (the daemon, started by systemd as its own user).
+func unprivileged() map[string]string { return map[string]string{annotationNoPreflight: "true"} }
+
 // rootOnly returns the annotation map marking a command as privileged.
 func rootOnly() map[string]string { return map[string]string{annotationRoot: "true"} }
