@@ -35,6 +35,17 @@ type BackupInfo struct {
 // tests stub it. nil disables the rule.
 var BackupChecker func() BackupInfo
 
+// WalletInfo is what the wallet_backup_missing rule needs.
+type WalletInfo struct {
+	ProducerConfigured bool
+	Missing            bool
+	NewestBackup       time.Time
+}
+
+// WalletChecker is consulted by the wallet_backup_missing rule. The daemon
+// sets it; nil disables the rule.
+var WalletChecker func() WalletInfo
+
 // UpdateInfo is what the update_available rule needs.
 type UpdateInfo struct {
 	NomctlLatest  string // release tag, "" when unknown
@@ -63,6 +74,7 @@ func AllRules() []Rule {
 		ruleFunc{"memory_high", memoryHigh},
 		ruleFunc{"fds_high", fdsHigh},
 		ruleFunc{"backup_stale", backupStale},
+		ruleFunc{"wallet_backup_missing", walletBackupMissing},
 		ruleFunc{"rpc_unreachable", rpcUnreachable},
 		ruleFunc{"momentums_stalled", momentumsStalled},
 		ruleFunc{"pillar_missed", pillarMissed},
@@ -277,6 +289,23 @@ func backupStale(h []metrics.Sample, _ RuleConfig) Result {
 		return Result{Firing: true, Detail: fmt.Sprintf("newest backup %s, expected every %d day(s)", age, info.CadenceDays)}
 	}
 	return Result{}
+}
+
+// walletBackupMissing is informational: it fires while a producer key is
+// configured and no wallet backup newer than the key exists, and clears
+// once `nomctl backup wallet` has run.
+func walletBackupMissing(h []metrics.Sample, _ RuleConfig) Result {
+	if WalletChecker == nil || len(h) == 0 {
+		return Result{}
+	}
+	info := WalletChecker()
+	if !info.ProducerConfigured || !info.Missing {
+		return Result{}
+	}
+	if info.NewestBackup.IsZero() {
+		return Result{Firing: true, Detail: "a producer key is configured but has never been backed up: sudo nomctl backup wallet"}
+	}
+	return Result{Firing: true, Detail: "the producer key changed after the newest wallet backup (" + info.NewestBackup.UTC().Format("2006-01-02") + "): sudo nomctl backup wallet"}
 }
 
 func rpcUnreachable(h []metrics.Sample, cfg RuleConfig) Result {

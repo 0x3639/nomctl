@@ -57,7 +57,7 @@ func TestLookup(t *testing.T) {
 	if !seen["node_silent"] {
 		t.Error("node_silent missing")
 	}
-	if len(Alerts) != 14 {
-		t.Errorf("expected 14 alerts, got %d", len(Alerts))
+	if len(Alerts) != 15 {
+		t.Errorf("expected 15 alerts, got %d", len(Alerts))
 	}
 }

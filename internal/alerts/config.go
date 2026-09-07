@@ -55,23 +55,24 @@ type configJSON struct {
 
 // defaultThresholds lists the tunable keys of each rule with their default.
 var defaultThresholds = map[string]map[string]float64{
-	"service_down":      {},
-	"crash_loop":        {"window_minutes": 10, "count": 2},
-	"sync_stalled":      {},
-	"sync_behind":       {"minutes": 10},
-	"not_enough_peers":  {"min_peers": 3, "minutes": 5},
-	"disk_low":          {"min_free_gb": 15},
-	"memory_high":       {"pct": 85},
-	"fds_high":          {"pct": 80},
-	"backup_stale":      {},
-	"rpc_unreachable":   {"minutes": 5},
-	"momentums_stalled": {"minutes": 5},
-	"pillar_missed":     {"minutes": 30, "missed": 2},
-	"update_available":  {},
+	"service_down":          {},
+	"crash_loop":            {"window_minutes": 10, "count": 2},
+	"sync_stalled":          {},
+	"sync_behind":           {"minutes": 10},
+	"not_enough_peers":      {"min_peers": 3, "minutes": 5},
+	"disk_low":              {"min_free_gb": 15},
+	"wallet_backup_missing": {},
+	"memory_high":           {"pct": 85},
+	"fds_high":              {"pct": 80},
+	"backup_stale":          {},
+	"rpc_unreachable":       {"minutes": 5},
+	"momentums_stalled":     {"minutes": 5},
+	"pillar_missed":         {"minutes": 30, "missed": 2},
+	"update_available":      {},
 }
 
 // disabledByDefault lists alerts an operator must opt into.
-var disabledByDefault = map[string]bool{"update_available": true}
+var disabledByDefault = map[string]bool{"update_available": true, "wallet_backup_missing": true}
 
 // DefaultConfig returns every node-raised alert enabled with spec defaults.
 func DefaultConfig() Config {

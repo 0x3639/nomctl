@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/0x3639/nomctl/internal/service"
 	"github.com/0x3639/nomctl/internal/support"
 	"github.com/0x3639/nomctl/internal/ui"
+	"github.com/0x3639/nomctl/internal/walletbackup"
 )
 
 // Action identifies a menu entry.
@@ -336,6 +338,62 @@ func offerRestart(cfg config.Config) error {
 	return service.Restart(cfg.ServiceName)
 }
 
+// WalletBackup asks for a passphrase and writes an encrypted wallet backup.
+func WalletBackup(cfg config.Config) error {
+	p, err := WalletPassphrase(true)
+	if err != nil {
+		return err
+	}
+	res, err := walletbackup.Create(cfg, walletbackup.Options{Passphrase: p})
+	if err != nil {
+		return err
+	}
+	ui.Success("Wallet backup written: " + res.Path)
+	fmt.Fprintln(os.Stderr, "Contains "+strings.Join(res.Files, ", ")+". Copy it off this machine and keep the passphrase with it.")
+	return nil
+}
+
+// WalletRestore picks a wallet backup, asks for its passphrase, restores
+// it and offers a restart.
+func WalletRestore(cfg config.Config) error {
+	infos, err := walletbackup.List(cfg)
+	if err != nil {
+		return err
+	}
+	if len(infos) == 0 {
+		return fmt.Errorf("no wallet backups in %s; use: sudo nomctl restore wallet FILE for one kept elsewhere", walletbackup.Dir(cfg))
+	}
+	opts := make([]huh.Option[string], 0, len(infos))
+	for _, i := range infos {
+		label := filepath.Base(i.Path) + "  " + i.ModTime.Format("2006-01-02 15:04")
+		opts = append(opts, huh.NewOption(label, i.Path))
+	}
+	path, err := Select("Which wallet backup?", opts)
+	if err != nil {
+		return err
+	}
+	passphrase := ""
+	if strings.HasSuffix(path, ".age") {
+		if passphrase, err = WalletPassphrase(false); err != nil {
+			return err
+		}
+	}
+	archive, err := walletbackup.Open(path, passphrase)
+	if err != nil {
+		return err
+	}
+	ok, err := Confirm("Replace the current wallet directory and config.json with this backup?\n(The current files are kept aside under the restore directory.)")
+	if err != nil || !ok {
+		return err
+	}
+	res, err := walletbackup.Restore(cfg, archive, false, time.Now())
+	if err != nil {
+		return err
+	}
+	ui.Success("Restored " + strings.Join(res.Files, ", ") + " (previous files: " + res.SafetyDir + ")")
+	return offerRestart(cfg)
+}
+
 // PillarDeploy runs the one-step Pillar deployment and prints the result.
 func PillarDeploy(cfg config.Config) error {
 	ui.Section(os.Stderr, "==== DEPLOY A PILLAR: go-zenon master + producer key ====")
@@ -361,6 +419,8 @@ func PillarMenu(cfg config.Config) error {
 		huh.NewOption("Deploy a Pillar (go-zenon master + producer key)", "deploy"),
 		huh.NewOption("Set up the producer key (create or configure)", "setup"),
 		huh.NewOption("Show the producer configuration", "status"),
+		huh.NewOption("Back up the producer key and config (encrypted)", "backup"),
+		huh.NewOption("Restore the producer key and config from a backup", "restore"),
 		huh.NewOption("Back", "back"),
 	})
 	if err != nil {
@@ -381,6 +441,10 @@ func PillarMenu(cfg config.Config) error {
 		}
 		printProducer(res)
 		return nil
+	case "backup":
+		return withLock("backup wallet", func() error { return WalletBackup(cfg) })
+	case "restore":
+		return withLock("restore wallet", func() error { return WalletRestore(cfg) })
 	case "status":
 		pc, err := producer.ReadConfig(producer.ConfigPath(cfg.ZnnDir))
 		if err != nil {
