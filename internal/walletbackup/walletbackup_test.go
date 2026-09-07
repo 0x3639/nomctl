@@ -245,3 +245,102 @@ func TestCheckMissing(t *testing.T) {
 		t.Errorf("no producer: %+v", s)
 	}
 }
+
+func TestRestoreReplacesWholeWalletAndRollsBack(t *testing.T) {
+	cfg, addr := node(t)
+	res, err := Create(cfg, Options{Passphrase: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Open(res.Path, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A stale key that is not in the archive must not survive a restore.
+	stale := filepath.Join(cfg.ZnnDir, "wallet", "stale")
+	if err := os.WriteFile(stale, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	rr, err := Restore(cfg, archive, false, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("stale wallet file survived the restore")
+	}
+	if _, err := os.Stat(filepath.Join(rr.SafetyDir, "wallet", "stale")); err != nil {
+		t.Error("stale file not kept in the safety dir")
+	}
+	if got, _ := producer.Verify(producer.KeyFilePath(cfg.ZnnDir), "kpw"); got != addr {
+		t.Error("restored key wrong")
+	}
+	// A refusal before any move leaves the live key alone.
+	broken := tarOf(t, map[string]string{"config.json": `{"Producer": {"Index": 0, "KeyFilePath": "producer", "Password": "kpw", "Address": "z1other"}}`})
+	if _, err := Restore(cfg, broken, false, now.Add(time.Second)); err == nil {
+		t.Fatal("expected refusal")
+	}
+	if got, _ := producer.Verify(producer.KeyFilePath(cfg.ZnnDir), "kpw"); got != addr {
+		t.Error("live key touched by a refused restore")
+	}
+}
+
+func TestBudgetRefusesOversizedArchives(t *testing.T) {
+	big := strings.Repeat("a", MaxArchiveBytes/2+1)
+	two := tarOf(t, map[string]string{"wallet/a": big, "wallet/b": big})
+	if _, err := Inspect(two); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("two entries over the total budget accepted: %v", err)
+	}
+	one := tarOf(t, map[string]string{"wallet/a": strings.Repeat("a", MaxArchiveBytes+1)})
+	if _, err := Inspect(one); err == nil {
+		t.Error("single oversized entry accepted")
+	}
+	cfg, _ := node(t)
+	if _, err := Restore(cfg, two, false, time.Unix(1_800_000_000, 0)); err == nil {
+		t.Error("restore staged an oversized archive")
+	}
+	if got, _ := producer.Address(producer.KeyFilePath(cfg.ZnnDir)); got == "" {
+		t.Error("live key touched")
+	}
+}
+
+func TestRestoreRollsBackAfterPartialInstall(t *testing.T) {
+	cfg, addr := node(t)
+	res, err := Create(cfg, Options{Passphrase: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := Open(res.Path, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(producer.ConfigPath(cfg.ZnnDir), []byte(`{"LogLevel": "warn"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := installRename
+	n := 0
+	installRename = func(src, dst string) error {
+		n++
+		if n == 2 {
+			return errors.New("rename exploded")
+		}
+		return os.Rename(src, dst)
+	}
+	t.Cleanup(func() { installRename = old })
+	rr, err := Restore(cfg, archive, false, time.Unix(1_800_000_000, 0))
+	if err == nil || !strings.Contains(err.Error(), "rename exploded") || !strings.Contains(err.Error(), "put back") {
+		t.Fatalf("err = %v", err)
+	}
+	if rr.SafetyDir == "" {
+		t.Error("safety dir not reported")
+	}
+	if b, _ := os.ReadFile(producer.ConfigPath(cfg.ZnnDir)); !strings.Contains(string(b), "warn") {
+		t.Errorf("previous config.json not put back: %s", b)
+	}
+	if got, _ := producer.Verify(producer.KeyFilePath(cfg.ZnnDir), "kpw"); got != addr {
+		t.Error("previous key not put back")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ZnnDir, "wallet", "other")); err != nil {
+		t.Error("previous wallet directory not put back whole")
+	}
+}

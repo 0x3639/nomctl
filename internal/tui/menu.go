@@ -344,7 +344,13 @@ func WalletBackup(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	res, err := walletbackup.Create(cfg, walletbackup.Options{Passphrase: p})
+	var res walletbackup.Result
+	// The lock is taken after the prompts so a waiting prompt blocks nothing.
+	err = withLock("backup wallet", func() error {
+		var err error
+		res, err = walletbackup.Create(cfg, walletbackup.Options{Passphrase: p})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -382,12 +388,20 @@ func WalletRestore(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	ok, err := Confirm("Replace the current wallet directory and config.json with this backup?\n(The current files are kept aside under the restore directory.)")
+	ok, err := Confirm("Replace the whole wallet directory and config.json with this backup?\n(The current ones are kept aside under the restore directory.)")
 	if err != nil || !ok {
 		return err
 	}
-	res, err := walletbackup.Restore(cfg, archive, false, time.Now())
+	var res walletbackup.RestoreResult
+	err = withLock("restore wallet", func() error {
+		var err error
+		res, err = walletbackup.Restore(cfg, archive, false, time.Now())
+		return err
+	})
 	if err != nil {
+		if res.SafetyDir != "" {
+			fmt.Fprintln(os.Stderr, "Previous wallet files are under "+res.SafetyDir)
+		}
 		return err
 	}
 	ui.Success("Restored " + strings.Join(res.Files, ", ") + " (previous files: " + res.SafetyDir + ")")
@@ -442,9 +456,9 @@ func PillarMenu(cfg config.Config) error {
 		printProducer(res)
 		return nil
 	case "backup":
-		return withLock("backup wallet", func() error { return WalletBackup(cfg) })
+		return WalletBackup(cfg)
 	case "restore":
-		return withLock("restore wallet", func() error { return WalletRestore(cfg) })
+		return WalletRestore(cfg)
 	case "status":
 		pc, err := producer.ReadConfig(producer.ConfigPath(cfg.ZnnDir))
 		if err != nil {
