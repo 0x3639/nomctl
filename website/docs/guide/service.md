@@ -13,6 +13,8 @@ sudo nomctl restart
 
 These wrap `systemctl` for the `go-zenon` unit. `start` on a running service and `stop` on a stopped one are no-ops with an informational message. If systemd cannot report the unit's state at all, the command fails rather than guessing.
 
+You do not need `start` after `deploy`: deploy enables and starts the service itself, and the unit is enabled, so it comes back after a reboot on its own. `start` is for bringing the node back after a `stop`.
+
 ## logs
 
 ```bash
