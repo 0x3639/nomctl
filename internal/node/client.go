@@ -26,7 +26,18 @@ type Client struct {
 
 // New returns a client with a 3 s per-call timeout.
 func New(url string) *Client {
-	return &Client{URL: url, HTTP: &http.Client{Timeout: 3 * time.Second}}
+	return NewWithTimeout(url, DefaultTimeout)
+}
+
+// DefaultTimeout bounds each RPC call.
+const DefaultTimeout = 3 * time.Second
+
+// NewWithTimeout is New with a per-call timeout (NOMCTL_RPC_TIMEOUT).
+func NewWithTimeout(url string, timeout time.Duration) *Client {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	return &Client{URL: url, HTTP: &http.Client{Timeout: timeout}}
 }
 
 // SyncState mirrors protocol.SyncState in go-zenon.
@@ -226,7 +237,12 @@ type Snapshot struct {
 	// exists; PillarErr records a lookup failure without failing Snapshot.
 	Pillar    *PillarInfo
 	PillarErr error
-	// Err is the first failure; the other fields may still be partially set.
+	// FrontierErr records a failed ledger.getFrontierMomentum. That call
+	// waits on the chain lock momentum insertion holds, so it times out on
+	// a busy node while the stats calls still answer; it does not set Err.
+	FrontierErr error
+	// Err is the first failure of the stats calls; the other fields may
+	// still be partially set.
 	Err error
 }
 
@@ -283,15 +299,18 @@ func (c *Client) Snapshot(ctx context.Context) Snapshot {
 		}
 		return err
 	})
-	run(func() error {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		v, err := c.FrontierMomentum(ctx)
-		if err == nil {
-			mu.Lock()
-			snap.Frontier = v
-			mu.Unlock()
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			snap.FrontierErr = err
+			return
 		}
-		return err
-	})
+		snap.Frontier = v
+	}()
 	if c.PillarName != "" {
 		wg.Add(1)
 		go func() {

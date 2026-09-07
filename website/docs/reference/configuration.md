@@ -22,6 +22,7 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_REPO` | `0x3639/nomctl` | GitHub repository `nomctl upgrade` downloads releases from |
 | `NOMCTL_UPDATE_CHECK` | `true` | Check GitHub for newer nomctl and go-zenon in `status`/`top` and the `update_available` alert (cached 6 h) |
 | `NOMCTL_BOOTSTRAP_URL` | the snapshot published for this release | Snapshot `.zip` for [`nomctl bootstrap`](/guide/bootstrap); a `.hash` sidecar must sit next to it |
+| `NOMCTL_RPC_TIMEOUT` | `3s` | Per-call timeout for the node's JSON-RPC; raise it on slow disks |
 | `NOMCTL_ORCHESTRATOR_SERVICE` | `orchestrator` | systemd unit for [`nomctl orchestrator`](/guide/orchestrator) |
 | `NOMCTL_ORCHESTRATOR_DIR` | `/root/.orchestrator` | Orchestrator state directory; `hard-reset` deletes `queues/` and `events/` under it |
 | `NOMCTL_BACKUP_DIR` | `/backup` | Directory that stores backup archives |

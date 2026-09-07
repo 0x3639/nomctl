@@ -10,7 +10,7 @@ The daemon samples every 30 seconds and keeps 30 minutes of history. Each rule i
 | `service_down` | critical | the service is not active for two samples in a row | |
 | `crash_loop` | critical | systemd restarted the node at least twice within the window | `window_minutes=10 count=2` |
 | `sync_stalled` | critical | the node reports synced but its newest momentum is older than 2 minutes, twice in a row | |
-| `momentums_stalled` | critical | the frontier height has not moved for the window while the service runs and RPC answers, whatever sync state the node claims | `minutes=5` |
+| `momentums_stalled` | critical | the node's height has not moved for the window while the service runs and RPC answers, whatever sync state the node claims; says so when the ledger call was blocked the whole time, the sign of a hung insert | `minutes=5` |
 | `sync_behind` | warning | syncing, and the gap to the target height has not shrunk over the window | `minutes=10` |
 | `not_enough_peers` | warning | fewer than `min_peers` peers, or the node itself reports not-enough-peers, for the window | `min_peers=3 minutes=5` |
 | `pillar_missed` | critical | over the window your pillar's expected momentums grew by `missed` more than its produced count; an epoch rollover restarts the window | `minutes=30 missed=2` |
@@ -18,7 +18,7 @@ The daemon samples every 30 seconds and keeps 30 minutes of history. Each rule i
 | `memory_high` | warning | znnd's resident memory exceeds `pct` of host memory | `pct=85` |
 | `fds_high` | warning | open files exceed `pct` of the limit (32768) | `pct=80` |
 | `backup_stale` | warning | the backup timer is enabled and the newest archive is older than cadence + 1 day | |
-| `rpc_unreachable` | warning | the service is active but the local RPC has not answered for the window | `minutes=5` |
+| `rpc_unreachable` | warning | the service is active but the local RPC's stats calls have not answered for the window; a slow ledger call alone does not count | `minutes=5` |
 | `node_silent` | critical | raised by the relay: no heartbeat from the node for 5 minutes | relay setting |
 | `update_available` | info, **off by default** | a newer nomctl release exists, or the configured go-zenon branch has commits beyond the running build; sent once, no reminders | |
 

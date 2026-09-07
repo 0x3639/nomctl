@@ -78,17 +78,22 @@ type PillarSample struct {
 
 // NodeSample is the RPC view plus derived values.
 type NodeSample struct {
-	URL             string
-	Reachable       bool
-	Error           string `json:",omitempty"`
-	State           node.SyncState
-	StateText       string
-	CurrentHeight   uint64
-	TargetHeight    uint64
-	NumPeers        int
-	Version         string
-	Commit          string
-	Goroutines      int
+	URL           string
+	Reachable     bool
+	Error         string `json:",omitempty"`
+	State         node.SyncState
+	StateText     string
+	CurrentHeight uint64
+	TargetHeight  uint64
+	NumPeers      int
+	Version       string
+	Commit        string
+	Goroutines    int
+	// FrontierKnown is false when ledger.getFrontierMomentum failed while
+	// the stats calls answered; LedgerError then says why. Momentum
+	// insertion holds the lock that call needs, so a busy node does this.
+	FrontierKnown   bool
+	LedgerError     string `json:",omitempty"`
 	FrontierHeight  uint64
 	FrontierTime    time.Time
 	FrontierAge     time.Duration
@@ -143,7 +148,7 @@ func NewSampler(cfg config.Config) *Sampler {
 		PillarName: cfg.PillarName,
 		ProcRoot:   DefaultProcRoot,
 		CgroupRoot: DefaultCgroupRoot,
-		Node:       node.New(node.DefaultURL),
+		Node:       node.NewWithTimeout(node.DefaultURL, cfg.RPCTimeout),
 		Now:        time.Now,
 		ClockTicks: 100,
 		unit:       cfg.ServiceName,
@@ -274,10 +279,15 @@ func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
 	n.NumPeers = snap.Network.NumPeers
 	n.Version, n.Commit = snap.Process.Version, snap.Process.Commit
 	n.Goroutines = snap.Os.NumGoroutine
-	n.FrontierHeight = snap.Frontier.Height
-	n.FrontierTime = snap.Frontier.Time()
-	n.FrontierAge = now.Sub(n.FrontierTime)
-	n.Stalled = n.State == node.Done && n.FrontierAge > StalledAfter
+	if snap.Frontier != nil {
+		n.FrontierKnown = true
+		n.FrontierHeight = snap.Frontier.Height
+		n.FrontierTime = snap.Frontier.Time()
+		n.FrontierAge = now.Sub(n.FrontierTime)
+		n.Stalled = n.State == node.Done && n.FrontierAge > StalledAfter
+	} else if snap.FrontierErr != nil {
+		n.LedgerError = snap.FrontierErr.Error()
+	}
 
 	s.heights = append(s.heights, heightPoint{now, n.CurrentHeight})
 	if len(s.heights) > rateWindow {
@@ -338,7 +348,11 @@ func Format(s Sample) string {
 		}
 		line("Node", fmt.Sprintf("znnd %s (%s), %s", n.Version, n.Commit, sync))
 		line("Peers", fmt.Sprintf("%d connected", n.NumPeers))
-		line("Frontier", fmt.Sprintf("height %s, %s ago", Commas(n.FrontierHeight), HumanDuration(n.FrontierAge)))
+		if n.FrontierKnown {
+			line("Frontier", fmt.Sprintf("height %s, %s ago", Commas(n.FrontierHeight), HumanDuration(n.FrontierAge)))
+		} else {
+			line("Frontier", "ledger busy (momentum insertion holds the lock): "+n.LedgerError)
+		}
 		if n.Pillar.Configured {
 			line("Pillar", PillarText(n.Pillar))
 		}

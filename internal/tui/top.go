@@ -161,7 +161,7 @@ func nodeLines(n metrics.NodeSample, history []float64, inner int) []string {
 		rateLine += "   " + ui.StyleAccent.Render(sl)
 	}
 	lines = append(lines, rateLine,
-		fmt.Sprintf("frontier %s, %s ago", metrics.Commas(n.FrontierHeight), metrics.HumanDuration(n.FrontierAge)))
+		frontierText(n))
 	if n.Pillar.Configured {
 		text := "pillar " + metrics.PillarText(n.Pillar)
 		if !n.Pillar.Found || n.Pillar.Expected > n.Pillar.Produced {
@@ -255,4 +255,11 @@ func sparkline(values []float64, width int) string {
 		b.WriteRune(sparkRunes[idx])
 	}
 	return b.String()
+}
+
+func frontierText(n metrics.NodeSample) string {
+	if !n.FrontierKnown {
+		return "frontier: ledger busy (" + n.LedgerError + ")"
+	}
+	return fmt.Sprintf("frontier %s, %s ago", metrics.Commas(n.FrontierHeight), metrics.HumanDuration(n.FrontierAge))
 }
