@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/0x3639/nomctl/internal/execx"
+	"github.com/0x3639/nomctl/internal/fsx"
 )
 
 // DefaultRepo is the GitHub repository releases are fetched from.
@@ -30,7 +31,11 @@ const DefaultRepo = "0x3639/nomctl"
 
 // CachePath stores the last check so status/top/alerts do not hit GitHub
 // on every sample. /run is tmpfs, cleared on reboot.
-const CachePath = "/run/nomctl/update-check.json"
+const CachePath = "/run/nomctl-system/update-check.json"
+
+// UserCachePath is writable by the unprivileged alerts daemon. Root never
+// reads or writes this cache; root-owned runtime data has a separate directory.
+const UserCachePath = "/run/nomctl/update-check.json"
 
 // CacheTTL is how long a check result is reused.
 const CacheTTL = time.Hour
@@ -297,6 +302,9 @@ func Run(ctx context.Context, opts Options) Check {
 	}
 	if opts.CachePath == "" {
 		opts.CachePath = CachePath
+		if os.Geteuid() != 0 {
+			opts.CachePath = UserCachePath
+		}
 	}
 	if c, ok := load(opts.CachePath); ok && opts.Now().Sub(c.CheckedAt) < opts.TTL && c.Repo == opts.Repo && c.NodeRepo == opts.NodeRepo && c.NodeBranch == opts.NodeBranch {
 		return c
@@ -320,7 +328,7 @@ func Run(ctx context.Context, opts Options) Check {
 
 func load(path string) (Check, bool) {
 	var c Check
-	data, err := os.ReadFile(path)
+	data, err := fsx.ReadRuntimeFile(path, 64<<10)
 	if err != nil {
 		return c, false
 	}
@@ -338,10 +346,7 @@ func save(path string, c Check) {
 	if err != nil {
 		return
 	}
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, data, 0o644) == nil {
-		_ = os.Rename(tmp, path)
-	}
+	_ = fsx.WriteRuntimeFile(path, data, 0o644)
 }
 
 // Lines renders the "Update" lines for status/top: nothing when up to date

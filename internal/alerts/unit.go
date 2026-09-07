@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/execx"
 	"github.com/0x3639/nomctl/internal/fsx"
-	"github.com/0x3639/nomctl/internal/metrics"
 	"github.com/0x3639/nomctl/internal/service"
 )
 
@@ -83,7 +83,7 @@ WantedBy=multi-user.target
 // ProbeText renders the probe oneshot. It runs as root because counting
 // another user's open files needs CAP_SYS_PTRACE, which would also let the
 // daemon read the node's memory; confining it to a 30-second oneshot that
-// can only write /run/nomctl keeps that out of the long-running process.
+// can only write /run/nomctl-system keeps that out of the long-running process.
 // Home is read-only rather than hidden so a data directory under /root can
 // be measured for disk space, which the daemon cannot see at all.
 func ProbeText(execPath string, cfg config.Config) string {
@@ -93,14 +93,14 @@ Description=nomctl alerts probe (open files and I/O of the node process)
 [Service]
 Type=oneshot
 ExecStart=%s alerts probe
-RuntimeDirectory=nomctl
+RuntimeDirectory=nomctl-system
 RuntimeDirectoryPreserve=yes
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
 PrivateNetwork=true
-ReadWritePaths=/run/nomctl
+ReadWritePaths=/run/nomctl-system
 Environment=NOMCTL_SKIP_PREFLIGHT=true
 Environment=NOMCTL_LOG_FILE=
 Environment="NOMCTL_SERVICE_NAME=%s"
@@ -144,7 +144,8 @@ var (
 	runUseradd = func(name string) error {
 		return execx.Run("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--user-group", name)
 	}
-	chown = os.Chown
+	chown     = os.Chown
+	chownFile = func(f *os.File, uid, gid int) error { return f.Chown(uid, gid) }
 )
 
 // EnsureUser creates the locked run user if it does not exist and returns
@@ -187,23 +188,22 @@ func SecureConfig(path string, gid int) error {
 	return nil
 }
 
-// SecureRuntimeDir hands /run/nomctl to the run user so the daemon can
-// write its state; root writers (status, top, the probe) are unaffected.
+// SecureRuntimeDir gives the daemon its own runtime directory. Existing files
+// are never traversed or handed over: the daemon replaces its transient state
+// on the first sample, including state left by an older root-run daemon.
 func SecureRuntimeDir(dir string, uid, gid int) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := chown(dir, uid, gid); err != nil {
-		return fmt.Errorf("chown %s: %w", dir, err)
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
 	}
-	// The daemon's own state, written by root on older releases, is handed
-	// over too. Other files there are replaced by rename and need nothing.
-	if p := filepath.Join(dir, filepath.Base(DefaultStatePath)); fsx.Exists(p) {
-		if err := chown(p, uid, gid); err != nil {
-			return fmt.Errorf("chown %s: %w", p, err)
-		}
+	defer func() { _ = f.Close() }()
+	if err := chownFile(f, uid, gid); err != nil {
+		return fmt.Errorf("set runtime directory owner: %w", err)
 	}
-	return nil
+	return f.Chmod(0o755)
 }
 
 // selfPath is the binary the units should run.
@@ -259,7 +259,7 @@ func Converge(cfg config.Config, configPath string) (bool, error) {
 			return false, err
 		}
 	}
-	if err := SecureRuntimeDir(filepath.Dir(metrics.DefaultProbePath), uid, gid); err != nil {
+	if err := SecureRuntimeDir(filepath.Dir(DefaultStatePath), uid, gid); err != nil {
 		return false, err
 	}
 	execPath, err := selfPath()

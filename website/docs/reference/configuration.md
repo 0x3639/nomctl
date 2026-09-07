@@ -48,7 +48,9 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `/etc/nomctl/alerts.json` (0600) | `alerts setup`, `alerts set`, `enable`, `disable` |
 | `/run/nomctl/alerts-state.json` | the alerts daemon, read by `alerts status` |
 | `/run/nomctl.lock` | backup, restore, resync, deploy while running |
-| `/run/nomctl/update-check.json` | the cached update check |
+| `/run/nomctl-system/update-check.json` | the cached update check for root commands |
+| `/run/nomctl-system/process-probe.json` | root-written metrics, readable by the alerts daemon |
+| `/run/nomctl/update-check.json` | the alerts daemon's cached update check |
 | `/usr/local/bin/nomctl.previous` | `upgrade`, for `--rollback` |
 | `/etc/systemd/timesyncd.conf` | pre-flight, only if NTP is not `time.cloudflare.com` |
 

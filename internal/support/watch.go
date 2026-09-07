@@ -2,6 +2,7 @@ package support
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -46,28 +47,52 @@ func (d *restartDetector) restarted(s metrics.ServiceSample) (bool, string) {
 // follows its journal into 00-live-journal.log until systemd restarts it,
 // ctx is cancelled, or Timeout elapses. It then takes one final sample.
 func Watch(ctx context.Context, cfg config.Config, opts WatchOptions) error {
-	if err := os.MkdirAll(opts.Out, 0o700); err != nil {
+	if err := os.Mkdir(opts.Out, 0o700); err != nil {
 		return err
+	}
+	return watchInto(ctx, cfg, opts)
+}
+
+func watchInto(ctx context.Context, cfg config.Config, opts WatchOptions) error {
+	if opts.Poll < time.Second {
+		return errors.New("watch poll interval must be at least one second")
 	}
 	sampler := metrics.NewSampler(cfg)
 	first := sampler.Take(ctx)
 	det := &restartDetector{initialRestarts: first.Service.NRestarts, initialPID: first.Service.MainPID}
 
-	stopJournal, err := execx.New("journalctl", "-fu", cfg.ServiceUnit(), "-o", "short-iso-precise", "--no-pager").
-		StartToFile(filepath.Join(opts.Out, "00-live-journal.log"))
-	if err != nil {
-		slog.Warn("cannot follow journal: " + err.Error())
-		stopJournal = func() {}
-	}
-	defer stopJournal()
+	journalCtx, cancelJournal := context.WithCancel(ctx)
+	journalDone := make(chan struct{})
+	go func() {
+		defer close(journalDone)
+		out, err := execx.New("journalctl", "-fu", cfg.ServiceUnit(), "-o", "short-iso-precise", "--no-pager", "--lines=1000").
+			Context(journalCtx).OutputLimited(LogTailBytes)
+		if err != nil && journalCtx.Err() == nil {
+			out += "\n[error] " + err.Error()
+		}
+		// Raw journal content stays in bounded memory until it can be redacted
+		// as a whole, including structured records spanning multiple lines.
+		if err := writePrivateFile(filepath.Join(opts.Out, "00-live-journal.log"), []byte(Redact(out))); err != nil {
+			slog.Warn("cannot save live journal: " + err.Error())
+		}
+	}()
+	defer func() { cancelJournal(); <-journalDone }()
 
-	watchLog, err := os.OpenFile(filepath.Join(opts.Out, "01-runtime-watch.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	watchLog, err := os.OpenFile(filepath.Join(opts.Out, "01-runtime-watch.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = watchLog.Close() }()
+	written := 0
 	record := func(s metrics.Sample) {
-		fmt.Fprintf(watchLog, "===== %s =====\n%s\n", s.Taken.UTC().Format(time.RFC3339), metrics.Format(s))
+		line := Redact(fmt.Sprintf("===== %s =====\n%s\n", s.Taken.UTC().Format(time.RFC3339), metrics.Format(s)))
+		if written+len(line) <= LogTailBytes {
+			n, _ := watchLog.WriteString(line)
+			written += n
+		} else if written <= LogTailBytes {
+			_, _ = watchLog.WriteString("[watch output truncated]\n")
+			written = LogTailBytes + 1
+		}
 	}
 	record(first)
 
@@ -96,7 +121,10 @@ func Watch(ctx context.Context, cfg config.Config, opts WatchOptions) error {
 		record(s)
 		if ok, why := det.restarted(s.Service); ok {
 			slog.Info("Detected " + why)
-			time.Sleep(2 * time.Second)
+			select {
+			case <-ctx.Done():
+			case <-time.After(2 * time.Second):
+			}
 			record(sampler.Take(ctx))
 			return nil
 		}
