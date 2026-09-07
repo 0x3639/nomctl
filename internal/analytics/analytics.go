@@ -5,6 +5,7 @@ package analytics
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -133,15 +134,19 @@ func installNodeExporter(cfg config.Config) error {
 		slog.Info(fmt.Sprintf("Installing Node Exporter %s…", cfg.NodeExporterVersion))
 		dirName := fmt.Sprintf("node_exporter-%s.%s", cfg.NodeExporterVersion, releaseArch())
 		url := fmt.Sprintf("https://github.com/prometheus/node_exporter/releases/download/v%s/%s.tar.gz", cfg.NodeExporterVersion, dirName)
-		tarball := "/tmp/node_exporter.tar.gz"
+		work, err := os.MkdirTemp("", "nomctl-node-exporter-") // private: nothing else can plant files here
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.RemoveAll(work) }()
+		tarball := filepath.Join(work, "node_exporter.tar.gz")
 		if err := fsx.Download(url, tarball, 5*time.Minute); err != nil {
 			return fmt.Errorf("unable to download Node Exporter: %w", err)
 		}
-		defer func() { _ = os.Remove(tarball); _ = os.RemoveAll(filepath.Join("/tmp", dirName)) }()
-		if err := execx.Run("tar", "-xzf", tarball, "-C", "/tmp"); err != nil {
+		if err := execx.Run("tar", "-xzf", tarball, "-C", work); err != nil {
 			return err
 		}
-		if err := fsx.CopyFile(filepath.Join("/tmp", dirName, "node_exporter"), binary, 0o755); err != nil {
+		if err := fsx.CopyFile(filepath.Join(work, dirName, "node_exporter"), binary, 0o755); err != nil {
 			return err
 		}
 	} else {
@@ -209,6 +214,61 @@ func NeedsNodeScrapeJob(promYML string) bool {
 	return !strings.Contains(promYML, `job_name: "node"`)
 }
 
+// AppendManaged appends text to a root-managed configuration file without
+// following links: the target must be a regular file, and the new content
+// is written to a private sibling and renamed over it.
+func AppendManaged(path, text string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file (mode %s); refusing to write through it", path, info.Mode())
+	}
+	current, err := readNoFollow(path)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = tmp.Close(); _ = os.Remove(tmpPath) }
+	if _, err := tmp.Write(append(current, text...)); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+// readNoFollow reads a file opened with O_NOFOLLOW where the platform has
+// it, so a link planted between Lstat and open is still refused.
+func readNoFollow(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|noFollow, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(f)
+}
+
 // installPrometheus converges the Prometheus installation (see
 // installNodeExporter for the approach).
 func installPrometheus(cfg config.Config) error {
@@ -236,13 +296,17 @@ func installPrometheus(cfg config.Config) error {
 		slog.Info(fmt.Sprintf("Installing Prometheus %s…", cfg.PrometheusVersion))
 		dirName := fmt.Sprintf("prometheus-%s.%s", cfg.PrometheusVersion, releaseArch())
 		url := fmt.Sprintf("https://github.com/prometheus/prometheus/releases/download/v%s/%s.tar.gz", cfg.PrometheusVersion, dirName)
-		tarball := "/tmp/prometheus.tar.gz"
+		work, err := os.MkdirTemp("", "nomctl-prometheus-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.RemoveAll(work) }()
+		tarball := filepath.Join(work, "prometheus.tar.gz")
 		if err := fsx.Download(url, tarball, 5*time.Minute); err != nil {
 			return fmt.Errorf("unable to download Prometheus: %w", err)
 		}
-		src := filepath.Join("/tmp", dirName)
-		defer func() { _ = os.Remove(tarball); _ = os.RemoveAll(src) }()
-		if err := execx.Run("tar", "-xzf", tarball, "-C", "/tmp"); err != nil {
+		src := filepath.Join(work, dirName)
+		if err := execx.Run("tar", "-xzf", tarball, "-C", work); err != nil {
 			return err
 		}
 		for _, b := range binaries {
@@ -275,7 +339,13 @@ func installPrometheus(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	if err := execx.Run("chown", "-R", "prometheus:prometheus", "/etc/prometheus", "/var/lib/prometheus"); err != nil {
+	// Configuration stays root-owned (world-readable) so the service
+	// account cannot swap a managed file for a symlink before a later root
+	// run; only the data directory belongs to the service.
+	if err := execx.Run("chown", "-R", "root:root", "/etc/prometheus"); err != nil {
+		return err
+	}
+	if err := execx.Run("chown", "-R", "prometheus:prometheus", "/var/lib/prometheus"); err != nil {
 		return err
 	}
 	if err := service.EnsureRunning(unit, wrote); err != nil {
@@ -290,15 +360,7 @@ func installPrometheus(cfg config.Config) error {
 	}
 	if NeedsNodeScrapeJob(string(current)) {
 		slog.Info("Adding Node Exporter scrape config to Prometheus.")
-		f, err := os.OpenFile(promYML, os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return err
-		}
-		if _, err := f.WriteString(nodeScrapeConfig); err != nil {
-			_ = f.Close()
-			return err
-		}
-		if err := f.Close(); err != nil {
+		if err := AppendManaged(promYML, nodeScrapeConfig); err != nil {
 			return err
 		}
 		if err := service.RestartUnit(unit); err != nil {

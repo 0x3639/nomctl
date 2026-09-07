@@ -10,7 +10,7 @@ sudo nomctl analytics install
 Installs a monitoring stack on the node:
 
 - **node_exporter** (`NOMCTL_NODE_EXPORTER_VERSION`) from the GitHub release for the host architecture, as a systemd service under its own user.
-- **Prometheus** (`NOMCTL_PROMETHEUS_VERSION`) the same way, with `/etc/prometheus/prometheus.yml` and a `node` scrape job added if missing.
+- **Prometheus** (`NOMCTL_PROMETHEUS_VERSION`) the same way, with `/etc/prometheus/prometheus.yml` and a `node` scrape job added if missing. `/etc/prometheus` stays root-owned and readable; only `/var/lib/prometheus` belongs to the `prometheus` user, and the scrape job is added by replacing the file atomically, never by writing through a link.
 - **Grafana** from its apt repository (the key is stored at `/etc/apt/keyrings/grafana.asc`), listening on port 3000.
 - The **Prometheus** and **Infinity** datasources in Grafana, the Infinity plugin (`NOMCTL_INFINITY_PLUGIN_VERSION`), the public **Node Exporter Full** dashboard, and the **znnd** dashboard embedded in the nomctl binary.
 

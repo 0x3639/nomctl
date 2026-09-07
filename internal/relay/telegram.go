@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -79,8 +80,11 @@ func (t *Telegram) call(ctx context.Context, method string, params any, retryTra
 		req.Header.Set("Content-Type", "application/json")
 		res, err := t.HTTP.Do(req)
 		if err != nil {
+			// Transport errors carry the request URL, and the URL carries
+			// the bot token: keep only the underlying cause.
+			err = t.redact(method, err)
 			if !retryTransport {
-				return nil, fmt.Errorf("telegram %s: %w", method, err)
+				return nil, err
 			}
 			lastErr = err
 			lastWait = backoff(attempt)
@@ -112,6 +116,21 @@ func (t *Telegram) call(ctx context.Context, method string, params any, retryTra
 		}
 	}
 	return nil, lastErr
+}
+
+// redact strips the token-bearing URL from a transport error. The inner
+// cause (DNS, TLS, reset, timeout) is kept; anything that still mentions the
+// token is replaced wholesale.
+func (t *Telegram) redact(method string, err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) && uerr.Err != nil {
+		err = uerr.Err
+	}
+	msg := err.Error()
+	if t.Token != "" && strings.Contains(msg, t.Token) {
+		msg = strings.ReplaceAll(msg, t.Token, "[token]")
+	}
+	return fmt.Errorf("telegram %s: %s", method, msg)
 }
 
 func backoff(attempt int) time.Duration { return time.Duration(1<<attempt) * time.Second }

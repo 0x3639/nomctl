@@ -127,6 +127,35 @@ func PrivacyNotice(relayHost string) string {
 		"If your pillar's IP address must stay private, run your own relay (see the docs) or do not pair."
 }
 
+// Events are alert names the node sends that are not rules: they are
+// informational and never firing/ok.
+var Events = map[string]bool{"started": true, "test": true}
+
+// Field limits the relay enforces before storing or forwarding anything.
+const (
+	MaxTitleLen  = 200
+	MaxDetailLen = 2000
+)
+
+// ValidAlert reports whether a request names a known alert or event with a
+// valid state and severity and bounded text.
+func ValidAlert(a AlertRequest) bool {
+	if _, ok := Lookup(a.Alert); !ok && !Events[a.Alert] {
+		return false
+	}
+	switch a.State {
+	case Firing, OK, Info:
+	default:
+		return false
+	}
+	switch a.Severity {
+	case Critical, Warning, InfoSev:
+	default:
+		return false
+	}
+	return len(a.Title) <= MaxTitleLen && len(a.Detail) <= MaxDetailLen
+}
+
 // UnknownNodeMessage is the error body of a 401 that means "this node is
 // not paired" (as opposed to a stale timestamp or a bad signature).
 const UnknownNodeMessage = "unknown node"
