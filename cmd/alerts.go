@@ -208,6 +208,7 @@ var alertsRunCmd = &cobra.Command{
 			return err
 		}
 		alerts.BackupChecker = backupChecker
+		alerts.WalletChecker = walletChecker
 		alerts.NewerVersion = update.Newer
 		if cfg.UpdateCheck {
 			alerts.UpdateChecker = updateChecker

@@ -5,6 +5,8 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 
@@ -66,6 +68,32 @@ func Secret(title string) (string, error) {
 		return "", err
 	}
 	return v, nil
+}
+
+// WalletPassphrase asks for the wallet backup passphrase; with confirm it
+// is asked twice and must match.
+func WalletPassphrase(confirm bool) (string, error) {
+	for {
+		p, err := Secret("Passphrase for the wallet backup")
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(p) == "" {
+			slog.Warn("the passphrase must not be empty")
+			continue
+		}
+		if !confirm {
+			return p, nil
+		}
+		again, err := Secret("Repeat the passphrase")
+		if err != nil {
+			return "", err
+		}
+		if again == p {
+			return p, nil
+		}
+		slog.Warn("the passphrases differ; try again")
+	}
 }
 
 // Input asks for a single line of text.

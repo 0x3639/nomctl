@@ -3,6 +3,7 @@ module github.com/0x3639/nomctl
 go 1.24.2
 
 require (
+	filippo.io/age v1.2.1
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/huh v1.0.0
@@ -55,7 +56,7 @@ require (
 	github.com/tklauser/numcpus v0.4.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
-	golang.org/x/crypto v0.1.0 // indirect
+	golang.org/x/crypto v0.24.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.23.0 // indirect

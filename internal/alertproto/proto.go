@@ -216,6 +216,7 @@ var Alerts = []AlertInfo{
 	{Name: "memory_high", Severity: Warning, Title: "memory high", OKTitle: "memory ok"},
 	{Name: "fds_high", Severity: Warning, Title: "open files high", OKTitle: "open files ok"},
 	{Name: "backup_stale", Severity: Warning, Title: "backup overdue", OKTitle: "backup ok"},
+	{Name: "wallet_backup_missing", Severity: InfoSev, Title: "producer key not backed up", OKTitle: "producer key backed up"},
 	{Name: "rpc_unreachable", Severity: Warning, Title: "node rpc unreachable", OKTitle: "node rpc ok"},
 	{Name: "momentums_stalled", Severity: Critical, Title: "momentums stalled", OKTitle: "momentums advancing again"},
 	{Name: "pillar_missed", Severity: Critical, Title: "pillar missing momentums", OKTitle: "pillar producing again"},

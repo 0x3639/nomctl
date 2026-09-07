@@ -82,7 +82,13 @@ after sending `/start` to the nomctl Telegram bot. Using the Pillar's name as th
 
 ### 7. Back up the key
 
-`wallet/producer` and its password are what lets this node produce. Copy the file somewhere safe together with the password. Chain-data backups (`nomctl backup`) do not include the wallet directory. If both are ever lost, run `sudo nomctl pillar setup` on a fresh node to create a new key and set the new address on the Pillar as in step 3.
+`wallet/producer` and its password are what lets this node produce, and chain-data backups leave both out. Make the encrypted wallet backup and copy it off the machine:
+
+```bash
+sudo nomctl backup wallet
+```
+
+It asks for a passphrase and writes `<backup dir>/wallet/<service>_wallet_<date>.tar.gz.age`, which holds the key file and `config.json` and which the standard `age` tool can open anywhere. Details in [Backups](/guide/backups#wallet-and-config-backup). Enable `sudo nomctl alerts enable wallet_backup_missing` to be reminded if the key ever lacks a backup. If the key and its backup are both lost, run `sudo nomctl pillar setup` on a fresh node to create a new key and set the new address on the Pillar as in step 3.
 
 ## Already running a node?
 

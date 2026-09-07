@@ -60,15 +60,16 @@ MyTonCtrl equivalent: `update`, `upgrade`.
 
 ## v0.4.0
 
-### 4. Wallet and config backup — planned
+### 4. Wallet and config backup — done (v0.13.0)
 
-`nomctl backup --wallet`: a separate small archive of `wallet/` and
-`config.json`, optionally encrypted with a passphrase (age or AES-GCM),
-kept apart from the chain-data archives and never pruned by the retention
-rule. `nomctl restore --wallet` counterpart. The current backup covers chain
-data only, which is replaceable; the wallet is not.
-
-MyTonCtrl equivalent: `create_backup`, `restore_backup`.
+`nomctl backup wallet` archives wallet/* and config.json, encrypted with age
+(scrypt passphrase; the standard age tool opens it), into
+<backup dir>/wallet/ with a .sha256 sidecar, outside the chain-data
+retention rule. `restore wallet FILE` inspects the archive, verifies the
+archived key against the archived config, keeps the current files aside
+and offers a restart. Menu entries under Pillar. `wallet_backup_missing`
+(info, off by default) fires once when a producer key has no backup newer
+than itself.
 
 ### 5. Config editor — done (v0.12.0)
 
