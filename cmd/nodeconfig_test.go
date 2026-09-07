@@ -38,6 +38,16 @@ func TestSetConfigValue(t *testing.T) {
 	if _, err := setConfigValue(dir, "RPC.HttpPort", "1", true); err != nil {
 		t.Errorf("forced unknown key: %v", err)
 	}
+	if _, err := setConfigValue(dir, "Producer.Custom", "x", true); err == nil || !strings.Contains(err.Error(), "pillar setup") {
+		t.Errorf("--force must not enter the Producer section: %v", err)
+	}
+	d, _ = nodeconfig.Load(path)
+	if _, present, _ := d.Get("Producer.Custom"); present {
+		t.Error("reserved key was written despite the refusal")
+	}
+	if v, _, _ := d.Get("Producer.Password"); v != "pw" {
+		t.Errorf("Producer.Password changed: %v", v)
+	}
 	if _, err := setConfigValue(dir, "Net.Seeders", "enode://a,enode://b", false); err != nil {
 		t.Fatal(err)
 	}

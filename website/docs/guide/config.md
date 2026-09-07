@@ -40,7 +40,7 @@ Lists take a comma-separated string or a JSON array. Booleans take `true`/`false
 
 ## Validation
 
-Before anything is written: ports are within 1–65535, peer counts are not negative and `MaxPeers` is not below `MinPeers`, `LogLevel` is one of go-zenon's levels, bind addresses are not empty, every value has the right type, and each section is an object. `set` refuses an unknown key unless `--force`; `edit` refuses a file with unknown keys, since a typo there is exactly what it guards against. `show` lists any unknown keys already in the file.
+Before anything is written: ports are within 1–65535, peer counts are not negative and `MaxPeers` is not below `MinPeers`, `LogLevel` is one of go-zenon's levels, bind addresses are not empty, every value has the right type, and each section is an object. `set` refuses an unknown key by default; `--force` writes it as text, unchecked, for a key nomctl does not know yet. `edit` refuses a file with unknown keys, since a typo there is exactly what it guards against. Neither `set`, `unset` nor `edit` changes the `Producer` section, which belongs to `pillar setup`. `show` lists any unknown keys already in the file.
 
 ## Backups and safety
 

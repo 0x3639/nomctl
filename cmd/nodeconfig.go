@@ -144,8 +144,8 @@ func setConfigValue(znnDir, key, text string, force bool) (backup string, err er
 	s, known := nodeconfig.Lookup(key)
 	var value any
 	switch {
-	case known && s.Reserved != "":
-		return "", fmt.Errorf("%s is managed by: sudo nomctl %s", key, s.Reserved)
+	case nodeconfig.IsReserved(key):
+		return "", fmt.Errorf("%s is managed by: sudo nomctl pillar setup", key)
 	case known:
 		if value, err = nodeconfig.ParseValue(s, text); err != nil {
 			return "", err
@@ -171,8 +171,8 @@ var nodeConfigUnsetCmd = &cobra.Command{
 	Annotations: rootOnly(),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return withLock("config", func() error {
-			if s, ok := nodeconfig.Lookup(args[0]); ok && s.Reserved != "" {
-				return fmt.Errorf("%s is managed by: sudo nomctl %s", args[0], s.Reserved)
+			if nodeconfig.IsReserved(args[0]) {
+				return fmt.Errorf("%s is managed by: sudo nomctl pillar setup", args[0])
 			}
 			path := producer.ConfigPath(cfg.ZnnDir)
 			d, err := nodeconfig.Load(path)

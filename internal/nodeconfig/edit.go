@@ -37,6 +37,9 @@ func Edit(path string, editor Editor, retry Retry, now time.Time) (EditOutcome, 
 	if len(strings.TrimSpace(string(original))) == 0 {
 		original = []byte("{\n}\n")
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return EditAborted, "", err
+	}
 	dir, err := os.MkdirTemp(filepath.Dir(path), ".config-edit-")
 	if err != nil {
 		return EditAborted, "", err
@@ -62,6 +65,9 @@ func Edit(path string, editor Editor, retry Retry, now time.Time) (EditOutcome, 
 			err = ValidateStrict(doc)
 		}
 		if err == nil {
+			err = reservedUnchanged(original, doc)
+		}
+		if err == nil {
 			backup, err := Save(path, doc, now)
 			if err != nil {
 				return EditAborted, "", err
@@ -76,6 +82,31 @@ func Edit(path string, editor Editor, retry Retry, now time.Time) (EditOutcome, 
 			return EditAborted, "", nil
 		}
 	}
+}
+
+// reservedUnchanged refuses an edit that touches the Producer section,
+// which `nomctl pillar setup` manages. Comparing values rather than bytes
+// lets the editor reformat the file freely.
+func reservedUnchanged(original []byte, edited *Document) error {
+	before, err := Parse(original)
+	if err != nil {
+		// The original was not valid JSON; there is nothing to protect.
+		return nil //nolint:nilerr // an unparsable original has no reserved values
+	}
+	keys := map[string]bool{}
+	for _, k := range append(before.Keys(), edited.Keys()...) {
+		if IsReserved(k) {
+			keys[k] = true
+		}
+	}
+	for k := range keys {
+		a, aok, _ := before.Get(k)
+		b, bok, _ := edited.Get(k)
+		if aok != bok || fmt.Sprint(a) != fmt.Sprint(b) {
+			return fmt.Errorf("%s is managed by \"nomctl pillar setup\"; the Producer section cannot be changed here", k)
+		}
+	}
+	return nil
 }
 
 // DefaultEditorCommand is the editor to run when $VISUAL and $EDITOR are
