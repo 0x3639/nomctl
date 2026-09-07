@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/deploy"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/service"
 )
@@ -157,6 +158,20 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// Deploy is the one-step Pillar deployment: build the official go-zenon
+// master, install and start the service, then Setup the producer key. A
+// node that is already deployed is rebuilt from master and restarted; an
+// existing producer configuration is kept (Setup asks when interactive).
+func Deploy(cfg config.Config, opts Options) (Result, error) {
+	if err := deployRun(cfg, deploy.OfficialRepoURL, deploy.OfficialBranch); err != nil {
+		return Result{}, err
+	}
+	return Setup(cfg, opts)
+}
+
+// deployRun is a hook for tests.
+var deployRun = deploy.Run
 
 // NextSteps is the text shown after a successful setup.
 func NextSteps(address string) string {

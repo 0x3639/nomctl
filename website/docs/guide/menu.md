@@ -11,7 +11,8 @@ With no arguments nomctl opens a menu covering every action:
 
 | Entry | Runs |
 |---|---|
-| deploy | [Deploy](/guide/deploy), with repository and branch pickers |
+| pillar-deploy | [Deploy a Pillar](/guide/pillar): build the official go-zenon master, start the node, create the producer key |
+| deploy | [Deploy](/guide/deploy) a plain node, with repository and branch pickers |
 | restart, stop, start | [Service control](/guide/service) |
 | monitor | `logs -f` |
 | status | [`top`](/troubleshooting/first-look), the live dashboard |
@@ -22,7 +23,7 @@ With no arguments nomctl opens a menu covering every action:
 | restore | Restore, with an archive picker |
 | bootstrap | [Bootstrap](/guide/bootstrap), with URL prompt, keep/discard question and confirmation |
 | analytics | [Analytics stack](/guide/analytics) |
-| pillar | [Pillar producer](/guide/pillar) submenu: set up the producer key, show it |
+| pillar | [Pillar](/guide/pillar) submenu: deploy a Pillar, set up the producer key, show it |
 | orchestrator | [Orchestrator](/guide/orchestrator) submenu: hard reset, status, logs |
 
 After each action the menu asks whether to return. Esc or Ctrl+C leaves.

@@ -8,11 +8,11 @@ import (
 
 func TestMenuOptions(t *testing.T) {
 	opts := MenuOptions(config.Default())
-	if len(opts) != 16 || opts[0].Value != "deploy" || opts[5].Value != "status" || opts[6].Value != "alerts" || opts[7].Value != "support" || opts[11].Value != "bootstrap" || opts[13].Value != "pillar" || opts[14].Value != "orchestrator" || opts[15].Value != "exit" {
+	if len(opts) != 17 || opts[0].Value != "pillar-deploy" || opts[1].Value != "deploy" || opts[6].Value != "status" || opts[7].Value != "alerts" || opts[8].Value != "support" || opts[12].Value != "bootstrap" || opts[14].Value != "pillar" || opts[15].Value != "orchestrator" || opts[16].Value != "exit" {
 		t.Errorf("unexpected options: %+v", opts)
 	}
-	if opts[1].Key != "restart → Restart the go-zenon service" {
-		t.Errorf("label = %q", opts[1].Key)
+	if opts[2].Key != "restart → Restart the go-zenon service" {
+		t.Errorf("label = %q", opts[2].Key)
 	}
 }
 

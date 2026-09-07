@@ -50,6 +50,7 @@ const (
 	ActionBootstrap Action = "bootstrap"
 	ActionOrch      Action = "orchestrator"
 	ActionPillar    Action = "pillar"
+	ActionPillarDep Action = "pillar-deploy"
 	ActionAnalytics Action = "analytics"
 	ActionExit      Action = "exit"
 )
@@ -60,6 +61,7 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 		action Action
 		label  string
 	}{
+		{ActionPillarDep, "Deploy a Pillar (go-zenon master + producer key)"},
 		{ActionDeploy, "Set up a Zenon Network node"},
 		{ActionRestart, "Restart the " + cfg.ServiceName + " service"},
 		{ActionStop, "Stop the " + cfg.ServiceName + " service"},
@@ -157,6 +159,8 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return OrchestratorMenu(*cfg)
 	case ActionPillar:
 		return PillarMenu(*cfg)
+	case ActionPillarDep:
+		return withLock("pillar deploy", func() error { return PillarDeploy(*cfg) })
 	case ActionExit:
 		return nil
 	}
@@ -206,9 +210,29 @@ func ProducerPrompts() producer.Prompts {
 	}
 }
 
+// PillarDeploy runs the one-step Pillar deployment and prints the result.
+func PillarDeploy(cfg config.Config) error {
+	ui.Section(os.Stderr, "==== DEPLOY A PILLAR: go-zenon master + producer key ====")
+	res, err := producer.Deploy(cfg, producer.Options{Prompts: ProducerPrompts()})
+	if err != nil {
+		return err
+	}
+	printProducer(res)
+	return nil
+}
+
+func printProducer(res producer.Result) {
+	fmt.Fprintf(os.Stderr, "\nProducer address  %s\nKey file          %s\n", res.Address, res.KeyFile)
+	if res.Password != "" {
+		fmt.Fprintf(os.Stderr, "Password          %s\n                  (also stored in config.json; keep a copy elsewhere)\n", res.Password)
+	}
+	fmt.Fprintln(os.Stderr, "\n"+producer.NextSteps(res.Address))
+}
+
 // PillarMenu shows the producer functions.
 func PillarMenu(cfg config.Config) error {
 	choice, err := Select("Pillar", []huh.Option[string]{
+		huh.NewOption("Deploy a Pillar (go-zenon master + producer key)", "deploy"),
 		huh.NewOption("Set up the producer key (create or configure)", "setup"),
 		huh.NewOption("Show the producer configuration", "status"),
 		huh.NewOption("Back", "back"),
@@ -217,6 +241,8 @@ func PillarMenu(cfg config.Config) error {
 		return err
 	}
 	switch choice {
+	case "deploy":
+		return withLock("pillar deploy", func() error { return PillarDeploy(cfg) })
 	case "setup":
 		var res producer.Result
 		err := withLock("pillar", func() error {
@@ -227,11 +253,7 @@ func PillarMenu(cfg config.Config) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "\nProducer address  %s\nKey file          %s\n", res.Address, res.KeyFile)
-		if res.Password != "" {
-			fmt.Fprintf(os.Stderr, "Password          %s\n                  (also stored in config.json; keep a copy elsewhere)\n", res.Password)
-		}
-		fmt.Fprintln(os.Stderr, "\n"+producer.NextSteps(res.Address))
+		printProducer(res)
 		return nil
 	case "status":
 		pc, err := producer.ReadConfig(producer.ConfigPath(cfg.ZnnDir))

@@ -3,7 +3,15 @@ title: Pillar producer
 description: "Turn a node into a Pillar's producer: nomctl pillar setup creates the producer key, wires it into config.json and prints the address to register."
 ---
 
-A Pillar produces momentums through a node that holds its **producer key**. `nomctl pillar setup` gives this node one, the way znn-controller's Deploy did:
+A Pillar produces momentums through a node that holds its **producer key**. On a fresh machine one command does everything, the way znn-controller's Deploy did:
+
+```bash
+sudo nomctl pillar deploy                # build go-zenon master, start the node, create the producer key
+```
+
+It is also the first entry in the menu, **Deploy a Pillar**. It always builds the official repository, `github.com/zenon-network/go-zenon`, branch `master`, whatever `NOMCTL_REPO_URL` and `NOMCTL_BRANCH_NAME` say; those stay for test nodes deployed with plain `nomctl deploy`. Rerunning it on a deployed node rebuilds from master, restarts, and keeps the existing producer configuration.
+
+On a node that is already running, the producer step alone is:
 
 ```bash
 sudo nomctl pillar setup                 # create or configure, prompts on a terminal
@@ -19,7 +27,7 @@ On a terminal, let `setup` prompt: the answer is not echoed and never lands in s
 
 The menu has the same under **Pillar**.
 
-## What setup does
+## What the producer step does
 
 1. If `config.json` already names a producer whose key file exists, it asks whether to keep it (kept without asking with `--yes`). Nothing is rewritten then.
 2. Otherwise, if `wallet/producer` exists, it asks for that file's password (three attempts, hidden input; `NOMCTL_PRODUCER_PASSWORD` or `--password` in scripts), verifies it by opening the file, and configures the node with the address inside.
