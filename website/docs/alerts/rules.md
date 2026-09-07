@@ -16,7 +16,7 @@ The daemon samples every 30 seconds and keeps 30 minutes of history. Each rule i
 | `pillar_missed` | critical | over the window your pillar's expected momentums grew by `missed` more than its produced count; an epoch rollover restarts the window | `minutes=30 missed=2` |
 | `disk_low` | warning | the data directory's filesystem has less than `min_free_gb` free | `min_free_gb=15` |
 | `memory_high` | warning | znnd's resident memory exceeds `pct` of host memory | `pct=85` |
-| `fds_high` | warning | open files exceed `pct` of the limit (32768) | `pct=80` |
+| `fds_high` | warning | open files exceed `pct` of the limit (32768); the count comes from the root probe timer (see [Pairing](/alerts/pairing#what-runs-on-the-node)) | `pct=80` |
 | `backup_stale` | warning | the backup timer is enabled and the newest archive is older than cadence + 1 day | |
 | `rpc_unreachable` | warning | the service is active but the local RPC's stats calls have not answered for the window; a slow ledger call alone does not count | `minutes=5` |
 | `node_silent` | critical | raised by the relay: no heartbeat from the node for 5 minutes | relay setting |

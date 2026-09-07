@@ -159,7 +159,20 @@ func (c Config) Save(path string) error {
 	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	// Written by root: keep it readable by the daemon's user once that
+	// user exists (see Converge). Before setup has run there is no user
+	// and the file stays root-only.
+	if os.Geteuid() == 0 {
+		if u, err := lookupUser(RunUser); err == nil {
+			if gid, err := strconv.Atoi(u.Gid); err == nil {
+				return SecureConfig(path, gid)
+			}
+		}
+	}
+	return nil
 }
 
 // Paired reports whether the node has relay credentials.

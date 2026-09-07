@@ -104,6 +104,11 @@ func restartAlertsIfRunning() error {
 	if !service.IsActive(alerts.UnitName) {
 		return nil
 	}
+	// A new binary may bring a new unit layout (run user, probe timer):
+	// converge before restarting so the daemon starts under it.
+	if _, err := alerts.Converge(cfg, alerts.DefaultConfigPath); err != nil {
+		return errors.New("nomctl was upgraded but the " + alerts.UnitName + " units could not be updated: " + err.Error())
+	}
 	if err := service.RestartUnit(alerts.UnitName + ".service"); err != nil {
 		return errors.New("nomctl was upgraded but " + alerts.UnitName + " could not be restarted: " + err.Error())
 	}

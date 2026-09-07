@@ -154,3 +154,13 @@ Hard reset ports the script: stop the unit, wait 10 s, delete `queues/` and
 start. Every function refuses on a
 node without the unit. Further orchestrator functions are added to this
 submenu as they are needed.
+
+### 13. Non-root alerts daemon — done (v0.9.0)
+
+The daemon runs as a locked `nomctl` system user with an empty capability
+set, `ProtectSystem=strict` and `ProtectHome=true`. Disk free is measured
+on the data directory's mount point. Per-process open files and I/O, which
+need `CAP_SYS_PTRACE` from another user, come from a root oneshot probe on a
+30-second timer that can only write `/run/nomctl`. `alerts.Converge` runs
+from every root alerts command and from `nomctl upgrade`, so older nodes
+migrate without a manual step.

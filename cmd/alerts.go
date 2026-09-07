@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	neturl "net/url"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"github.com/0x3639/nomctl/internal/alertproto"
 	"github.com/0x3639/nomctl/internal/alerts"
 	"github.com/0x3639/nomctl/internal/backup"
+	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/metrics"
 	"github.com/0x3639/nomctl/internal/node"
@@ -163,11 +165,39 @@ func alertsSetup(cmd *cobra.Command) error {
 	return nil
 }
 
+var alertsProbeCmd = &cobra.Command{
+	Use:   "probe",
+	Short: "Record the node process's open files and I/O for the daemon (used by the systemd timer)",
+	Long: `The alerts daemon runs as the unprivileged "nomctl" user, which cannot
+count another user's open files: that needs CAP_SYS_PTRACE, which would also
+allow reading the node's memory. This root-run oneshot writes those figures
+to ` + metrics.DefaultProbePath + ` every 30 seconds; the daemon reads them
+from there for the fds_high alert.`,
+	Args:        cobra.NoArgs,
+	Annotations: diagnostic(),
+	RunE: func(*cobra.Command, []string) error {
+		props, err := metrics.ReadServiceProps(cfg.ServiceName)
+		if err != nil {
+			return err
+		}
+		if props.MainPID == 0 {
+			// Nothing to record; a stale file would be refused by age anyway.
+			_ = os.Remove(metrics.DefaultProbePath)
+			return nil
+		}
+		p, err := metrics.TakeProbe(metrics.DefaultProcRoot, props.MainPID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		return metrics.WriteProbe(metrics.DefaultProbePath, p)
+	},
+}
+
 var alertsRunCmd = &cobra.Command{
 	Use:         "run",
 	Short:       "Run the alerts daemon in the foreground (used by the systemd unit)",
 	Args:        cobra.NoArgs,
-	Annotations: diagnostic(),
+	Annotations: unprivileged(),
 	RunE: func(*cobra.Command, []string) error {
 		acfg, err := alerts.Load(alerts.DefaultConfigPath)
 		if err != nil {
@@ -185,7 +215,9 @@ var alertsRunCmd = &cobra.Command{
 		if cfg.UpdateCheck {
 			alerts.UpdateChecker = updateChecker
 		}
-		d := alerts.NewDaemon(acfg, alerts.DefaultConfigPath, alerts.DefaultStatePath, metrics.NewSampler(cfg), client)
+		sampler := metrics.NewSampler(cfg)
+		sampler.ProbePath = metrics.DefaultProbePath
+		d := alerts.NewDaemon(acfg, alerts.DefaultConfigPath, alerts.DefaultStatePath, sampler, client)
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -262,7 +294,15 @@ var alertsStatusCmd = &cobra.Command{
 		if service.IsActive(alerts.UnitName) {
 			svc = "active"
 		}
-		fmt.Fprintf(out, "%-10s %s.service %s\n", "Service", alerts.UnitName, svc)
+		runAs := "root (run: sudo nomctl upgrade, or any alerts command, to migrate)"
+		if unit, err := os.ReadFile(alerts.UnitPath); err == nil && strings.Contains(string(unit), "User="+alerts.RunUser) {
+			runAs = alerts.RunUser
+		}
+		probe := "not installed"
+		if service.IsEnabled(alerts.ProbeName + ".timer") {
+			probe = "every 30s"
+		}
+		fmt.Fprintf(out, "%-10s %s.service %s, running as %s; probe timer %s\n", "Service", alerts.UnitName, svc, runAs, probe)
 		st, err := alerts.LoadState(alerts.DefaultStatePath)
 		if err != nil {
 			fmt.Fprintf(out, "%-10s no state file yet (%v)\n", "Daemon", err)
@@ -343,6 +383,7 @@ func alertsToggle(enable bool) func(*cobra.Command, []string) error {
 		if err := acfg.Save(alerts.DefaultConfigPath); err != nil {
 			return err
 		}
+		convergeAlerts()
 		_ = alerts.ReloadDaemon()
 		if enable {
 			logx.Success(args[0] + " enabled")
@@ -384,6 +425,7 @@ var alertsSetCmd = &cobra.Command{
 		if err := acfg.Save(alerts.DefaultConfigPath); err != nil {
 			return err
 		}
+		convergeAlerts()
 		_ = alerts.ReloadDaemon()
 		logx.Success(args[0] + " = " + args[1])
 		return nil
@@ -467,6 +509,18 @@ func init() {
 	alertsSetupCmd.Flags().BoolVar(&flagAlertsAcceptNotice, "accept-privacy-notice", false, "skip the privacy-notice confirmation (it is still printed)")
 	alertsSetupCmd.Flags().StringVar(&flagAlertsRelay, "relay", "", "relay URL (NOMCTL_RELAY_URL; default built in)")
 	alertsUnpairCmd.Flags().BoolVar(&flagAlertsForce, "force", false, "remove local credentials even if the relay cannot be reached")
-	alertsCmd.AddCommand(alertsSetupCmd, alertsRunCmd, alertsStatusCmd, alertsListCmd, alertsEnableCmd, alertsDisableCmd, alertsSetCmd, alertsTestCmd, alertsUnpairCmd)
+	alertsCmd.AddCommand(alertsSetupCmd, alertsRunCmd, alertsProbeCmd, alertsStatusCmd, alertsListCmd, alertsEnableCmd, alertsDisableCmd, alertsSetCmd, alertsTestCmd, alertsUnpairCmd)
 	rootCmd.AddCommand(alertsCmd)
+}
+
+// convergeAlerts migrates an installed daemon to the current unit layout
+// (run user, file modes, probe timer). Failures are logged, not fatal: the
+// command's own work is done by then.
+func convergeAlerts() {
+	if !fsx.Exists(alerts.UnitPath) {
+		return
+	}
+	if _, err := alerts.Converge(cfg, alerts.DefaultConfigPath); err != nil {
+		slog.Warn("alerts units could not be converged: " + err.Error())
+	}
 }

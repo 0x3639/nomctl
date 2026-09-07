@@ -64,6 +64,22 @@ sudo nomctl alerts unpair                 # keeps credentials if the relay is un
 
 Threshold and switch changes reach the running daemon immediately. Duration thresholds are limited to 30 minutes, the amount of history the daemon keeps.
 
+## What runs on the node
+
+Setup installs three systemd units:
+
+| Unit | Runs as | Purpose |
+|---|---|---|
+| `nomctl-alerts.service` | `nomctl`, a locked system user with no capabilities | the daemon: samples the node every 30 s, sends heartbeats and alerts |
+| `nomctl-alerts-probe.service` | root, oneshot, no network | records the node process's open file count and I/O to `/run/nomctl/process-probe.json` |
+| `nomctl-alerts-probe.timer` | | runs the probe every 30 s |
+
+The daemon talks to the internet every 30 seconds from the machine that holds the pillar's wallet, so it does not run as root. It can read the pairing config (`/etc/nomctl/alerts.json`, root-owned, group `nomctl`, mode 0640) and write `/run/nomctl`; `ProtectSystem=strict` and `ProtectHome=true` hide everything else, including the data directory and the wallet. Free disk is measured on the data directory's mount point, which needs no access to the directory itself.
+
+Counting another user's open files needs `CAP_SYS_PTRACE`, which would also allow reading the node process's memory. Rather than grant that to the daemon, the root probe records the count every 30 seconds and the daemon reads the file; that is what feeds `fds_high`. `nomctl alerts status` shows the user the daemon runs as and whether the probe timer is installed.
+
+Nodes set up on releases before 0.9.0 ran the daemon as root. They migrate on their next `sudo nomctl upgrade` or any `nomctl alerts` command: the user is created, file modes fixed, the units rewritten and the daemon restarted, with nothing to do by hand.
+
 ## If something fails during setup
 
 If pairing succeeds but the service cannot be installed, setup undoes the pairing at the relay so you do not get a `node silent` alert for a node that never reported. If even that fails, the credentials are kept and setup tells you to run `nomctl alerts unpair`.

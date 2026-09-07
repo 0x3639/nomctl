@@ -46,6 +46,8 @@ type ProcessSample struct {
 	Threads    int
 	OpenFDs    int
 	FDLimit    uint64
+	// FromProbe marks open files and I/O as read from the root probe.
+	FromProbe  bool `json:",omitempty"`
 	ReadBytes  uint64
 	WriteBytes uint64
 	Cgroup     CgroupStats
@@ -120,7 +122,13 @@ type heightPoint struct {
 
 // Sampler takes Samples and keeps the little state needed for rates.
 type Sampler struct {
-	ProcRoot   string
+	ProcRoot string
+	// ProbePath is the root probe's output, used for the per-process figures
+	// the sampler cannot read from /proc itself (see Probe). Empty disables.
+	ProbePath string
+	// MountInfo is /proc/self/mountinfo; disk free is measured on the mount
+	// holding the data directory, which needs no access to the directory.
+	MountInfo  string
 	CgroupRoot string
 	Node       *node.Client
 	Now        func() time.Time
@@ -147,6 +155,7 @@ func NewSampler(cfg config.Config) *Sampler {
 	return &Sampler{
 		PillarName: cfg.PillarName,
 		ProcRoot:   DefaultProcRoot,
+		MountInfo:  DefaultProcRoot + "/self/mountinfo",
 		CgroupRoot: DefaultCgroupRoot,
 		Node:       node.NewWithTimeout(node.DefaultURL, cfg.RPCTimeout),
 		Now:        time.Now,
@@ -226,11 +235,23 @@ func (s *Sampler) takeProcess(pid int, controlGroup string, now time.Time) Proce
 		}
 		s.prevTicks, s.prevTime, s.prevPID = ticks, now, pid
 	}
+	// Reading another user's io and fd needs CAP_SYS_PTRACE; an
+	// unprivileged daemon gets them from the root probe instead.
 	if pio, err := ReadProcIO(s.ProcRoot, pid); err == nil {
 		p.ReadBytes, p.WriteBytes = pio.ReadBytes, pio.WriteBytes
 	}
 	p.FDLimit, _ = ReadFDLimit(s.ProcRoot, pid)
-	p.OpenFDs, _ = CountFDs(s.ProcRoot, pid)
+	if fds, err := CountFDs(s.ProcRoot, pid); err == nil {
+		p.OpenFDs = fds
+	} else if s.ProbePath != "" {
+		if probe, err := ReadProbe(s.ProbePath, pid, now); err == nil {
+			p.OpenFDs, p.FDLimit = probe.OpenFDs, probe.FDLimit
+			if p.ReadBytes == 0 && p.WriteBytes == 0 {
+				p.ReadBytes, p.WriteBytes = probe.ReadBytes, probe.WriteBytes
+			}
+			p.FromProbe = true
+		}
+	}
 	p.Cgroup = ReadCgroup(s.CgroupRoot, controlGroup)
 	return p
 }
@@ -242,7 +263,7 @@ func (s *Sampler) takeHost() HostSample {
 		h.MemTotal, h.MemAvailable = m.Total, m.Available
 	}
 	h.DataDir = s.dataDir
-	h.DataDirFree, h.DataDirTotal, _ = s.diskFree(s.dataDir)
+	h.DataDirFree, h.DataDirTotal, _ = s.diskFree(MountPoint(s.MountInfo, s.dataDir))
 	h.Pressure = ReadPressure(s.ProcRoot)
 	return h
 }
