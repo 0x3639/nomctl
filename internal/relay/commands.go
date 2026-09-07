@@ -30,7 +30,9 @@ func (s *Server) HandleUpdate(ctx context.Context, u Update) error {
 		return nil
 	}
 	// An incoming message proves the chat can reach the bot; lift any block.
-	s.clearBlocked(ctx, u.ChatID)
+	if err := s.clearBlocked(ctx, u.ChatID); err != nil {
+		return err
+	}
 	fields := strings.Fields(u.Text)
 	cmd := strings.ToLower(fields[0])
 	if i := strings.IndexByte(cmd, '@'); i > 0 { // /start@botname
@@ -154,6 +156,14 @@ func (s *Server) cmdMute(ctx context.Context, chatID int64, args []string) (stri
 			return Escape("Duration must look like 30m, 2h, 1d."), nil
 		}
 	}
+	node, unlock, err := s.lockNode(ctx, node.ID)
+	if errors.Is(err, ErrNotFound) {
+		return Escape(fmt.Sprintf("No node named %q in this chat. See /nodes.", args[0])), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	if err := s.store.SetMute(ctx, Mute{NodeID: node.ID, Alert: alert, Until: s.opts.Now().Add(d)}); err != nil {
 		return "", err
 	}
@@ -175,6 +185,14 @@ func (s *Server) cmdUnmute(ctx context.Context, chatID int64, args []string) (st
 	if !validAlert(alert) {
 		return Escape(fmt.Sprintf("Unknown alert %q. Use one of: %s, or all.", args[1], strings.Join(alertNames(), ", "))), nil
 	}
+	node, unlock, err := s.lockNode(ctx, node.ID)
+	if errors.Is(err, ErrNotFound) {
+		return Escape(fmt.Sprintf("No node named %q in this chat. See /nodes.", args[0])), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	if err := s.store.ClearMute(ctx, node.ID, alert); err != nil {
 		return "", err
 	}
@@ -192,6 +210,14 @@ func (s *Server) cmdUnpair(ctx context.Context, chatID int64, args []string) (st
 	if !ok {
 		return Escape(fmt.Sprintf("No node named %q in this chat. See /nodes.", args[0])), nil
 	}
+	node, unlock, err := s.lockNode(ctx, node.ID)
+	if errors.Is(err, ErrNotFound) {
+		return Escape(fmt.Sprintf("No node named %q in this chat. See /nodes.", args[0])), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	if err := s.store.DeleteNode(ctx, node.ID); err != nil {
 		return "", err
 	}
