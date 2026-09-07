@@ -322,8 +322,8 @@ func TestSummarize(t *testing.T) {
 	s.Node.Version, s.Node.Commit = "v0.0.7", "a1b2c3d"
 	s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Rank: 3, Produced: 10, Expected: 12}
 	s.Service.Since = now.Add(-2 * time.Hour)
-	s.Process.Present, s.Process.CPUPercent, s.Process.RSS = true, 45, 1 << 30
-	s.Host.Load1, s.Host.MemAvailable, s.Host.MemTotal, s.Host.DataDirFree, s.Host.DataDirTotal = 1.5, 1 << 30, 4 << 30, 100 << 30, 400 << 30
+	s.Process.Present, s.Process.CPUPercent, s.Process.RSS = true, 45, 1<<30
+	s.Host.Load1, s.Host.MemAvailable, s.Host.MemTotal, s.Host.DataDirFree, s.Host.DataDirTotal = 1.5, 1<<30, 4<<30, 100<<30, 400<<30
 	old := NewerVersion
 	NewerVersion = func(latest, running string) bool { return latest == "v9" }
 	defer func() { NewerVersion = old }()
