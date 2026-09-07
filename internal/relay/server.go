@@ -53,6 +53,8 @@ type Server struct {
 	tg    Sender
 	opts  Options
 
+	nodeOps nodeLocks
+
 	nodeLimit  *rateLimiter
 	admitLimit *rateLimiter
 	pairLimit  *rateLimiter
@@ -246,6 +248,12 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	node := Node{ID: newNodeID(), ChatID: chatID, Name: req.Name, Host: req.Host, Version: req.Version, Secret: newSecret(), Created: now, LastSeen: now}
+	unlock, err := s.nodeOps.lock(ctx, node.ID)
+	if err != nil {
+		writeError(w, http.StatusRequestTimeout, "request canceled")
+		return
+	}
+	defer unlock()
 	if err := s.store.CreateNode(ctx, node); err != nil {
 		if errors.Is(err, ErrNameTaken) {
 			writeError(w, http.StatusConflict, fmt.Sprintf("a node named %q is already paired to this chat; choose another name (the code was consumed, send /start again)", req.Name))
@@ -255,14 +263,15 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("node paired", "node", node.ID, "name", node.Name, "chat", chatID)
-	_ = s.notify(ctx, node, fmt.Sprintf("ℹ️ %s paired and reporting from host %s\\.", Bold(node.Name), Code(node.Host)))
+	_ = s.notifyLocked(ctx, &node, fmt.Sprintf("ℹ️ %s paired and reporting from host %s\\.", Bold(node.Name), Code(node.Host)))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(alertproto.PairResponse{NodeID: node.ID, Secret: base64.StdEncoding.EncodeToString(node.Secret), RelayVersion: Version})
 }
 
 // --- authenticated node requests ------------------------------------------
 
-type nodeHandler func(w http.ResponseWriter, r *http.Request, node Node, body []byte)
+// nodeHandler runs with the node lock held and shares the current node state.
+type nodeHandler func(w http.ResponseWriter, r *http.Request, node *Node, body []byte)
 
 func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -306,6 +315,22 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 			writeError(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
+		// Authenticate before allocating a lock, then reread under that lock
+		// so a concurrent heartbeat, command or silent check cannot be lost.
+		node, unlock, err := s.lockNode(ctx, id)
+		if errors.Is(err, ErrNotFound) {
+			writeError(w, http.StatusUnauthorized, alertproto.UnknownNodeMessage)
+			return
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				writeError(w, http.StatusRequestTimeout, "request canceled")
+			} else {
+				writeError(w, http.StatusInternalServerError, "store error")
+			}
+			return
+		}
+		defer unlock()
 		now := s.opts.Now()
 		wasSilent := node.Silent
 		node.LastSeen = now
@@ -316,17 +341,17 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 		}
 		if wasSilent {
 			info, _ := alertproto.Lookup("node_silent")
-			if err := s.deliver(ctx, node, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.OK, Severity: info.Severity, Title: info.OKTitle, At: now}); err != nil {
+			if err := s.deliverLocked(ctx, &node, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.OK, Severity: info.Severity, Title: info.OKTitle, At: now}); err != nil {
 				// Leave it flagged so the recovery is retried on the next request.
 				node.Silent = true
 				_ = s.store.UpdateNode(ctx, node)
 			}
 		}
-		h(w, r, node, body)
+		h(w, r, &node, body)
 	}
 }
 
-func (s *Server) handleAlert(w http.ResponseWriter, r *http.Request, node Node, body []byte) {
+func (s *Server) handleAlert(w http.ResponseWriter, r *http.Request, node *Node, body []byte) {
 	var req alertproto.AlertRequest
 	if err := json.Unmarshal(body, &req); err != nil || !alertproto.ValidAlert(req) {
 		writeError(w, http.StatusBadRequest, "bad alert")
@@ -337,7 +362,7 @@ func (s *Server) handleAlert(w http.ResponseWriter, r *http.Request, node Node, 
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer cancel()
-	if err := s.deliver(ctx, node, req); err != nil {
+	if err := s.deliverLocked(ctx, node, req); err != nil {
 		// Tell the node so it retries on its next sample. The cause stays in
 		// the relay log: transport errors are internal detail.
 		slog.Warn("alert delivery failed", "node", node.ID, "alert", req.Alert, "err", err)
@@ -347,27 +372,27 @@ func (s *Server) handleAlert(w http.ResponseWriter, r *http.Request, node Node, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, node Node, body []byte) {
+func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, node *Node, body []byte) {
 	var req alertproto.HeartbeatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad heartbeat")
 		return
 	}
 	node.Summary = req.Summary
-	if err := s.store.UpdateNode(r.Context(), node); err != nil {
+	if err := s.store.UpdateNode(r.Context(), *node); err != nil {
 		writeError(w, http.StatusInternalServerError, "store error")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleUnpair(w http.ResponseWriter, r *http.Request, node Node, _ []byte) {
+func (s *Server) handleUnpair(w http.ResponseWriter, r *http.Request, node *Node, _ []byte) {
 	if err := s.store.DeleteNode(r.Context(), node.ID); err != nil && !errors.Is(err, ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "store error")
 		return
 	}
 	slog.Info("node unpaired", "node", node.ID, "name", node.Name)
-	_ = s.notify(r.Context(), node, fmt.Sprintf("ℹ️ %s unpaired\\.", Bold(node.Name)))
+	_ = s.notifyLocked(r.Context(), node, fmt.Sprintf("ℹ️ %s unpaired\\.", Bold(node.Name)))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -379,9 +404,20 @@ func (s *Server) handleUnpair(w http.ResponseWriter, r *http.Request, node Node,
 // the next transition or reminder. It returns an error only for a failed
 // send; suppressed or muted deliveries return nil.
 func (s *Server) deliver(ctx context.Context, node Node, a alertproto.AlertRequest) error {
+	current, unlock, err := s.lockNode(ctx, node.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.deliverLocked(ctx, &current, a)
+}
+
+// deliverLocked requires the node lock. Sharing the current node with notify
+// preserves a newly observed Blocked flag in any subsequent update.
+func (s *Server) deliverLocked(ctx context.Context, node *Node, a alertproto.AlertRequest) error {
 	now := s.opts.Now()
 	if a.State == alertproto.Info {
-		return s.notify(ctx, node, FormatMessage(node, a))
+		return s.notifyLocked(ctx, node, FormatMessage(*node, a))
 	}
 	lastState, lastAt, err := s.store.LastSent(ctx, node.ID, a.Alert)
 	if err != nil {
@@ -401,7 +437,7 @@ func (s *Server) deliver(ctx context.Context, node Node, a alertproto.AlertReque
 		return fmt.Errorf("mute lookup: %w", err)
 	}
 	if !muted {
-		if err := s.notify(ctx, node, FormatMessage(node, a)); err != nil {
+		if err := s.notifyLocked(ctx, node, FormatMessage(*node, a)); err != nil {
 			return err
 		}
 	}
@@ -413,8 +449,8 @@ func (s *Server) deliver(ctx context.Context, node Node, a alertproto.AlertReque
 	return nil
 }
 
-// notify sends text to the node's chat, applying the per-chat rate limit.
-func (s *Server) notify(ctx context.Context, node Node, text string) error {
+// notifyLocked sends text with the node lock held, applying the per-chat limit.
+func (s *Server) notifyLocked(ctx context.Context, node *Node, text string) error {
 	if node.Blocked {
 		return ErrBlocked
 	}
@@ -437,10 +473,14 @@ func (s *Server) notify(ctx context.Context, node Node, text string) error {
 		}
 		return errors.New("chat rate limited")
 	}
-	err := s.tg.Send(ctx, node.ChatID, text)
+	// Delivery holds the node lock. Bound every send, including ticker and
+	// pairing sends whose parent context may otherwise have no deadline.
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	err := s.tg.Send(sendCtx, node.ChatID, text)
 	if errors.Is(err, ErrBlocked) {
 		node.Blocked = true
-		_ = s.store.UpdateNode(ctx, node)
+		_ = s.store.UpdateNode(ctx, *node)
 		slog.Warn("chat blocked the bot", "chat", node.ChatID, "node", node.Name)
 	} else if err != nil {
 		slog.Error("telegram send failed", "err", err, "node", node.Name)
@@ -450,17 +490,33 @@ func (s *Server) notify(ctx context.Context, node Node, text string) error {
 
 // clearBlocked resets the blocked flag on every node of a chat; called
 // when the chat proves it can talk to the bot again.
-func (s *Server) clearBlocked(ctx context.Context, chatID int64) {
+func (s *Server) clearBlocked(ctx context.Context, chatID int64) error {
 	nodes, err := s.store.ListNodes(ctx, chatID)
 	if err != nil {
-		return
+		return err
 	}
-	for _, n := range nodes {
-		if n.Blocked {
-			n.Blocked = false
-			_ = s.store.UpdateNode(ctx, n)
+	for _, candidate := range nodes {
+		if err := s.clearNodeBlocked(ctx, candidate.ID, chatID); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func (s *Server) clearNodeBlocked(ctx context.Context, id string, chatID int64) error {
+	node, unlock, err := s.lockNode(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if node.ChatID == chatID && node.Blocked {
+		node.Blocked = false
+		return s.store.UpdateNode(ctx, node)
+	}
+	return nil
 }
 
 // FormatMessage renders an alert for Telegram (MarkdownV2).
@@ -492,20 +548,36 @@ func (s *Server) CheckSilent(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	info, _ := alertproto.Lookup("node_silent")
-	for _, n := range nodes {
-		err := s.deliver(ctx, n, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.Firing, Severity: info.Severity, Title: info.Title,
-			Detail: fmt.Sprintf("no heartbeat for %s (last seen %s)", now.Sub(n.LastSeen).Round(time.Second), n.LastSeen.UTC().Format("15:04:05 UTC")), At: now})
-		if err != nil {
-			slog.Warn("node_silent delivery failed; will retry", "node", n.Name, "err", err)
-			continue // stays a candidate for the next tick
-		}
-		n.Silent = true
-		if err := s.store.UpdateNode(ctx, n); err != nil {
-			slog.Error("mark silent failed", "node", n.Name, "err", err)
+	for _, candidate := range nodes {
+		if err := s.checkSilentNode(ctx, candidate.ID, now); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (s *Server) checkSilentNode(ctx context.Context, id string, now time.Time) error {
+	node, unlock, err := s.lockNode(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// A heartbeat or another tick may have handled this snapshot already.
+	if node.Silent || !node.LastSeen.Before(now.Add(-s.opts.SilentAfter)) {
+		return nil
+	}
+	info, _ := alertproto.Lookup("node_silent")
+	err = s.deliverLocked(ctx, &node, alertproto.AlertRequest{Alert: "node_silent", State: alertproto.Firing, Severity: info.Severity, Title: info.Title,
+		Detail: fmt.Sprintf("no heartbeat for %s (last seen %s)", now.Sub(node.LastSeen).Round(time.Second), node.LastSeen.UTC().Format("15:04:05 UTC")), At: now})
+	if err != nil {
+		slog.Warn("node_silent delivery failed; will retry", "node", node.Name, "err", err)
+		return nil // stays a candidate for the next tick
+	}
+	node.Silent = true
+	return s.store.UpdateNode(ctx, node)
 }
 
 // RunSilentTicker calls CheckSilent every interval until ctx is done.
