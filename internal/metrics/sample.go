@@ -233,7 +233,9 @@ func (s *Sampler) takeProcess(pid int, controlGroup string, now time.Time) Proce
 	}
 	p.Present = true
 	p.RSS, p.VmSwap, p.VmPeak, p.Threads = st.VmRSS, st.VmSwap, st.VmPeak, st.Threads
+	var startTime uint64
 	if stat, err := ReadProcStat(s.ProcRoot, pid); err == nil {
+		startTime = stat.StartTime
 		ticks := stat.UTime + stat.STime
 		if s.prevPID == pid && !s.prevTime.IsZero() && now.After(s.prevTime) && ticks >= s.prevTicks {
 			secs := now.Sub(s.prevTime).Seconds()
@@ -249,7 +251,7 @@ func (s *Sampler) takeProcess(pid int, controlGroup string, now time.Time) Proce
 	p.FDLimit, _ = ReadFDLimit(s.ProcRoot, pid)
 	if fds, err := CountFDs(s.ProcRoot, pid); err == nil {
 		p.OpenFDs = fds
-	} else if probe, ok := s.probe(now); ok && probe.ForPID(pid) {
+	} else if probe, ok := s.probe(now); ok && probe.ForProcess(pid, startTime) {
 		p.OpenFDs, p.FDLimit = probe.OpenFDs, probe.FDLimit
 		if p.ReadBytes == 0 && p.WriteBytes == 0 {
 			p.ReadBytes, p.WriteBytes = probe.ReadBytes, probe.WriteBytes
@@ -272,7 +274,7 @@ func (s *Sampler) takeHost(now time.Time) HostSample {
 	// data disk mounted under /root), the root probe supplies the figures.
 	free, total, err := s.diskFree(MountPoint(s.MountInfo, s.dataDir))
 	if err != nil || total == 0 {
-		if probe, ok := s.probe(now); ok && probe.DiskTotal > 0 {
+		if probe, ok := s.probe(now); ok && probe.DiskOK {
 			free, total = probe.DiskFree, probe.DiskTotal
 		}
 	}

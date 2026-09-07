@@ -75,9 +75,12 @@ func kbField(s string) uint64 {
 type ProcStat struct {
 	UTime uint64
 	STime uint64
+	// StartTime is field 22: clock ticks after boot when the process
+	// started. With the pid it identifies one process instance.
+	StartTime uint64
 }
 
-// ReadProcStat parses fields 14 and 15 of /proc/<pid>/stat.
+// ReadProcStat parses fields 14, 15 and 22 of /proc/<pid>/stat.
 func ReadProcStat(root string, pid int) (ProcStat, error) {
 	data, err := os.ReadFile(pidPath(root, pid, "stat"))
 	if err != nil {
@@ -91,12 +94,13 @@ func ReadProcStat(root string, pid int) (ProcStat, error) {
 	}
 	fields := strings.Fields(s[i+1:])
 	// fields[0] is state (field 3); utime is field 14 -> index 11.
-	if len(fields) < 13 {
+	if len(fields) < 20 {
 		return ProcStat{}, errors.New("malformed stat")
 	}
 	u, _ := strconv.ParseUint(fields[11], 10, 64)
 	st, _ := strconv.ParseUint(fields[12], 10, 64)
-	return ProcStat{UTime: u, STime: st}, nil
+	start, _ := strconv.ParseUint(fields[19], 10, 64) // field 22 -> index 19
+	return ProcStat{UTime: u, STime: st, StartTime: start}, nil
 }
 
 // ProcIO is the storage part of /proc/<pid>/io.

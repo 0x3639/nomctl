@@ -12,14 +12,20 @@ import (
 // the per-process figures that reading another user's /proc requires
 // CAP_SYS_PTRACE for. The unprivileged daemon reads this file instead.
 type Probe struct {
-	At         time.Time `json:"at"`
-	PID        int       `json:"pid"` // 0 when the node process is not running
-	OpenFDs    int       `json:"open_fds"`
-	FDLimit    uint64    `json:"fd_limit"`
-	ReadBytes  uint64    `json:"read_bytes"`
-	WriteBytes uint64    `json:"write_bytes"`
+	At  time.Time `json:"at"`
+	PID int       `json:"pid"` // 0 when the node process is not running
+	// StartTime is the process's start (clock ticks after boot) so a pid
+	// reused within ProbeMaxAge is not mistaken for the same process.
+	StartTime  uint64 `json:"start_time"`
+	OpenFDs    int    `json:"open_fds"`
+	FDLimit    uint64 `json:"fd_limit"`
+	ReadBytes  uint64 `json:"read_bytes"`
+	WriteBytes uint64 `json:"write_bytes"`
 	// Disk free/total of the data directory in bytes, for a data directory
-	// on a mount the daemon cannot see (ProtectHome hides /root).
+	// on a mount the daemon cannot see (ProtectHome hides /root). DiskOK
+	// is false when the measurement failed; consumers must ignore the
+	// figures then.
+	DiskOK    bool   `json:"disk_ok"`
 	DiskFree  uint64 `json:"disk_free"`
 	DiskTotal uint64 `json:"disk_total"`
 }
@@ -35,9 +41,14 @@ const ProbeMaxAge = 2 * time.Minute
 // /proc and the disk figures for dataDir.
 func TakeProbe(procRoot string, pid int, dataDir string, now time.Time) (Probe, error) {
 	p := Probe{At: now, PID: pid}
-	p.DiskFree, p.DiskTotal, _ = diskFree(dataDir)
+	if free, total, err := diskFree(dataDir); err == nil && total > 0 {
+		p.DiskOK, p.DiskFree, p.DiskTotal = true, free, total
+	}
 	if pid == 0 {
 		return p, nil
+	}
+	if st, err := ReadProcStat(procRoot, pid); err == nil {
+		p.StartTime = st.StartTime
 	}
 	fds, err := CountFDs(procRoot, pid)
 	if err != nil {
@@ -102,5 +113,8 @@ func ReadProbe(path string, now time.Time) (Probe, error) {
 	return p, nil
 }
 
-// ForPID reports whether the probe's process fields describe pid.
-func (p Probe) ForPID(pid int) bool { return pid != 0 && p.PID == pid }
+// ForProcess reports whether the probe's process fields describe the
+// process instance (pid, start time).
+func (p Probe) ForProcess(pid int, startTime uint64) bool {
+	return pid != 0 && p.PID == pid && p.StartTime == startTime
+}
