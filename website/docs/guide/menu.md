@@ -22,6 +22,7 @@ With no arguments nomctl opens a menu covering every action:
 | restore | Restore, with an archive picker |
 | bootstrap | [Bootstrap](/guide/bootstrap), with URL prompt, keep/discard question and confirmation |
 | analytics | [Analytics stack](/guide/analytics) |
+| pillar | [Pillar producer](/guide/pillar) submenu: set up the producer key, show it |
 | orchestrator | [Orchestrator](/guide/orchestrator) submenu: hard reset, status, logs |
 
 After each action the menu asks whether to return. Esc or Ctrl+C leaves.

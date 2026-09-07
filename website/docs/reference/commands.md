@@ -27,6 +27,13 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl analytics install` | [Analytics stack](/guide/analytics) |
 | `nomctl upgrade [--check] [--version TAG] [--rollback]` | [Upgrading](/guide/upgrading) |
 
+## Pillar
+
+| Command | Notes |
+|---|---|
+| `nomctl pillar setup [--yes] [--password P]` (or `NOMCTL_PRODUCER_PASSWORD`) | [Pillar producer](/guide/pillar): create or configure the producer key, write `config.json`, restart the node |
+| `nomctl pillar status [--show-password]` | producer address, key file, which Pillar uses it |
+
 ## Orchestrator
 
 | Command | Notes |

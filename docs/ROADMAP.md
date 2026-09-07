@@ -166,3 +166,11 @@ figures for a data directory on a mount the daemon cannot see.
 `alerts.Converge` runs from `alerts setup|enable|disable|set` and from
 `nomctl upgrade` whenever the daemon unit is installed, so older nodes
 migrate without a manual step.
+
+### 14. Pillar producer — done (v0.10.0)
+
+`nomctl pillar setup|status` and a Pillar submenu. Creates
+`wallet/producer` with go-zenon's `wallet` package (imported cgo-free) and a
+generated password, or configures an existing key after verifying its
+password, writes the `Producer` section of `config.json` (backup kept) and
+restarts the node. Prints the address to register as the Pillar's producer.
