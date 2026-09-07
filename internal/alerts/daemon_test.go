@@ -313,3 +313,45 @@ func TestInfoAlertResendsWhenDetailChanges(t *testing.T) {
 		t.Fatalf("expected two announcements (one per release), got %d: %v", count, relay.names())
 	}
 }
+
+func TestSummarize(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	s := healthy(now)
+	s.Node.TargetHeight, s.Node.MomentumsPerSec, s.Node.ETA, s.Node.ETAKnown = 2000, 6.2, 90*time.Second, true
+	s.Node.FrontierKnown, s.Node.FrontierHeight, s.Node.FrontierAge = true, 999, 3*time.Second
+	s.Node.Version, s.Node.Commit = "v0.0.7", "a1b2c3d"
+	s.Node.Pillar = metrics.PillarSample{Configured: true, Found: true, Name: "P", Rank: 3, Produced: 10, Expected: 12}
+	s.Service.Since = now.Add(-2 * time.Hour)
+	s.Process.Present, s.Process.CPUPercent, s.Process.RSS = true, 45, 1 << 30
+	s.Host.Load1, s.Host.MemAvailable, s.Host.MemTotal, s.Host.DataDirFree, s.Host.DataDirTotal = 1.5, 1 << 30, 4 << 30, 100 << 30, 400 << 30
+	old := NewerVersion
+	NewerVersion = func(latest, running string) bool { return latest == "v9" }
+	defer func() { NewerVersion = old }()
+	sum := Summarize(s, now, "0.7.1", UpdateInfo{NomctlLatest: "v9", NomctlRunning: "0.7.1", NodeBehind: true})
+	if sum.State != "synced" || sum.TargetHeight != 2000 || sum.MomentumRate != 6.2 || sum.ETASeconds != 90 {
+		t.Errorf("sync: %+v", sum)
+	}
+	if sum.Frontier != 999 || sum.FrontierAgeSeconds != 3 || sum.LedgerBusy || sum.UptimeSeconds != 7200 {
+		t.Errorf("frontier/uptime: %+v", sum)
+	}
+	if sum.NodeVersion != "v0.0.7" || sum.NomctlVersion != "0.7.1" || sum.PillarName != "P" || sum.PillarRank != 3 || sum.PillarProduced != 10 {
+		t.Errorf("versions/pillar: %+v", sum)
+	}
+	if sum.CPUPercent != 45 || sum.RSS != 1<<30 || sum.Load1 != 1.5 || sum.DiskFree != 100<<30 || sum.MemTotal != 4<<30 {
+		t.Errorf("host/process: %+v", sum)
+	}
+	if sum.NomctlUpdate != "v9" || !sum.NodeUpdate {
+		t.Errorf("update: %+v", sum)
+	}
+	// Busy ledger, pillar missing, service down.
+	s.Node.FrontierKnown = false
+	s.Node.Pillar = metrics.PillarSample{Configured: true, Name: "P", Error: "not found in the pillar list"}
+	sum = Summarize(s, now, "0.7.1", UpdateInfo{})
+	if !sum.LedgerBusy || sum.Frontier != 0 || sum.PillarError == "" || sum.NomctlUpdate != "" {
+		t.Errorf("busy/pillar error: %+v", sum)
+	}
+	s.Service.ActiveState = "failed"
+	if got := Summarize(s, now, "0.7.1", UpdateInfo{}).State; got != "service failed" {
+		t.Errorf("state = %q", got)
+	}
+}

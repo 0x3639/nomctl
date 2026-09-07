@@ -66,12 +66,44 @@ type AlertRequest struct {
 	At       time.Time `json:"at"`
 }
 
-// Summary is the small node status shown by the /nodes command.
+// Summary is the node status shown by the /nodes command. The first four
+// fields are what nodes before v0.8.0 send; everything else is optional and
+// rendered only when present, so old and new nodes share one relay.
 type Summary struct {
 	State    string `json:"state"`
 	Height   uint64 `json:"height"`
 	Peers    int    `json:"peers"`
 	Restarts int    `json:"restarts"`
+
+	TargetHeight uint64  `json:"target_height,omitempty"`
+	MomentumRate float64 `json:"momentum_rate,omitempty"` // momentums per second
+	ETASeconds   int64   `json:"eta_seconds,omitempty"`
+	// Frontier is the newest momentum; FrontierAgeSeconds how old it is.
+	// LedgerBusy is set instead when the ledger call did not answer.
+	Frontier           uint64 `json:"frontier,omitempty"`
+	FrontierAgeSeconds int64  `json:"frontier_age_seconds,omitempty"`
+	LedgerBusy         bool   `json:"ledger_busy,omitempty"`
+	UptimeSeconds      int64  `json:"uptime_seconds,omitempty"`
+
+	NodeVersion   string `json:"node_version,omitempty"`
+	NodeCommit    string `json:"node_commit,omitempty"`
+	NomctlVersion string `json:"nomctl_version,omitempty"`
+
+	PillarName     string `json:"pillar_name,omitempty"`
+	PillarRank     int    `json:"pillar_rank,omitempty"`
+	PillarProduced uint64 `json:"pillar_produced,omitempty"`
+	PillarExpected uint64 `json:"pillar_expected,omitempty"`
+	PillarError    string `json:"pillar_error,omitempty"`
+
+	Load1        float64 `json:"load1,omitempty"`
+	MemFree      uint64  `json:"mem_free,omitempty"` // bytes available
+	MemTotal     uint64  `json:"mem_total,omitempty"`
+	DiskFree     uint64  `json:"disk_free,omitempty"` // bytes, data directory
+	DiskTotal    uint64  `json:"disk_total,omitempty"`
+	CPUPercent   float64 `json:"cpu_percent,omitempty"`
+	RSS          uint64  `json:"rss,omitempty"`
+	NomctlUpdate string  `json:"nomctl_update,omitempty"` // newer release tag
+	NodeUpdate   bool    `json:"node_update,omitempty"`   // branch has new commits
 }
 
 // HeartbeatRequest is sent on every sampling iteration.

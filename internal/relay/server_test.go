@@ -289,7 +289,7 @@ func TestSilentDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgs = h.sender.forChat(1)
-	if last := msgs[len(msgs)-1]; !strings.Contains(last, "height 9") || strings.Contains(last, "silent") {
+	if last := msgs[len(msgs)-1]; !strings.Contains(last, "synced 9") || strings.Contains(last, "silent") {
 		t.Errorf("/nodes after recovery: %q", last)
 	}
 }
