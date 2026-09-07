@@ -35,8 +35,11 @@ func TestProbeRoundTrip(t *testing.T) {
 	if err != nil || got != p {
 		t.Fatalf("read = %+v, %v", got, err)
 	}
-	if got.ForProcess(999, 12345) || !got.ForProcess(1234, 12345) || got.ForProcess(0, 12345) || got.ForProcess(1234, 99) {
-		t.Error("ForProcess must match pid and start time")
+	if got.ForProcess(999, 12345) || !got.ForProcess(1234, 12345) || got.ForProcess(0, 12345) || got.ForProcess(1234, 99) || got.ForProcess(1234, 0) {
+		t.Error("ForProcess must match pid and a known start time")
+	}
+	if (Probe{PID: 1234}).ForProcess(1234, 0) {
+		t.Error("two unknown start times must not match")
 	}
 	if _, err := ReadProbe(path, now.Add(ProbeMaxAge+time.Second)); err == nil {
 		t.Error("stale probe accepted")

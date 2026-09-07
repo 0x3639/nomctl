@@ -115,6 +115,8 @@ func ReadProbe(path string, now time.Time) (Probe, error) {
 
 // ForProcess reports whether the probe's process fields describe the
 // process instance (pid, start time).
+// An unknown start time (0) on either side never matches: identity must be
+// verified, not assumed.
 func (p Probe) ForProcess(pid int, startTime uint64) bool {
-	return pid != 0 && p.PID == pid && p.StartTime == startTime
+	return pid != 0 && startTime != 0 && p.PID == pid && p.StartTime == startTime
 }
