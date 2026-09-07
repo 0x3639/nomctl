@@ -140,6 +140,51 @@ func (c *Cmd) Output() (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
+// OutputLimited captures at most maxBytes from the start of stdout and stderr.
+// Captured output is never copied to the global log sink. A context bounds the
+// process lifetime; WaitDelay also bounds pipes left open by child processes.
+func (c *Cmd) OutputLimited(maxBytes int) (string, error) {
+	if maxBytes <= 0 {
+		return "", errors.New("output limit must be positive")
+	}
+	cmd := c.build()
+	cmd.WaitDelay = 2 * time.Second
+	outbuf := &limitedBuffer{max: maxBytes}
+	cmd.Stdout, cmd.Stderr = outbuf, outbuf
+	err := cmd.Run()
+	out := string(outbuf.buf)
+	if outbuf.truncated {
+		// Drop the partial final record before a caller redacts it.
+		if i := strings.LastIndexByte(out, '\n'); i >= 0 {
+			out = out[:i+1]
+		} else {
+			out = ""
+		}
+		out += "[output truncated]\n"
+	}
+	if err != nil {
+		return out, &Error{Cmd: c.String(), Err: err}
+	}
+	return out, nil
+}
+
+type limitedBuffer struct {
+	buf       []byte
+	max       int
+	truncated bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := b.max - len(b.buf)
+	if len(p) > remaining {
+		p = p[:remaining]
+		b.truncated = true
+	}
+	b.buf = append(b.buf, p...)
+	return n, nil
+}
+
 // Interactive runs the command attached to the terminal's stdin/stdout/stderr.
 func (c *Cmd) Interactive() error {
 	cmd := c.build()

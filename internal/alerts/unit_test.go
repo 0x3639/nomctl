@@ -45,7 +45,7 @@ func TestUnitIsUnprivilegedAndHardened(t *testing.T) {
 		t.Error("the daemon must not get ptrace")
 	}
 	p := ProbeText("/usr/local/bin/nomctl", config.Default())
-	for _, want := range []string{"Type=oneshot", "ExecStart=/usr/local/bin/nomctl alerts probe", "PrivateNetwork=true", "ReadWritePaths=/run/nomctl", "ProtectHome=read-only", `Environment="NOMCTL_ZNN_DIR=`} {
+	for _, want := range []string{"Type=oneshot", "ExecStart=/usr/local/bin/nomctl alerts probe", "PrivateNetwork=true", "RuntimeDirectory=nomctl-system", "ReadWritePaths=/run/nomctl-system", "ProtectHome=read-only", `Environment="NOMCTL_ZNN_DIR=`} {
 		if !strings.Contains(p, want) {
 			t.Errorf("probe unit missing %q", want)
 		}
@@ -86,13 +86,14 @@ func TestEnsureUserCreatesOnce(t *testing.T) {
 }
 
 func TestSecureConfigAndRuntimeDir(t *testing.T) {
-	oldChown := chown
-	defer func() { chown = oldChown }()
+	oldChown, oldChownFile := chown, chownFile
+	defer func() { chown, chownFile = oldChown, oldChownFile }()
 	var chowns []string
 	chown = func(path string, uid, gid int) error {
 		chowns = append(chowns, fmt.Sprintf("%s %d:%d", filepath.Base(path), uid, gid))
 		return nil
 	}
+	chownFile = func(f *os.File, uid, gid int) error { return chown(f.Name(), uid, gid) }
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "alerts.json")
 	if err := os.WriteFile(cfgPath, []byte("{}"), 0o600); err != nil {
@@ -114,8 +115,39 @@ func TestSecureConfigAndRuntimeDir(t *testing.T) {
 	if err := SecureRuntimeDir(run, 998, 997); err != nil {
 		t.Fatal(err)
 	}
-	want := "alerts.json 0:997,run 998:997,alerts-state.json 998:997"
+	want := "alerts.json 0:997,run 998:997"
 	if got := strings.Join(chowns, ","); got != want {
 		t.Errorf("chowns = %s, want %s", got, want)
+	}
+}
+
+func TestSecureRuntimeDirDoesNotVisitExistingFiles(t *testing.T) {
+	oldChownFile := chownFile
+	defer func() { chownFile = oldChownFile }()
+	calls := 0
+	chownFile = func(f *os.File, uid, gid int) error { calls++; return nil }
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "example.json")
+	if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, filepath.Base(DefaultStatePath))); err != nil {
+		t.Fatal(err)
+	}
+	if err := SecureRuntimeDir(dir, os.Getuid(), os.Getgid()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected only directory ownership call, got %d", calls)
+	}
+	link := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := SecureRuntimeDir(link, os.Getuid(), os.Getgid()); err == nil {
+		t.Fatal("linked runtime directory accepted")
+	}
+	if calls != 1 {
+		t.Fatal("linked directory ownership was changed")
 	}
 }

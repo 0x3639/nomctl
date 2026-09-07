@@ -167,7 +167,6 @@ func NewSampler(cfg config.Config) *Sampler {
 		ClockTicks: 100,
 		unit:       cfg.ServiceName,
 		dataDir:    cfg.ZnnDir,
-		readProps:  ReadServiceProps,
 		diskFree:   diskFree,
 	}
 }
@@ -190,7 +189,7 @@ func (s *Sampler) Take(ctx context.Context) Sample {
 	now := s.Now()
 	s.probeLoaded = false
 	smp := Sample{Taken: now}
-	smp.Service = s.takeService()
+	smp.Service = s.takeService(ctx)
 	if smp.Service.MainPID > 0 {
 		smp.Process = s.takeProcess(smp.Service.MainPID, smp.Service.controlGroup, now)
 	} else {
@@ -201,9 +200,15 @@ func (s *Sampler) Take(ctx context.Context) Sample {
 	return smp
 }
 
-func (s *Sampler) takeService() ServiceSample {
+func (s *Sampler) takeService(ctx context.Context) ServiceSample {
 	out := ServiceSample{Unit: s.unit}
-	props, err := s.readProps(s.unit)
+	var props ServiceProps
+	var err error
+	if s.readProps != nil {
+		props, err = s.readProps(s.unit)
+	} else {
+		props, err = ReadServicePropsContext(ctx, s.unit)
+	}
 	if err != nil {
 		out.Error = err.Error()
 		return out

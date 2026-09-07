@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/0x3639/nomctl/internal/alertproto"
+	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/metrics"
 )
 
@@ -309,16 +310,13 @@ func (d *Daemon) writeState() {
 	if err != nil {
 		return
 	}
-	tmp := d.statePath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err == nil {
-		_ = os.Rename(tmp, d.statePath)
-	}
+	_ = fsx.WriteRuntimeFile(d.statePath, data, 0o600)
 }
 
 // LoadState reads the daemon's state file.
 func LoadState(path string) (State, error) {
 	var st State
-	data, err := os.ReadFile(path)
+	data, err := fsx.ReadRuntimeFile(path, 1<<20)
 	if err != nil {
 		return st, err
 	}

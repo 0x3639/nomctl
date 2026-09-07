@@ -129,3 +129,142 @@ func TestDefaultOutputDir(t *testing.T) {
 		t.Errorf("dir = %q", d)
 	}
 }
+
+func TestCollectRefusesExistingDestinations(t *testing.T) {
+	for _, kind := range []string{"directory", "directory-link", "archive", "archive-link"} {
+		t.Run(kind, func(t *testing.T) {
+			parent := t.TempDir()
+			out := filepath.Join(parent, "bundle")
+			target := filepath.Join(parent, "existing")
+			if err := os.WriteFile(target, []byte("existing content"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch kind {
+			case "directory":
+				err = os.Mkdir(out, 0o755)
+			case "directory-link":
+				err = os.Symlink(parent, out)
+			case "archive":
+				err = os.WriteFile(out+".tar.gz", []byte("existing archive"), 0o600)
+			case "archive-link":
+				err = os.Symlink(target, out+".tar.gz")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Collect(context.Background(), config.Default(), Options{OutputDir: out}); err == nil {
+				t.Fatal("existing destination was accepted")
+			}
+			if data, _ := os.ReadFile(target); string(data) != "existing content" {
+				t.Fatal("existing file changed")
+			}
+		})
+	}
+}
+
+func TestArchivePublicationIsExclusive(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "bundle")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "status.txt"), []byte("status"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := writeArchive(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(archive)
+	if _, err := writeArchive(dir); err == nil {
+		t.Fatal("existing archive was replaced")
+	}
+	after, _ := os.ReadFile(archive)
+	if string(before) != string(after) {
+		t.Fatal("existing archive changed")
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, ".archive-*"))
+	if len(files) != 0 {
+		t.Fatal("temporary archive was left behind")
+	}
+}
+
+func TestArchiveRejectsLinkedEntries(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "bundle")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../example.txt", filepath.Join(dir, "linked.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeArchive(dir); err == nil {
+		t.Fatal("linked archive entry was accepted")
+	}
+	if _, err := os.Lstat(dir + ".tar.gz"); !os.IsNotExist(err) {
+		t.Fatal("failed archive was published")
+	}
+}
+
+func TestCollectRedactsLogSources(t *testing.T) {
+	stubTools(t)
+	tools := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	fixture := "FATAL configuration: {\n  \"Producer\": {\n    \"Password\": \"example-password-value\"\n  }\n}\nAuthorization: Bearer example-header-value\n"
+	for _, tool := range []string{"journalctl", "systemctl", "coredumpctl"} {
+		script := "#!/bin/sh\ncat <<'FIXTURE'\n" + fixture + "FIXTURE\n"
+		if err := os.WriteFile(filepath.Join(tools, tool), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	cfg.ZnnDir = t.TempDir()
+	cfg.LogFile = filepath.Join(cfg.ZnnDir, "nomctl.log")
+	if err := os.Mkdir(filepath.Join(cfg.ZnnDir, "log"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{cfg.LogFile, filepath.Join(cfg.ZnnDir, "log", "node.log")} {
+		if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(t.TempDir(), "bundle")
+	res, err := Collect(context.Background(), cfg, Options{OutputDir: out, NodeURL: "http://127.0.0.1:1", Watch: &WatchOptions{Poll: time.Second, Timeout: time.Second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = filepath.Walk(res.Dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, secret := range []string{"example-password-value", "example-header-value"} {
+			if strings.Contains(string(data), secret) {
+				t.Errorf("%s retained a synthetic credential", filepath.Base(path))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := os.ReadFile(filepath.Join(res.Dir, "00-live-journal.log"))
+	if err != nil || !strings.Contains(string(live), "<redacted>") {
+		t.Fatalf("watch journal was not retained with redaction: %v", err)
+	}
+}
+
+func TestPrivateOutputDoesNotReuseFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "diagnostic.txt")
+	if err := writePrivateFile(path, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePrivateFile(path, []byte("second")); err == nil {
+		t.Fatal("existing output was accepted")
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "first" {
+		t.Fatal("existing output was changed")
+	}
+}

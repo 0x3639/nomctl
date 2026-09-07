@@ -201,3 +201,24 @@ func TestCachedCheckAndLines(t *testing.T) {
 		t.Errorf("dev build must not claim an update: %v", got)
 	}
 }
+
+func TestSaveUsesIndependentTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "update.json")
+	existing := filepath.Join(t.TempDir(), "example.txt")
+	if err := os.WriteFile(existing, []byte("example content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(existing, path+".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	want := Check{CheckedAt: time.Now().UTC(), NomctlLatest: "v1.2.3"}
+	save(path, want)
+	got, ok := load(path)
+	if !ok || got.NomctlLatest != want.NomctlLatest {
+		t.Fatalf("cache was not published: %+v", got)
+	}
+	if data, _ := os.ReadFile(existing); string(data) != "example content" {
+		t.Fatal("unrelated temporary-path target changed")
+	}
+}

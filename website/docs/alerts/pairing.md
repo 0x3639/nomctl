@@ -71,10 +71,10 @@ Setup installs three systemd units:
 | Unit | Runs as | Purpose |
 |---|---|---|
 | `nomctl-alerts.service` | `nomctl`, a locked system user with no capabilities | the daemon: samples the node every 30 s, sends heartbeats and alerts |
-| `nomctl-alerts-probe.service` | root, oneshot, no network | records the node process's open file count and I/O to `/run/nomctl/process-probe.json` |
+| `nomctl-alerts-probe.service` | root, oneshot, no network | records the node process's open file count and I/O to `/run/nomctl-system/process-probe.json` |
 | `nomctl-alerts-probe.timer` | | runs the probe every 30 s |
 
-The daemon talks to the internet every 30 seconds from the machine that holds the pillar's wallet, so it does not run as root. It can read the pairing config (`/etc/nomctl/alerts.json`, root-owned, group `nomctl`, mode 0640) and write `/run/nomctl`; `ProtectSystem=strict` and `ProtectHome=true` hide everything else, including the data directory and the wallet. Free disk for the data directory comes from the probe, which measures the real directory as root; the daemon's own view of `/root` is an empty placeholder mount under `ProtectHome`.
+The daemon talks to the internet every 30 seconds from the machine that holds the pillar's wallet, so it does not run as root. It can read the pairing config (`/etc/nomctl/alerts.json`, root-owned, group `nomctl`, mode 0640) and write its state and update cache in `/run/nomctl`. The root probe and root update cache use a separate root-owned directory, `/run/nomctl-system`, which the daemon can read but cannot modify; `ProtectSystem=strict` and `ProtectHome=true` hide everything else, including the data directory and the wallet. Free disk for the data directory comes from the probe, which measures the real directory as root; the daemon's own view of `/root` is an empty placeholder mount under `ProtectHome`.
 
 Counting another user's open files needs `CAP_SYS_PTRACE`, which would also allow reading the node process's memory. Rather than grant that to the daemon, the root probe records the count every 30 seconds and the daemon reads the file; that is what feeds `fds_high`. `nomctl alerts status` shows the user the daemon runs as and whether the probe timer is installed.
 
@@ -83,3 +83,5 @@ Nodes set up on releases before 0.9.0 ran the daemon as root. They migrate on th
 ## If something fails during setup
 
 If pairing succeeds but the service cannot be installed, setup undoes the pairing at the relay so you do not get a `node silent` alert for a node that never reported. If even that fails, the credentials are kept and setup tells you to run `nomctl alerts unpair`.
+
+Existing installations receive the updated probe unit when alerts configuration is converged during an upgrade. The next probe refreshes the new location. Old daemon state is replaced on the next sample; existing runtime files are not recursively reassigned to another user.
