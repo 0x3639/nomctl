@@ -22,7 +22,7 @@ The installer one-liner does the same thing and remains a fine way to upgrade; `
 
 ## Knowing when to upgrade
 
-`nomctl status` and `top` check, at most every six hours, whether a newer nomctl release exists and whether the configured go-zenon branch has commits beyond the running node's build. When either is true a line is added:
+`nomctl status` and `top` check, at most every hour, whether a newer nomctl release exists and whether the configured go-zenon branch has commits beyond the running node's build. When either is true a line is added:
 
 ```text
 Update    nomctl 0.5.0 available (running 0.4.0): sudo nomctl upgrade

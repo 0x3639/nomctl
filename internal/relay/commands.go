@@ -86,20 +86,11 @@ func (s *Server) cmdNodes(ctx context.Context, chatID int64) (string, error) {
 		return Escape("No nodes paired with this chat yet. Send /start to get a pairing code."), nil
 	}
 	now := s.opts.Now()
-	var b strings.Builder
+	cards := make([]string, 0, len(nodes))
 	for _, n := range nodes {
-		age := now.Sub(n.LastSeen).Round(time.Second)
-		status := "🟢"
-		if n.Silent {
-			status = "🔴 silent"
-		}
-		fmt.Fprintf(&b, "%s %s \\(%s\\)\nlast seen %s ago", status, Bold(n.Name), Escape(n.Host), Escape(age.String()))
-		if n.Summary.State != "" {
-			fmt.Fprintf(&b, "\n%s", Escape(fmt.Sprintf("%s · height %d · %d peers · %d restarts", n.Summary.State, n.Summary.Height, n.Summary.Peers, n.Summary.Restarts)))
-		}
-		b.WriteString("\n\n")
+		cards = append(cards, NodeCard(n, now))
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return strings.Join(cards, "\n\n"), nil
 }
 
 func (s *Server) findNode(ctx context.Context, chatID int64, name string) (Node, bool, error) {

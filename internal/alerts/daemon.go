@@ -221,21 +221,64 @@ func (d *Daemon) heartbeat(ctx context.Context, now time.Time, s metrics.Sample)
 	if d.state.Unpaired {
 		return
 	}
-	hb := alertproto.HeartbeatRequest{At: now, Summary: alertproto.Summary{
-		State: s.Node.StateText, Height: s.Node.CurrentHeight, Peers: s.Node.NumPeers, Restarts: s.Service.NRestarts,
-	}}
-	if !s.Node.Reachable {
-		hb.Summary.State = "rpc unreachable"
+	var upd UpdateInfo
+	if UpdateChecker != nil {
+		upd = UpdateChecker() // served from the on-disk cache between checks
 	}
-	if s.Service.ActiveState != "active" {
-		hb.Summary.State = "service " + s.Service.ActiveState
-	}
+	hb := alertproto.HeartbeatRequest{At: now, Summary: Summarize(s, now, d.client.Version, upd)}
 	if err := d.client.Heartbeat(ctx, hb); err != nil {
 		d.noteError(err)
 		return
 	}
 	d.state.LastHeartbeatOK = now
 	d.state.LastError = ""
+}
+
+// Summarize builds the heartbeat summary from a sample.
+func Summarize(s metrics.Sample, now time.Time, nomctlVersion string, upd UpdateInfo) alertproto.Summary {
+	n := s.Node
+	sum := alertproto.Summary{
+		State: n.StateText, Height: n.CurrentHeight, Peers: n.NumPeers, Restarts: s.Service.NRestarts,
+		TargetHeight: n.TargetHeight, MomentumRate: n.MomentumsPerSec,
+		NodeVersion: n.Version, NodeCommit: n.Commit, NomctlVersion: nomctlVersion,
+		Load1: s.Host.Load1, MemFree: s.Host.MemAvailable, MemTotal: s.Host.MemTotal,
+		DiskFree: s.Host.DataDirFree, DiskTotal: s.Host.DataDirTotal,
+	}
+	if n.ETAKnown {
+		sum.ETASeconds = int64(n.ETA / time.Second)
+	}
+	if n.FrontierKnown {
+		sum.Frontier = n.FrontierHeight
+		sum.FrontierAgeSeconds = int64(n.FrontierAge / time.Second)
+	} else if n.Reachable {
+		sum.LedgerBusy = true
+	}
+	if s.Service.ActiveState == "active" && !s.Service.Since.IsZero() {
+		sum.UptimeSeconds = int64(now.Sub(s.Service.Since) / time.Second)
+	}
+	if s.Process.Present {
+		sum.CPUPercent = s.Process.CPUPercent
+		sum.RSS = s.Process.RSS
+	}
+	if p := n.Pillar; p.Configured {
+		sum.PillarName = p.Name
+		if p.Found {
+			sum.PillarRank, sum.PillarProduced, sum.PillarExpected = p.Rank, p.Produced, p.Expected
+		} else {
+			sum.PillarError = p.Error
+		}
+	}
+	if upd.NomctlLatest != "" && NewerVersion(upd.NomctlLatest, upd.NomctlRunning) {
+		sum.NomctlUpdate = upd.NomctlLatest
+	}
+	sum.NodeUpdate = upd.NodeBehind
+	if !n.Reachable {
+		sum.State = "rpc unreachable"
+	}
+	if s.Service.ActiveState != "active" {
+		sum.State = "service " + s.Service.ActiveState
+	}
+	return sum
 }
 
 func (d *Daemon) noteError(err error) {
