@@ -175,7 +175,7 @@ func TestCachedCheckAndLines(t *testing.T) {
 	}
 	// Server gone: the cache must answer within the TTL.
 	srv.Close()
-	now = now.Add(time.Hour)
+	now = now.Add(CacheTTL / 2)
 	if c2 := Run(context.Background(), opts); c2.NomctlLatest != "v9.9.9" || !c2.CheckedAt.Equal(c.CheckedAt) {
 		t.Errorf("cache not used: %+v", c2)
 	}
