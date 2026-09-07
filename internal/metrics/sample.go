@@ -269,16 +269,7 @@ func (s *Sampler) takeHost(now time.Time) HostSample {
 		h.MemTotal, h.MemAvailable = m.Total, m.Available
 	}
 	h.DataDir = s.dataDir
-	// The mount holding the data directory needs no access to the directory
-	// itself; when even the mount is hidden from an unprivileged daemon (a
-	// data disk mounted under /root), the root probe supplies the figures.
-	free, total, err := s.diskFree(MountPoint(s.MountInfo, s.dataDir))
-	if err != nil || total == 0 {
-		if probe, ok := s.probe(now); ok && probe.DiskOK {
-			free, total = probe.DiskFree, probe.DiskTotal
-		}
-	}
-	h.DataDirFree, h.DataDirTotal = free, total
+	h.DataDirFree, h.DataDirTotal = s.dataDirDisk(now)
 	h.Pressure = ReadPressure(s.ProcRoot)
 	return h
 }
@@ -335,6 +326,30 @@ func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
 		n.ETAKnown = true
 	}
 	return n
+}
+
+// dataDirDisk measures free and total bytes for the data directory.
+//
+// A root caller measures the directory itself. The unprivileged daemon
+// cannot: ProtectHome mounts an inaccessible tmpfs over /root, so both the
+// directory and, through mountinfo, its "mount point" resolve to that
+// tmpfs and report its size, which is what made disk_low fire on every
+// node after v0.9.0. The daemon therefore trusts the root probe, which
+// measures the real directory, and only otherwise measures the nearest
+// non-tmpfs mount holding the path.
+func (s *Sampler) dataDirDisk(now time.Time) (free, total uint64) {
+	if s.ProbePath == "" {
+		free, total, _ = s.diskFree(s.dataDir)
+		return free, total
+	}
+	if probe, ok := s.probe(now); ok && probe.DiskOK {
+		return probe.DiskFree, probe.DiskTotal
+	}
+	free, total, err := s.diskFree(MountPoint(s.MountInfo, s.dataDir))
+	if err != nil {
+		return 0, 0
+	}
+	return free, total
 }
 
 // probe returns the root probe when configured and fresh, read once per

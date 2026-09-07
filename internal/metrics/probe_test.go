@@ -104,14 +104,10 @@ func TestSamplerFallsBackToProbe(t *testing.T) {
 	if !p.FromProbe || p.OpenFDs != 777 || p.FDLimit != 32768 {
 		t.Fatalf("with a probe: %+v", p)
 	}
-	// Disk figures come from statfs when the mount is visible…
-	if smp.Host.DataDirTotal == 9<<30 {
-		t.Error("probe disk figures used although statfs worked")
-	}
-	// …and from the probe when it is not (a data disk under /root).
-	s.diskFree = func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }
-	if h := s.Take(t.Context()).Host; h.DataDirFree != 7<<30 || h.DataDirTotal != 9<<30 {
-		t.Errorf("hidden mount: %+v", h)
+	// The daemon trusts the probe's disk figures over its own statfs, which
+	// under ProtectHome sees a tmpfs where /root should be.
+	if smp.Host.DataDirFree != 7<<30 || smp.Host.DataDirTotal != 9<<30 {
+		t.Errorf("probe disk figures not used: %+v", smp.Host)
 	}
 	// A probe for another pid still serves disk figures but not process ones.
 	if err := WriteProbe(probe, Probe{At: now, PID: 0, DiskOK: true, DiskFree: 1 << 30, DiskTotal: 2 << 30}); err != nil {
@@ -121,12 +117,19 @@ func TestSamplerFallsBackToProbe(t *testing.T) {
 	if smp.Process.FromProbe || smp.Host.DataDirTotal != 2<<30 {
 		t.Errorf("down-node probe: process=%+v host=%+v", smp.Process, smp.Host)
 	}
-	// Invalid disk figures in the probe are ignored.
+	// Invalid disk figures in the probe fall back to the mount lookup.
 	if err := WriteProbe(probe, Probe{At: now, PID: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if h := s.Take(t.Context()).Host; h.DataDirTotal != 0 {
-		t.Errorf("invalid disk probe used: %+v", h)
+	if h := s.Take(t.Context()).Host; h.DataDirTotal != 500<<30 {
+		t.Errorf("invalid disk probe should fall back to statfs: %+v", h)
+	}
+	// Without a probe file at all, a failing statfs yields zeros, never a
+	// made-up figure.
+	_ = os.Remove(probe)
+	s.diskFree = func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }
+	if h := s.Take(t.Context()).Host; h.DataDirTotal != 0 || h.DataDirFree != 0 {
+		t.Errorf("failed statfs reported figures: %+v", h)
 	}
 	s.diskFree = func(string) (uint64, uint64, error) { return 210 << 30, 500 << 30, nil }
 	// Direct /proc access wins when available.
@@ -141,12 +144,15 @@ func TestMountPoint(t *testing.T) {
 	content := "22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n" +
 		"40 22 8:2 / /backup rw - ext4 /dev/sdb1 rw\n" +
 		"41 22 8:3 / /root/.znn rw - ext4 /dev/sdc1 rw\n" +
-		"42 22 8:4 / /mnt/with\\040space rw - ext4 /dev/sdd1 rw\n"
+		"42 22 8:4 / /mnt/with\\040space rw - ext4 /dev/sdd1 rw\n" +
+		// What a ProtectHome=true service sees: an inaccessible tmpfs over /root.
+		"99 22 0:50 /systemd/inaccessible/dir /root ro - tmpfs tmpfs ro\n"
 	if err := os.WriteFile(mi, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]string{
-		"/root/.znn":         "/root/.znn",
+		"/root/.znn":         "/root/.znn", // a real mount under /root still wins
+		"/root/other":        "/",          // the tmpfs over /root is skipped
 		"/root/.znn/nom":     "/root/.znn",
 		"/root/.znnd":        "/",
 		"/root":              "/",
