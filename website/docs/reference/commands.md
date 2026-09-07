@@ -27,6 +27,16 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl analytics install` | [Analytics stack](/guide/analytics) |
 | `nomctl upgrade [--check] [--version TAG] [--rollback]` | [Upgrading](/guide/upgrading) |
 
+## config.json
+
+| Command | Notes |
+|---|---|
+| `nomctl config show [--show-secrets]` | [config.json editor](/guide/config) |
+| `nomctl config get KEY` | |
+| `nomctl config set KEY VALUE [--restart] [--force]` | validated; previous file backed up |
+| `nomctl config unset KEY [--restart]` | back to the default |
+| `nomctl config edit [--restart]` | `$EDITOR`, validated before install |
+
 ## Pillar
 
 | Command | Notes |

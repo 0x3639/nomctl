@@ -11,6 +11,7 @@ Planned features in priority order. Each gets a design spec in the repository un
 - **Pillar awareness** (v0.4.0): the node name doubles as the pillar name; `status` and `top` show production; `pillar_missed` and `momentums_stalled` alerts.
 - **Self-update** (v0.5.0): `nomctl upgrade` with verified download, atomic replace and rollback; update lines in `status`/`top`; opt-in `update_available` alert.
 - **Bootstrap sync** (v0.6.0): `nomctl bootstrap` downloads a verified chain snapshot and swaps it in, keeping the previous data unless `--discard`.
+- **Config editor** (v0.12.0): `nomctl config show|get|set|unset|edit` against go-zenon's schema, backups, `--restart`.
 - **Pillar producer** (v0.10.0): `nomctl pillar setup` creates the producer key with go-zenon's wallet code and wires it into `config.json`, as znn-controller's Deploy did.
 - **Non-root alerts daemon** (v0.9.0): the daemon runs as a locked `nomctl` user with no capabilities; a root oneshot probe feeds `fds_high`; older nodes migrate on upgrade.
 - **Orchestrator** (v0.7.0): submenu and `nomctl orchestrator` with hard reset, status and logs; more orchestrator functions land here.
@@ -18,7 +19,6 @@ Planned features in priority order. Each gets a design spec in the repository un
 ## Next
 
 - **Wallet and config backup**: a separate small archive of `wallet/` and `config.json`, optionally encrypted, never pruned by the chain-data retention rule.
-- **Config editor**: `nomctl config show|get|set` for `config.json` with validation and a backup of the previous file.
 - **Network check**: confirm port 35995/TCP is reachable from outside and count inbound versus outbound peers.
 - **Metrics exporter**: a Prometheus `/metrics` endpoint fed by the sampler, scraped by the analytics stack, plus a nomctl Grafana dashboard.
 

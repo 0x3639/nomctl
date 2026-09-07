@@ -24,6 +24,7 @@ With no arguments nomctl opens a menu covering every action:
 | bootstrap | [Bootstrap](/guide/bootstrap), with URL prompt, keep/discard question and confirmation |
 | analytics | [Analytics stack](/guide/analytics) |
 | pillar | [Pillar](/guide/pillar) submenu: deploy a Pillar, set up the producer key, show it |
+| config | [config.json editor](/guide/config) submenu: show, set one setting, edit in `$EDITOR`; offers a restart |
 | orchestrator | [Orchestrator](/guide/orchestrator) submenu: hard reset, status, logs |
 
 After each action the menu asks whether to return. Esc or Ctrl+C leaves.
