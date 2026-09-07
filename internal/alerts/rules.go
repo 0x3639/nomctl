@@ -320,10 +320,14 @@ func momentumsStalled(h []metrics.Sample, cfg RuleConfig) Result {
 		}
 	}
 	n := win[len(win)-1].Node
-	if ledgerBlocked {
+	switch {
+	case ledgerBlocked:
 		return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s and the ledger has not answered in that time (state: %s); a momentum insert may be hung", metrics.Commas(n.CurrentHeight), metrics.HumanDuration(d), n.StateText)}
+	case !n.FrontierKnown:
+		return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s, ledger not answering now: %s (state: %s)", metrics.Commas(n.CurrentHeight), metrics.HumanDuration(d), n.LedgerError, n.StateText)}
+	default:
+		return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s, frontier %s old (state: %s)", metrics.Commas(n.CurrentHeight), metrics.HumanDuration(d), metrics.HumanDuration(n.FrontierAge), n.StateText)}
 	}
-	return Result{Firing: true, Detail: fmt.Sprintf("height %s unchanged for %s, frontier %s old (state: %s)", metrics.Commas(n.CurrentHeight), metrics.HumanDuration(d), metrics.HumanDuration(n.FrontierAge), n.StateText)}
 }
 
 // pillarMissed fires when, over the window, the pillar's expected momentums

@@ -323,6 +323,17 @@ func TestMomentumsStalled(t *testing.T) {
 	if !res.Firing || !strings.Contains(res.Detail, "ledger has not answered") {
 		t.Errorf("hung insert: %+v", res)
 	}
+	// Frontier read earlier but not in the latest sample: no bogus "0s old".
+	h = series(12, func(i int, s *metrics.Sample) {
+		stuck(i, s)
+		if i >= 8 {
+			s.Node.FrontierKnown, s.Node.FrontierHeight, s.Node.FrontierAge, s.Node.LedgerError = false, 0, 0, "context deadline exceeded"
+		}
+	})
+	res = r.Evaluate(h, cfg)
+	if !res.Firing || strings.Contains(res.Detail, "0s old") || !strings.Contains(res.Detail, "ledger not answering now") {
+		t.Errorf("mixed known/unknown frontier: %+v", res)
+	}
 	// A ledger blocked while the height keeps climbing is catch-up, not a stall.
 	h = series(12, func(i int, s *metrics.Sample) {
 		s.Node.FrontierKnown, s.Node.FrontierHeight, s.Node.LedgerError = false, 0, "context deadline exceeded"
