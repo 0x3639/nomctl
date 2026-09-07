@@ -20,6 +20,14 @@ import (
 	"github.com/0x3639/nomctl/internal/ui"
 )
 
+// OfficialRepoURL and OfficialBranch are what a Pillar builds: the
+// zenon-network repository's master, regardless of NOMCTL_REPO_URL and
+// NOMCTL_BRANCH_NAME, which stay for test nodes.
+const (
+	OfficialRepoURL = "https://github.com/zenon-network/go-zenon.git"
+	OfficialBranch  = "master"
+)
+
 // RepoChoices lists the repositories offered by the interactive deploy menu.
 var RepoChoices = []struct{ Label, URL string }{
 	{"zenon-network", "https://github.com/zenon-network/go-zenon.git"},

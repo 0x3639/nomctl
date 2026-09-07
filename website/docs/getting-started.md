@@ -35,6 +35,8 @@ go install github.com/0x3639/nomctl@latest
 
 ## 2. Deploy the node
 
+Running a Pillar? `sudo nomctl pillar deploy` does this step and the producer key in one; see [Pillar](/guide/pillar). For a plain node:
+
 ```bash
 sudo nomctl deploy
 ```

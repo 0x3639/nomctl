@@ -120,6 +120,31 @@ func TestSetupRefusesNullConfigBeforeCreatingKey(t *testing.T) {
 	}
 }
 
+func TestDeployBuildsOfficialMasterThenSetsUp(t *testing.T) {
+	cfg := testCfg(t)
+	cfg.RepoURL, cfg.BranchName = "https://example.org/fork.git", "experimental" // must be ignored
+	stubHost(t, false)
+	old := deployRun
+	var got []string
+	deployRun = func(_ config.Config, repo, branch string) error { got = append(got, repo+" "+branch); return nil }
+	t.Cleanup(func() { deployRun = old })
+	res, err := Deploy(cfg, Options{})
+	if err != nil || !res.Created {
+		t.Fatalf("result = %+v, %v", res, err)
+	}
+	if strings.Join(got, ",") != "https://github.com/zenon-network/go-zenon.git master" {
+		t.Errorf("deployed %v, want the official master", got)
+	}
+	deployRun = func(config.Config, string, string) error { return errors.New("build failed") }
+	cfg2 := testCfg(t)
+	if _, err := Deploy(cfg2, Options{}); err == nil {
+		t.Fatal("deploy failure must stop before the producer step")
+	}
+	if _, err := os.Stat(KeyFilePath(cfg2.ZnnDir)); !errors.Is(err, os.ErrNotExist) {
+		t.Error("key created although the build failed")
+	}
+}
+
 func TestSetupReplaceExistingWhenAsked(t *testing.T) {
 	cfg := testCfg(t)
 	stubHost(t, false)

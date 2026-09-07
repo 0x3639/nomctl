@@ -86,6 +86,41 @@ func printProducerResult(cmd *cobra.Command, res producer.Result) {
 	fmt.Fprintln(out, producer.NextSteps(res.Address))
 }
 
+var pillarDeployCmd = &cobra.Command{
+	Use:   "deploy",
+	Short: "Deploy a Pillar: build go-zenon master, start the node, create the producer key",
+	Long: `The one-step Pillar deployment. Builds the official repository's master
+(github.com/zenon-network/go-zenon, whatever NOMCTL_REPO_URL and
+NOMCTL_BRANCH_NAME say), installs and starts the go-zenon service, then runs
+"pillar setup": an existing producer configuration is kept, an existing key
+file is configured after its password is verified, otherwise a new key is
+created and its password printed once. Rerunning on a deployed node rebuilds
+from master and restarts it.`,
+	Args:        cobra.NoArgs,
+	Annotations: rootOnly(),
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		password := flagPillarPassword
+		if password == "" {
+			password = os.Getenv("NOMCTL_PRODUCER_PASSWORD")
+		}
+		opts := producer.Options{Password: password}
+		if ui.Interactive() && !flagPillarYes {
+			opts.Prompts = tui.ProducerPrompts()
+		}
+		var res producer.Result
+		err := withLock("pillar deploy", func() error {
+			var err error
+			res, err = producer.Deploy(cfg, opts)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		printProducerResult(cmd, res)
+		return nil
+	},
+}
+
 var pillarStatusCmd = &cobra.Command{
 	Use:         "status",
 	Short:       "Show the producer configuration and which Pillar uses it",
@@ -144,6 +179,8 @@ func init() {
 	pillarSetupCmd.Flags().StringVar(&flagPillarPassword, "password", "", "password for the key file (generated when creating a new one; verified for an existing one); prefer NOMCTL_PRODUCER_PASSWORD in scripts, which stays out of shell history")
 	pillarSetupCmd.Flags().BoolVar(&flagPillarYes, "yes", false, "keep an existing producer configuration without asking")
 	pillarStatusCmd.Flags().BoolVar(&flagPillarShowPassword, "show-password", false, "print the key file password from config.json")
-	pillarCmd.AddCommand(pillarSetupCmd, pillarStatusCmd)
+	pillarDeployCmd.Flags().StringVar(&flagPillarPassword, "password", "", "password for the producer key (see pillar setup)")
+	pillarDeployCmd.Flags().BoolVar(&flagPillarYes, "yes", false, "keep an existing producer configuration without asking")
+	pillarCmd.AddCommand(pillarDeployCmd, pillarSetupCmd, pillarStatusCmd)
 	rootCmd.AddCommand(pillarCmd)
 }
