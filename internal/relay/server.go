@@ -25,10 +25,13 @@ var Version = "dev"
 
 // Tunables.
 const (
-	CodeTTL          = 10 * time.Minute
-	ReminderEvery    = 10 * time.Minute
-	MaxBody          = 64 << 10
-	nodeRatePerMin   = 60
+	CodeTTL        = 10 * time.Minute
+	ReminderEvery  = 10 * time.Minute
+	MaxBody        = 64 << 10
+	nodeRatePerMin = 60
+	// admitRatePerMin bounds unauthenticated node requests per client IP.
+	// A host running several nodes sends 2/min each.
+	admitRatePerMin  = 120
 	pairRatePerMin   = 10
 	chatRatePerMin   = 20
 	defaultSilentGap = 5 * time.Minute
@@ -50,9 +53,10 @@ type Server struct {
 	tg    Sender
 	opts  Options
 
-	nodeLimit *rateLimiter
-	pairLimit *rateLimiter
-	chatLimit *rateLimiter
+	nodeLimit  *rateLimiter
+	admitLimit *rateLimiter
+	pairLimit  *rateLimiter
+	chatLimit  *rateLimiter
 
 	suppressedMu sync.Mutex
 	suppressed   map[int64]int // per chat, messages dropped in the current minute
@@ -71,6 +75,7 @@ func NewServer(store Store, tg Sender, opts Options) *Server {
 		tg:         tg,
 		opts:       opts,
 		nodeLimit:  newRateLimiter(nodeRatePerMin, opts.Now),
+		admitLimit: newRateLimiter(admitRatePerMin, opts.Now),
 		pairLimit:  newRateLimiter(pairRatePerMin, opts.Now),
 		chatLimit:  newRateLimiter(chatRatePerMin, opts.Now),
 		suppressed: map[int64]int{},
@@ -261,13 +266,16 @@ type nodeHandler func(w http.ResponseWriter, r *http.Request, node Node, body []
 
 func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get(alertproto.HeaderNode)
-		if id == "" {
-			writeError(w, http.StatusUnauthorized, "missing node id")
+		// Before authentication the only key the caller cannot choose is
+		// its address, so admission is limited per IP; the per-node limit
+		// applies once the node is known.
+		if !s.admitLimit.allow(s.clientIP(r)) {
+			writeError(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
-		if !s.nodeLimit.allow(id) {
-			writeError(w, http.StatusTooManyRequests, "rate limited")
+		id := r.Header.Get(alertproto.HeaderNode)
+		if !validNodeID(id) {
+			writeError(w, http.StatusUnauthorized, "missing node id")
 			return
 		}
 		body, ok := readBody(w, r)
@@ -282,6 +290,10 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "store error")
+			return
+		}
+		if !s.nodeLimit.allow(node.ID) {
+			writeError(w, http.StatusTooManyRequests, "rate limited")
 			return
 		}
 		ts, err := strconv.ParseInt(r.Header.Get(alertproto.HeaderTimestamp), 10, 64)
@@ -315,7 +327,7 @@ func (s *Server) authed(h nodeHandler) http.HandlerFunc {
 
 func (s *Server) handleAlert(w http.ResponseWriter, r *http.Request, node Node, body []byte) {
 	var req alertproto.AlertRequest
-	if err := json.Unmarshal(body, &req); err != nil || req.Alert == "" {
+	if err := json.Unmarshal(body, &req); err != nil || !alertproto.ValidAlert(req) {
 		writeError(w, http.StatusBadRequest, "bad alert")
 		return
 	}
@@ -325,8 +337,10 @@ func (s *Server) handleAlert(w http.ResponseWriter, r *http.Request, node Node, 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer cancel()
 	if err := s.deliver(ctx, node, req); err != nil {
-		// Tell the node so it retries on its next sample.
-		writeError(w, http.StatusBadGateway, "delivery failed: "+err.Error())
+		// Tell the node so it retries on its next sample. The cause stays in
+		// the relay log: transport errors are internal detail.
+		slog.Warn("alert delivery failed", "node", node.ID, "alert", req.Alert, "err", err)
+		writeError(w, http.StatusBadGateway, "delivery failed")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -512,10 +526,11 @@ func (s *Server) RunSilentTicker(ctx context.Context, every time.Duration) {
 // --- rate limiting -----------------------------------------------------------
 
 type rateLimiter struct {
-	mu     sync.Mutex
-	limit  int
-	now    func() time.Time
-	counts map[string]struct {
+	mu        sync.Mutex
+	limit     int
+	now       func() time.Time
+	lastSweep time.Time
+	counts    map[string]struct {
 		window time.Time
 		n      int
 	}
@@ -528,12 +543,30 @@ func newRateLimiter(perMinute int, now func() time.Time) *rateLimiter {
 	}{}}
 }
 
+// limiterMaxKeys bounds a limiter's memory. Expired keys are swept at most
+// once a minute; a new key arriving while the map is full is refused, so an
+// attacker cycling keys cannot grow the map or force a scan per request.
+const limiterMaxKeys = 10000
+
 // allow implements a fixed one-minute window per key.
 func (r *rateLimiter) allow(key string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
-	c := r.counts[key]
+	c, known := r.counts[key]
+	if !known && len(r.counts) >= limiterMaxKeys {
+		if now.Sub(r.lastSweep) >= time.Minute {
+			r.lastSweep = now
+			for k, v := range r.counts {
+				if now.Sub(v.window) >= time.Minute {
+					delete(r.counts, k)
+				}
+			}
+		}
+		if len(r.counts) >= limiterMaxKeys {
+			return false
+		}
+	}
 	if now.Sub(c.window) >= time.Minute {
 		c.window, c.n = now, 0
 	}
@@ -543,11 +576,17 @@ func (r *rateLimiter) allow(key string) bool {
 	}
 	c.n++
 	r.counts[key] = c
-	if len(r.counts) > 10000 {
-		for k, v := range r.counts {
-			if now.Sub(v.window) >= time.Minute {
-				delete(r.counts, k)
-			}
+	return true
+}
+
+// validNodeID accepts the ids newNodeID produces: "n_" and 16 hex digits.
+func validNodeID(id string) bool {
+	if len(id) != 18 || id[:2] != "n_" {
+		return false
+	}
+	for _, c := range id[2:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
 		}
 	}
 	return true

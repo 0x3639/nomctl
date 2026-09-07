@@ -37,7 +37,7 @@ func flakyServer(t *testing.T, proxies string) (*Server, *flakySender, Node, *ti
 		t.Fatal(err)
 	}
 	s := NewServer(NewMemoryStore(), m, Options{Now: func() time.Time { return now }, TrustedProxies: cidrs})
-	n := Node{ID: "n_r", ChatID: 1, Name: "r", Secret: []byte("x"), Created: now, LastSeen: now}
+	n := Node{ID: newNodeID(), ChatID: 1, Name: "r", Secret: []byte("x"), Created: now, LastSeen: now}
 	if err := s.store.CreateNode(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestSetLastSentFailureIsReported(t *testing.T) {
 	fs := &failingStore{Store: NewMemoryStore()}
 	m := &flakySender{}
 	s := NewServer(fs, m, Options{Now: func() time.Time { return now }})
-	n := Node{ID: "n", ChatID: 1, Name: "n", Secret: []byte("x"), Created: now, LastSeen: now}
+	n := Node{ID: newNodeID(), ChatID: 1, Name: "n", Secret: []byte("x"), Created: now, LastSeen: now}
 	ctx := context.Background()
 	if err := fs.CreateNode(ctx, n); err != nil {
 		t.Fatal(err)
