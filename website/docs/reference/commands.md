@@ -47,7 +47,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 
 | Command | Notes |
 |---|---|
-| `nomctl alerts setup [--code CODE] [--name NAME] [--relay URL]` | pair and start the service |
+| `nomctl alerts setup [--code CODE] [--name NAME] [--relay URL] [--accept-privacy-notice]` | shows the privacy notice, pairs and starts the service |
 | `nomctl alerts status` | pairing, service, per-alert state |
 | `nomctl alerts list` | alerts with thresholds |
 | `nomctl alerts enable ALERT` / `disable ALERT` | |

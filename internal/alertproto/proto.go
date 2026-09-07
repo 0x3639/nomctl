@@ -117,6 +117,16 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// PrivacyNotice is shown by the bot on /start and by nomctl alerts setup
+// before pairing. relayHost is the relay's public host name.
+func PrivacyNotice(relayHost string) string {
+	return "Privacy notice: once paired, your node sends a heartbeat to " + relayHost +
+		" every 30 seconds and forwards alerts through it. The relay operator can see your node's public IP address, " +
+		"host name, node name and status summary. The IP address is used only to rate-limit pairing and is not stored in " +
+		"the relay database, but it is visible to the relay and may appear in the logs of the proxy in front of it. " +
+		"If your pillar's IP address must stay private, run your own relay (see the docs) or do not pair."
+}
+
 // UnknownNodeMessage is the error body of a 401 that means "this node is
 // not paired" (as opposed to a stale timestamp or a bad signature).
 const UnknownNodeMessage = "unknown node"

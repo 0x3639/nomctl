@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +70,7 @@ func (s *Server) cmdStart(ctx context.Context, chatID int64) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
+	b.WriteString(Escape(alertproto.PrivacyNotice(s.relayHost())) + "\n\n")
 	fmt.Fprintf(&b, "Your pairing code is %s \\(valid %d minutes\\)\\.\n\nOn the node run:\n%s\n\nand enter the code when asked\\.",
 		Code(code), int(CodeTTL.Minutes()), Code("sudo nomctl alerts setup --code "+code))
 	if s.opts.PublicURL != "" {
@@ -203,4 +205,12 @@ func alertNames() []string {
 		names = append(names, a.Name)
 	}
 	return names
+}
+
+// relayHost is the public host name shown in the privacy notice.
+func (s *Server) relayHost() string {
+	if u, err := url.Parse(s.opts.PublicURL); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return "the relay"
 }

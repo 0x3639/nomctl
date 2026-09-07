@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -25,9 +26,11 @@ import (
 )
 
 var (
-	flagAlertsCode  string
-	flagAlertsName  string
-	flagAlertsRelay string
+	flagAlertsCode string
+	flagAlertsName string
+	// flagAlertsAcceptNotice skips the privacy-notice confirmation.
+	flagAlertsAcceptNotice bool
+	flagAlertsRelay        string
 )
 
 var alertsCmd = &cobra.Command{
@@ -63,6 +66,20 @@ func alertsSetup(cmd *cobra.Command) error {
 			relayURL = existing.RelayURL
 		} else {
 			relayURL = alerts.DefaultRelayURL
+		}
+	}
+	relayHost := relayURL
+	if u, err := neturl.Parse(relayURL); err == nil && u.Host != "" {
+		relayHost = u.Host
+	}
+	fmt.Fprintln(os.Stderr, ui.StyleBox.Width(76).Render(alertproto.PrivacyNotice(relayHost)))
+	if ui.Interactive() && !flagAlertsAcceptNotice {
+		ok, err := tui.Confirm("Pair this node with " + relayHost + " on those terms?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("setup cancelled; nothing was sent")
 		}
 	}
 	code := strings.TrimSpace(flagAlertsCode)
@@ -447,6 +464,7 @@ func init() {
 	}
 	alertsSetupCmd.Flags().StringVar(&flagAlertsCode, "code", "", "pairing code from the Telegram bot (prompted if omitted)")
 	alertsSetupCmd.Flags().StringVar(&flagAlertsName, "name", "", "node name shown in alerts (prompted if omitted; default hostname)")
+	alertsSetupCmd.Flags().BoolVar(&flagAlertsAcceptNotice, "accept-privacy-notice", false, "skip the privacy-notice confirmation (it is still printed)")
 	alertsSetupCmd.Flags().StringVar(&flagAlertsRelay, "relay", "", "relay URL (NOMCTL_RELAY_URL; default built in)")
 	alertsUnpairCmd.Flags().BoolVar(&flagAlertsForce, "force", false, "remove local credentials even if the relay cannot be reached")
 	alertsCmd.AddCommand(alertsSetupCmd, alertsRunCmd, alertsStatusCmd, alertsListCmd, alertsEnableCmd, alertsDisableCmd, alertsSetCmd, alertsTestCmd, alertsUnpairCmd)

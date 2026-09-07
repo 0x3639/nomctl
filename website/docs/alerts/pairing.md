@@ -5,9 +5,19 @@ description: "Pair a node with the nomctl Telegram bot, name it after your pilla
 
 ## 1. Get a code
 
-Open the nomctl alerts bot in Telegram and send `/start`. It replies with an 8-character pairing code, valid for 10 minutes and usable once. You can hold up to five unused codes.
+Open the nomctl alerts bot in Telegram and send `/start`. It replies with the privacy notice below and an 8-character pairing code, valid for 10 minutes and usable once. You can hold up to five unused codes.
+
+:::warning[Privacy notice: your node's IP address is visible to the relay]
+
+Once paired, your node sends a heartbeat to **alerts.zenon.info** every 30 seconds and forwards alerts through it. The relay operator can see your node's **public IP address**, host name, node name and status summary. The IP address is used only to rate-limit pairing and is not stored in the relay database, but it is visible to the relay and may appear in the logs of the proxy in front of it.
+
+If your pillar's IP address must stay private, [run your own relay](/alerts/relay) and point nodes at it with `NOMCTL_RELAY_URL`, or do not pair.
+
+:::
 
 ## 2. Pair
+
+`nomctl alerts setup` prints the same notice and, on a terminal, asks you to confirm before anything is sent to the relay. Pass `--accept-privacy-notice` to skip the question in scripts; the notice is still printed.
 
 On the node:
 
