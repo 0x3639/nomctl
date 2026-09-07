@@ -74,7 +74,7 @@ Setup installs three systemd units:
 | `nomctl-alerts-probe.service` | root, oneshot, no network | records the node process's open file count and I/O to `/run/nomctl/process-probe.json` |
 | `nomctl-alerts-probe.timer` | | runs the probe every 30 s |
 
-The daemon talks to the internet every 30 seconds from the machine that holds the pillar's wallet, so it does not run as root. It can read the pairing config (`/etc/nomctl/alerts.json`, root-owned, group `nomctl`, mode 0640) and write `/run/nomctl`; `ProtectSystem=strict` and `ProtectHome=true` hide everything else, including the data directory and the wallet. Free disk is measured on the data directory's mount point, which needs no access to the directory itself.
+The daemon talks to the internet every 30 seconds from the machine that holds the pillar's wallet, so it does not run as root. It can read the pairing config (`/etc/nomctl/alerts.json`, root-owned, group `nomctl`, mode 0640) and write `/run/nomctl`; `ProtectSystem=strict` and `ProtectHome=true` hide everything else, including the data directory and the wallet. Free disk for the data directory comes from the probe, which measures the real directory as root; the daemon's own view of `/root` is an empty placeholder mount under `ProtectHome`.
 
 Counting another user's open files needs `CAP_SYS_PTRACE`, which would also allow reading the node process's memory. Rather than grant that to the daemon, the root probe records the count every 30 seconds and the daemon reads the file; that is what feeds `fds_high`. `nomctl alerts status` shows the user the daemon runs as and whether the probe timer is installed.
 
