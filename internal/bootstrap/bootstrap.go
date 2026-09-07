@@ -451,8 +451,11 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 			}
 			return fmt.Errorf("%w; previous data put back and the node restarted", err)
 		}
-		if len(moved) > 0 {
-			slog.Info("Previous chain data kept in " + backup.RestoreDir(cfg) + "; delete it once the node has synced")
+		for _, safetyCopy := range moved {
+			if safetyCopy != "" {
+				slog.Info("Previous chain data kept in " + backup.RestoreDir(cfg) + "; delete it once the node has synced")
+				break
+			}
 		}
 	}
 

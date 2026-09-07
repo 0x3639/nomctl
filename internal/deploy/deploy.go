@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -176,14 +177,10 @@ func ParseBranches(out string) []string {
 	return branches
 }
 
-// CloneAndBuild stops the node, clones repoURL@branch into WorkDir, builds the
-// node binary with the managed Go toolchain and installs it into InstallDir.
+// CloneAndBuild clones repoURL@branch into WorkDir and builds the node with
+// the managed Go toolchain while the installed service keeps running. Only
+// after a successful build does it stop the node and install the binary.
 func CloneAndBuild(cfg config.Config, repoURL, branch string) error {
-	if err := ui.Step("Stopping "+cfg.ServiceName+" in case it is running...", func() error {
-		return service.StopIfRunning(cfg.ServiceName)
-	}); err != nil {
-		return err
-	}
 	slog.Info(fmt.Sprintf("Using repository %s with branch %s", repoURL, branch))
 
 	srcDir := cfg.SourceDir()
@@ -202,6 +199,12 @@ func CloneAndBuild(cfg config.Config, repoURL, branch string) error {
 			Dir(srcDir).Env("GO111MODULE=on").Run()
 	}); err != nil {
 		return fmt.Errorf("failed to build %s: %w", cfg.BinaryName, err)
+	}
+
+	if err := ui.Step("Stopping "+cfg.ServiceName+" in case it is running...", func() error {
+		return service.StopIfRunning(cfg.ServiceName)
+	}); err != nil {
+		return err
 	}
 
 	if err := ui.Step("Installing "+cfg.BinaryName+" binary...", func() error {
@@ -224,14 +227,21 @@ User=root
 Group=root
 Type=simple
 SuccessExitStatus=SIGKILL 9
-ExecStart=%[2]s
+ExecStart=:%[2]s --data %[3]s
 KillMode=control-group
 Restart=on-failure
 TimeoutStopSec=10s
 TimeoutStartSec=10s
 [Install]
 WantedBy=multi-user.target
-`, cfg.BinaryName, cfg.BinaryPath())
+`, cfg.BinaryName, systemdArg(cfg.BinaryPath()), systemdArg(cfg.ZnnDir))
+}
+
+// systemdArg quotes an ExecStart argument and escapes unit specifiers. The
+// command uses the : prefix to disable environment expansion in all arguments.
+// Quoted-string escapes keep path whitespace and control bytes in one value.
+func systemdArg(value string) string {
+	return strings.ReplaceAll(strconv.Quote(value), "%", "%%")
 }
 
 // CreateService writes the node unit when it is missing or differs from
@@ -264,7 +274,7 @@ func CreateService(cfg config.Config) error {
 		return err
 	}
 	// A changed unit only takes effect on the next (re)start; deploy stops
-	// the node before building, but apply it here too in case it is running.
+	// the node before installing, but apply it here too in case it is running.
 	if changed && service.IsActive(cfg.ServiceName) {
 		slog.Info("Restarting " + cfg.ServiceUnit() + " to apply the updated unit...")
 		if err := service.RestartUnit(cfg.ServiceUnit()); err != nil {

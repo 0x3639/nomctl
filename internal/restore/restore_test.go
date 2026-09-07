@@ -71,3 +71,29 @@ func TestVerify(t *testing.T) {
 		t.Error("mismatched hash should fail")
 	}
 }
+
+func TestMoveAsideRejectsNonDirectory(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{ZnnDir: filepath.Join(root, "znn"), BackupDir: filepath.Join(root, "backup")}
+	if err := os.MkdirAll(cfg.ZnnDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(cfg.ZnnDir, "network")
+	if err := os.WriteFile(target, []byte("preserve"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := MoveAside(cfg, time.Unix(1_700_000_000, 0), []string{"nom", "network"})
+	if err == nil {
+		t.Fatal("non-directory target was accepted")
+	}
+	if _, ok := moved["network"]; ok {
+		t.Fatal("unprepared target recorded for rollback")
+	}
+	if err := MoveBack(cfg, moved); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "preserve" {
+		t.Fatalf("unprepared target changed: %q, %v", got, err)
+	}
+}
