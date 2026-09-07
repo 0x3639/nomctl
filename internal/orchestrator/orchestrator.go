@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/0x3639/nomctl/internal/config"
@@ -37,6 +38,24 @@ var (
 	sleep        = time.Sleep
 )
 
+// ErrBadDir is returned for an orchestrator directory that is not a safe
+// absolute path to delete under.
+var ErrBadDir = errors.New("NOMCTL_ORCHESTRATOR_DIR must be an absolute path other than /")
+
+// ValidateDir checks that dir is absolute and not the filesystem root, and
+// returns it cleaned.
+func ValidateDir(dir string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("%w (got %q)", ErrBadDir, dir)
+	}
+	clean := filepath.Clean(dir)
+	if clean == string(filepath.Separator) {
+		return "", fmt.Errorf("%w (got %q)", ErrBadDir, dir)
+	}
+	return clean, nil
+}
+
 // Installed reports whether the orchestrator unit exists.
 func Installed(cfg config.Config) (bool, error) {
 	return unitExists(cfg.OrchestratorService)
@@ -46,6 +65,10 @@ func Installed(cfg config.Config) (bool, error) {
 // to settle, delete its queues and events, start it again. It refuses when
 // the unit is not installed.
 func HardReset(cfg config.Config) error {
+	dir, err := ValidateDir(cfg.OrchestratorDir)
+	if err != nil {
+		return err
+	}
 	ok, err := Installed(cfg)
 	if err != nil {
 		return err
@@ -63,7 +86,7 @@ func HardReset(cfg config.Config) error {
 
 	var errs []error
 	for _, d := range ResetDirs {
-		target := filepath.Join(cfg.OrchestratorDir, d)
+		target := filepath.Join(dir, d)
 		if _, err := os.Stat(target); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				slog.Info(target + " does not exist; skipping")

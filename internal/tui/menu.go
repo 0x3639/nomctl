@@ -140,13 +140,13 @@ func Dispatch(cfg *config.Config, action Action) error {
 	case ActionSupport:
 		return SupportBundle(*cfg)
 	case ActionResync:
-		return withLock("resync", func() error { return Resync(*cfg) })
+		return Resync(*cfg)
 	case ActionBackup:
 		return withLock("backup", func() error { return Backup(cfg) })
 	case ActionRestore:
-		return withLock("restore", func() error { return Restore(*cfg) })
+		return Restore(*cfg)
 	case ActionBootstrap:
-		return withLock("bootstrap", func() error { return Bootstrap(*cfg) })
+		return Bootstrap(*cfg)
 	case ActionAnalytics:
 		return analytics.Install(*cfg)
 	case ActionOrch:
@@ -214,7 +214,7 @@ func OrchestratorMenu(cfg config.Config) error {
 	}
 	switch choice {
 	case orchHardReset:
-		return withLock("orchestrator hard-reset", func() error { return OrchestratorHardReset(cfg) })
+		return OrchestratorHardReset(cfg)
 	case orchStatus:
 		st, err := service.Status(cfg.OrchestratorService)
 		if err != nil {
@@ -238,7 +238,8 @@ func OrchestratorHardReset(cfg config.Config) error {
 		slog.Warn("Hard reset cancelled by user")
 		return nil
 	}
-	return orchestrator.HardReset(cfg)
+	// The lock is taken only now so the prompt never holds it.
+	return withLock("orchestrator hard-reset", func() error { return orchestrator.HardReset(cfg) })
 }
 
 // SupportBundle collects a bundle with defaults and prints where it went.
@@ -343,7 +344,7 @@ func Resync(cfg config.Config) error {
 		slog.Warn("Resync cancelled by user")
 		return nil
 	}
-	return resync.Run(cfg)
+	return withLock("resync", func() error { return resync.Run(cfg) })
 }
 
 // Bootstrap asks for the snapshot URL and whether to keep the previous
@@ -374,7 +375,9 @@ func Bootstrap(cfg config.Config) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return bootstrap.Run(ctx, cfg, bootstrap.Options{URL: url, Discard: !keep})
+	return withLock("bootstrap", func() error {
+		return bootstrap.Run(ctx, cfg, bootstrap.Options{URL: url, Discard: !keep})
+	})
 }
 
 // Restore lets the user pick an archive and restores it.
@@ -383,7 +386,7 @@ func Restore(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	return restore.Run(cfg, archive)
+	return withLock("restore", func() error { return restore.Run(cfg, archive) })
 }
 
 var (

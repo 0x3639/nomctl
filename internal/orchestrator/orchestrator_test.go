@@ -79,6 +79,23 @@ func TestHardResetSkipsMissingDirs(t *testing.T) {
 	}
 }
 
+func TestHardResetRefusesUnsafeDir(t *testing.T) {
+	h := &fakeHost{exists: true}
+	h.install(t)
+	for _, dir := range []string{"", ".", "queues", "/", "//", "/../", "relative/path"} {
+		err := HardReset(config.Config{OrchestratorService: "orchestrator", OrchestratorDir: dir})
+		if !errors.Is(err, ErrBadDir) {
+			t.Errorf("dir %q: err = %v", dir, err)
+		}
+	}
+	if len(h.calls) != 0 {
+		t.Errorf("service touched: %v", h.calls)
+	}
+	if got, err := ValidateDir("/root/.orchestrator/"); err != nil || got != "/root/.orchestrator" {
+		t.Errorf("ValidateDir = %q, %v", got, err)
+	}
+}
+
 func TestHardResetRefusesWithoutUnit(t *testing.T) {
 	cfg := testConfig(t)
 	h := &fakeHost{exists: false}
