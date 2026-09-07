@@ -304,6 +304,7 @@ func Open(path, passphrase string) ([]byte, error) {
 func Inspect(archive []byte) (Contents, error) {
 	var c Contents
 	entries := map[string][]byte{}
+	b := newBudget()
 	if err := walk(archive, func(h *tar.Header, r io.Reader) error {
 		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeRegA { //nolint:staticcheck // older writers
 			return fmt.Errorf("wallet backup entry %s is not a regular file; refusing", h.Name)
@@ -312,10 +313,11 @@ func Inspect(archive []byte) (Contents, error) {
 		if err != nil {
 			return err
 		}
-		data, err := io.ReadAll(io.LimitReader(r, MaxArchiveBytes))
-		if err != nil {
+		var buf bytes.Buffer
+		if err := b.copy(&buf, r); err != nil {
 			return err
 		}
+		data := buf.Bytes()
 		entries[rel] = data
 		c.Files = append(c.Files, rel)
 		return nil
@@ -365,6 +367,25 @@ func entryPath(name string) (string, error) {
 	return "", fmt.Errorf("wallet backup entry %s is outside wallet/ and config.json; refusing", name)
 }
 
+// budget bounds the total bytes unpacked from one archive across entries.
+type budget struct{ left int64 }
+
+func newBudget() *budget { return &budget{left: MaxArchiveBytes} }
+
+// copy moves r to w within the remaining budget and fails, rather than
+// truncating, when an entry would exceed it.
+func (b *budget) copy(w io.Writer, r io.Reader) error {
+	n, err := io.Copy(w, io.LimitReader(r, b.left+1))
+	if err != nil {
+		return err
+	}
+	if n > b.left {
+		return fmt.Errorf("wallet backup exceeds %d bytes; refusing", MaxArchiveBytes)
+	}
+	b.left -= n
+	return nil
+}
+
 func walk(archive []byte, fn func(*tar.Header, io.Reader) error) error {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
@@ -399,6 +420,8 @@ type RestoreResult struct {
 var (
 	isActive = func(string) bool { return false }
 	restart  = func(string) error { return nil }
+	// installRename places one staged file; tests make it fail.
+	installRename = os.Rename
 )
 
 // SetServiceHooks wires the service functions (the cmd package does).
@@ -406,15 +429,20 @@ func SetServiceHooks(active func(string) bool, restartFn func(string) error) {
 	isActive, restart = active, restartFn
 }
 
-// Restore installs an archive's files into the data directory. The current
-// wallet directory and config.json are moved into
-// <backup dir>/restore/wallet-safety.<unix>/ first. When the archive's
-// config names a producer key, that key must be present and its address
-// must match, or nothing is touched. With restartNode the node is
+// Restore installs an archive's files into the data directory. The whole
+// current wallet directory and config.json are moved into
+// <backup dir>/restore/wallet-safety.<unix>/ first, so nothing stale
+// survives next to the restored files. When the archive's config names a
+// producer key, that key must be present, open with the archived password
+// and match the archived address, or nothing is touched. A failure after
+// the move puts the previous files back. With restartNode the node is
 // restarted so it loads the files.
 func Restore(cfg config.Config, archive []byte, restartNode bool, now time.Time) (RestoreResult, error) {
 	c, err := Inspect(archive)
 	if err != nil {
+		return RestoreResult{}, err
+	}
+	if err := os.MkdirAll(cfg.ZnnDir, 0o700); err != nil {
 		return RestoreResult{}, err
 	}
 	staging, err := os.MkdirTemp(cfg.ZnnDir, ".wallet-restore-")
@@ -422,6 +450,7 @@ func Restore(cfg config.Config, archive []byte, restartNode bool, now time.Time)
 		return RestoreResult{}, err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
+	b := newBudget()
 	if err := walk(archive, func(h *tar.Header, r io.Reader) error {
 		rel, err := entryPath(h.Name)
 		if err != nil {
@@ -435,7 +464,7 @@ func Restore(cfg config.Config, archive []byte, restartNode bool, now time.Time)
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(out, io.LimitReader(r, MaxArchiveBytes)); err != nil {
+		if err := b.copy(out, r); err != nil {
 			_ = out.Close()
 			return err
 		}
@@ -458,31 +487,48 @@ func Restore(cfg config.Config, archive []byte, restartNode bool, now time.Time)
 		res.Address = addr
 	}
 
+	// Move the live wallet directory and config.json aside, remembering
+	// each move so a failure can undo it.
 	safety := filepath.Join(backup.RestoreDir(cfg), fmt.Sprintf("wallet-safety.%d", now.Unix()))
 	if err := os.MkdirAll(safety, 0o700); err != nil {
 		return res, err
 	}
 	res.SafetyDir = safety
-	for _, rel := range c.Files {
-		live := filepath.Join(cfg.ZnnDir, filepath.FromSlash(rel))
-		if _, err := os.Lstat(live); err == nil {
-			keep := filepath.Join(safety, filepath.FromSlash(rel))
-			if err := os.MkdirAll(filepath.Dir(keep), 0o700); err != nil {
-				return res, err
-			}
-			if err := os.Rename(live, keep); err != nil {
-				return res, fmt.Errorf("move %s aside: %w", rel, err)
+	type move struct{ from, to string }
+	var moved []move
+	rollback := func(cause error) error {
+		var errs []error
+		for i := len(moved) - 1; i >= 0; i-- {
+			m := moved[i]
+			_ = os.RemoveAll(m.from) // whatever was installed there
+			if err := os.Rename(m.to, m.from); err != nil {
+				errs = append(errs, fmt.Errorf("put back %s: %w", m.from, err))
 			}
 		}
+		if len(errs) > 0 {
+			return fmt.Errorf("%w; and the previous files could not all be put back (see %s): %w", cause, safety, errors.Join(errs...))
+		}
+		return fmt.Errorf("%w (previous files put back)", cause)
+	}
+	for _, name := range []string{"wallet", "config.json"} {
+		live := filepath.Join(cfg.ZnnDir, name)
+		if _, err := os.Lstat(live); err != nil {
+			continue
+		}
+		keep := filepath.Join(safety, name)
+		if err := os.Rename(live, keep); err != nil {
+			return res, rollback(fmt.Errorf("move %s aside: %w", name, err))
+		}
+		moved = append(moved, move{live, keep})
 	}
 	for _, rel := range c.Files {
 		src := filepath.Join(staging, filepath.FromSlash(rel))
 		dst := filepath.Join(cfg.ZnnDir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			return res, err
+			return res, rollback(err)
 		}
-		if err := os.Rename(src, dst); err != nil {
-			return res, fmt.Errorf("install %s: %w", rel, err)
+		if err := installRename(src, dst); err != nil {
+			return res, rollback(fmt.Errorf("install %s: %w", rel, err))
 		}
 	}
 	if restartNode && res.WasRunning {

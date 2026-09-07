@@ -67,6 +67,6 @@ tar -xzf wallet.tar.gz
 
 **Copy the archive off the node.** A backup on the node's own disk does not survive the node. Keep the passphrase with the copy: without it the backup cannot be opened, and there is no recovery.
 
-Restoring checks that the archive holds only wallet files and `config.json`, and, when its config names a producer key, that the key is present, opens with the archived password and matches the archived address. The current wallet directory and `config.json` are moved to `<backup dir>/restore/wallet-safety.<timestamp>/` before the archived files are put in place. The node reads them at start: pass `--restart` or run `sudo nomctl restart`.
+Restoring checks that the archive holds only wallet files and `config.json`, and, when its config names a producer key, that the key is present, opens with the archived password and matches the archived address. The whole current wallet directory and `config.json` are moved to `<backup dir>/restore/wallet-safety.<timestamp>/` before the archived files are put in place, so nothing stale survives next to them; a failure after the move puts them back. The node reads them at start: pass `--restart` or run `sudo nomctl restart`.
 
 The menu offers both under **Pillar**. The `wallet_backup_missing` alert (off by default) sends one message when a producer key exists without a backup newer than the key; see [Alert rules](/alerts/rules).

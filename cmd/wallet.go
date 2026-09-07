@@ -106,6 +106,9 @@ the archived files are put in place. The node reads both at start:
 			return err
 		})
 		if err != nil {
+			if res.SafetyDir != "" {
+				fmt.Fprintf(os.Stderr, "Previous wallet files are under %s\n", res.SafetyDir)
+			}
 			return err
 		}
 		logx.Success("Wallet backup restored: " + strings.Join(res.Files, ", "))
