@@ -159,8 +159,10 @@ func TestRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	SetServiceHooks(func(string) bool { return true }, func(string) error { calls++; return nil })
-	t.Cleanup(func() { SetServiceHooks(func(string) bool { return false }, func(string) error { return nil }) })
+	SetServiceHooks(func(string) (bool, error) { return true, nil }, func(string) error { return nil }, func(string) error { calls++; return nil })
+	t.Cleanup(func() {
+		SetServiceHooks(func(string) (bool, error) { return false, nil }, func(string) error { return nil }, func(string) error { return nil })
+	})
 	now := time.Unix(1_800_000_000, 0)
 	rr, err := Restore(cfg, archive, true, now)
 	if err != nil {

@@ -49,7 +49,7 @@ var orchestratorLogsCmd = &cobra.Command{
 	Use:         "logs",
 	Short:       "Show the orchestrator journal (use -f to follow)",
 	Args:        cobra.NoArgs,
-	Annotations: rootOnly(),
+	Annotations: diagnostic(),
 	RunE: func(*cobra.Command, []string) error {
 		ok, err := orchestrator.Installed(cfg)
 		if err != nil {

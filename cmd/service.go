@@ -16,31 +16,37 @@ var startCmd = &cobra.Command{
 	Use:         "start",
 	Short:       "Start the node service",
 	Args:        cobra.NoArgs,
-	Annotations: rootOnly(),
-	RunE:        func(*cobra.Command, []string) error { return service.Start(cfg.ServiceName) },
+	Annotations: diagnostic(),
+	RunE: func(*cobra.Command, []string) error {
+		return withLock("start", func() error { return service.Start(cfg.ServiceName) })
+	},
 }
 
 var stopCmd = &cobra.Command{
 	Use:         "stop",
 	Short:       "Stop the node service",
 	Args:        cobra.NoArgs,
-	Annotations: rootOnly(),
-	RunE:        func(*cobra.Command, []string) error { return service.Stop(cfg.ServiceName) },
+	Annotations: diagnostic(),
+	RunE: func(*cobra.Command, []string) error {
+		return withLock("stop", func() error { return service.Stop(cfg.ServiceName) })
+	},
 }
 
 var restartCmd = &cobra.Command{
 	Use:         "restart",
 	Short:       "Restart the node service",
 	Args:        cobra.NoArgs,
-	Annotations: rootOnly(),
-	RunE:        func(*cobra.Command, []string) error { return service.Restart(cfg.ServiceName) },
+	Annotations: diagnostic(),
+	RunE: func(*cobra.Command, []string) error {
+		return withLock("restart", func() error { return service.Restart(cfg.ServiceName) })
+	},
 }
 
 var logsCmd = &cobra.Command{
 	Use:         "logs",
 	Short:       "Show the node service journal (use -f to follow)",
 	Args:        cobra.NoArgs,
-	Annotations: rootOnly(),
+	Annotations: diagnostic(),
 	RunE: func(*cobra.Command, []string) error {
 		return tui.Monitor(cfg, flagLogsFollow, flagLogsLines)
 	},

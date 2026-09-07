@@ -258,3 +258,50 @@ func TestRunRollbackAfterPartialInstall(t *testing.T) {
 		t.Errorf("restore dir should be empty after rollback: %v", entries)
 	}
 }
+
+func TestRunRollbackRestoresAbsentFolders(t *testing.T) {
+	for _, missing := range []string{"nom", "network", "consensus", "all"} {
+		t.Run(missing, func(t *testing.T) {
+			cfg := testConfig(t)
+			calls := stubService(t)
+			a := tgz(t, good()...)
+			for _, folder := range []string{"nom", "network", "consensus"} {
+				if missing == folder || missing == "all" {
+					if err := os.RemoveAll(filepath.Join(cfg.ZnnDir, folder)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			oldInstall := installDir
+			installDir = func(src, dst string) error {
+				if err := os.Rename(src, dst); err != nil {
+					return err
+				}
+				if filepath.Base(dst) == "consensus" {
+					return errors.New("install interrupted")
+				}
+				return nil
+			}
+			t.Cleanup(func() { installDir = oldInstall })
+			if err := Run(cfg, a); err == nil || !strings.Contains(err.Error(), "install interrupted") {
+				t.Fatalf("restore = %v", err)
+			}
+			for _, folder := range []string{"nom", "network", "consensus"} {
+				path := filepath.Join(cfg.ZnnDir, folder)
+				if missing == folder || missing == "all" {
+					if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+						t.Errorf("%s should remain absent: %v", folder, err)
+					}
+				} else {
+					got, err := os.ReadFile(filepath.Join(path, "old"))
+					if err != nil || string(got) != "old-"+folder {
+						t.Errorf("%s not restored: %q, %v", folder, got, err)
+					}
+				}
+			}
+			if strings.Join(*calls, ",") != "stop,start" {
+				t.Errorf("calls = %v", *calls)
+			}
+		})
+	}
+}

@@ -80,10 +80,13 @@ var restoreWalletCmd = &cobra.Command{
 	Long: `Opens the archive (decrypting with the passphrase for .age files), checks
 that it holds only wallet files and config.json, and, when its config names
 a producer key, that the key is present, opens with the archived password
-and matches the archived address. The current wallet directory and
-config.json are moved to <backup dir>/restore/wallet-safety.<unix>/ before
-the archived files are put in place. The node reads both at start:
---restart restarts it, otherwise restart it yourself.`,
+and derives the archived address at Producer.Index. The current wallet
+directory and config.json are kept in a private .wallet-safety.<unix>-*
+directory under the node data directory before the archive is installed.
+The node is stopped before files change. If it is running, --restart is
+required and restarts it after restoring; otherwise it stays stopped.
+On failure, previous files are recovered only after a confirmed stop.
+The safety directory contains unencrypted wallet and configuration files.`,
 	Args:        cobra.ExactArgs(1),
 	Annotations: rootOnly(),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -107,7 +110,7 @@ the archived files are put in place. The node reads both at start:
 		})
 		if err != nil {
 			if res.SafetyDir != "" {
-				fmt.Fprintf(os.Stderr, "Previous wallet files are under %s\n", res.SafetyDir)
+				fmt.Fprintf(os.Stderr, "Wallet recovery directory: %s\n", res.SafetyDir)
 			}
 			return err
 		}
@@ -117,10 +120,8 @@ the archived files are put in place. The node reads both at start:
 			fmt.Fprintf(out, "%-18s %s\n", "Producer address", res.Address)
 		}
 		fmt.Fprintf(out, "%-18s %s\n", "Previous files", res.SafetyDir)
-		switch {
-		case res.Restarted:
-		case res.WasRunning:
-			fmt.Fprintf(out, "%s reads these files at start: sudo nomctl restart\n", cfg.ServiceName)
+		if !res.Restarted {
+			fmt.Fprintf(out, "%s is stopped; start it when ready: sudo nomctl start\n", cfg.ServiceName)
 		}
 		return nil
 	},
@@ -145,10 +146,13 @@ func walletChecker() alerts.WalletInfo {
 }
 
 func init() {
-	walletbackup.SetServiceHooks(service.IsActive, service.Restart)
+	walletbackup.SetServiceHooks(func(name string) (bool, error) {
+		state, err := service.Status(name)
+		return state.Running(), err
+	}, service.Stop, service.Restart)
 	backupWalletCmd.Flags().StringVar(&flagWalletOutput, "output", "", "directory to write to (default <backup dir>/wallet)")
 	backupWalletCmd.Flags().BoolVar(&flagWalletNoEncrypt, "no-encrypt", false, "write a plain archive (it holds the producer password)")
-	restoreWalletCmd.Flags().BoolVar(&flagWalletRestart, "restart", false, "restart the node after restoring")
+	restoreWalletCmd.Flags().BoolVar(&flagWalletRestart, "restart", false, "stop a running node for restore and restart it afterward")
 	backupCmd.AddCommand(backupWalletCmd)
 	restoreCmd.AddCommand(restoreWalletCmd)
 }

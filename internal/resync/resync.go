@@ -29,12 +29,9 @@ func Run(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	wasActive := st == service.Active
-	if wasActive {
-		slog.Info(cfg.ServiceName + " service is running, attempting to stop before resync…")
-		if err := service.Stop(cfg.ServiceName); err != nil {
-			return fmt.Errorf("failed to stop %s service; aborting resync: %w", cfg.ServiceName, err)
-		}
+	wasActive := st.Running()
+	if err := service.Stop(cfg.ServiceName); err != nil {
+		return fmt.Errorf("failed to stop %s service; aborting resync: %w", cfg.ServiceName, err)
 	}
 
 	deleted, err := Wipe(cfg.ZnnDir)

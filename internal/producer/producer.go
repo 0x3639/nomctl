@@ -97,6 +97,12 @@ func Create(path, password string) (string, error) {
 
 // Verify opens the key file with password and returns its base address.
 func Verify(path, password string) (string, error) {
+	return VerifyAtIndex(path, password, 0)
+}
+
+// VerifyAtIndex opens the key file and derives the producer address at index,
+// matching the node's interpretation of Producer.Index.
+func VerifyAtIndex(path, password string, index uint32) (string, error) {
 	kf, err := wallet.ReadKeyFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
@@ -109,7 +115,11 @@ func Verify(path, password string) (string, error) {
 		return "", err
 	}
 	defer ks.Zero()
-	return ks.BaseAddress.String(), nil
+	_, kp, err := ks.DeriveForIndexPath(index)
+	if err != nil {
+		return "", err
+	}
+	return kp.Address.String(), nil
 }
 
 // Address reads the base address recorded in a key file without opening it.
