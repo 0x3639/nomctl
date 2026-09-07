@@ -41,6 +41,8 @@ const (
 	DefaultGrafanaAdminPassword  = "admin"
 	DefaultGrafanaHTTPAddr       = "127.0.0.1"
 	DefaultReleaseRepo           = "0x3639/nomctl"
+	DefaultOrchestratorService   = "orchestrator"
+	DefaultOrchestratorDir       = "/root/.orchestrator"
 	DefaultBootstrapURL          = "https://hypercore.nyc3.digitaloceanspaces.com/bootstrap/2026-09-01/bootstrap-20260901010001.zip"
 )
 
@@ -86,6 +88,11 @@ type Config struct {
 	// BootstrapURL is the default snapshot for `nomctl bootstrap`.
 	// Env: NOMCTL_BOOTSTRAP_URL.
 	BootstrapURL string
+	// OrchestratorService is the orchestrator's systemd unit (without
+	// .service) and OrchestratorDir its state directory. Env:
+	// NOMCTL_ORCHESTRATOR_SERVICE, NOMCTL_ORCHESTRATOR_DIR.
+	OrchestratorService string
+	OrchestratorDir     string
 
 	// Backup settings. Env: NOMCTL_BACKUP_DIR, NOMCTL_MAX_BACKUPS,
 	// NOMCTL_BACKUP_CADENCE_DAYS, NOMCTL_BACKUP_HOUR, NOMCTL_MIN_FREE_SPACE_KB.
@@ -137,6 +144,8 @@ func Default() Config {
 		GrafanaHTTPAddr:       DefaultGrafanaHTTPAddr,
 		ReleaseRepo:           DefaultReleaseRepo,
 		BootstrapURL:          DefaultBootstrapURL,
+		OrchestratorService:   DefaultOrchestratorService,
+		OrchestratorDir:       DefaultOrchestratorDir,
 		UpdateCheck:           true,
 	}
 }
@@ -208,6 +217,8 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("REPO", &c.ReleaseRepo)
 	boolean("UPDATE_CHECK", &c.UpdateCheck)
 	str("BOOTSTRAP_URL", &c.BootstrapURL)
+	str("ORCHESTRATOR_SERVICE", &c.OrchestratorService)
+	str("ORCHESTRATOR_DIR", &c.OrchestratorDir)
 	str("BACKUP_DIR", &c.BackupDir)
 	integer("MAX_BACKUPS", &c.MaxBackups)
 	integer("BACKUP_CADENCE_DAYS", &c.BackupCadenceDays)
@@ -314,6 +325,8 @@ func Vars() []Var {
 		{"NOMCTL_REPO", DefaultReleaseRepo, "GitHub repository nomctl upgrade downloads releases from"},
 		{"NOMCTL_UPDATE_CHECK", "true", "Check GitHub for newer nomctl and go-zenon in status/top (cached 6h)"},
 		{"NOMCTL_BOOTSTRAP_URL", DefaultBootstrapURL, "Snapshot for nomctl bootstrap (.zip with a .hash sidecar next to it)"},
+		{"NOMCTL_ORCHESTRATOR_SERVICE", DefaultOrchestratorService, "systemd unit of the orchestrator (nomctl orchestrator ...)"},
+		{"NOMCTL_ORCHESTRATOR_DIR", DefaultOrchestratorDir, "Orchestrator state directory; hard-reset deletes queues/ and events/ under it"},
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},
 		{"NOMCTL_MAX_BACKUPS", strconv.Itoa(DefaultMaxBackups), "Number of backups to retain"},
 		{"NOMCTL_BACKUP_CADENCE_DAYS", strconv.Itoa(DefaultBackupCadenceDays), "Days between scheduled backups (0 = every run)"},

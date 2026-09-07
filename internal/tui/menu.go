@@ -20,7 +20,9 @@ import (
 	"github.com/0x3639/nomctl/internal/bootstrap"
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/deploy"
+	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/lock"
+	"github.com/0x3639/nomctl/internal/orchestrator"
 	"github.com/0x3639/nomctl/internal/restore"
 	"github.com/0x3639/nomctl/internal/resync"
 	"github.com/0x3639/nomctl/internal/service"
@@ -45,6 +47,7 @@ const (
 	ActionBackup    Action = "backup"
 	ActionRestore   Action = "restore"
 	ActionBootstrap Action = "bootstrap"
+	ActionOrch      Action = "orchestrator"
 	ActionAnalytics Action = "analytics"
 	ActionExit      Action = "exit"
 )
@@ -68,6 +71,7 @@ func MenuOptions(cfg config.Config) []huh.Option[string] {
 		{ActionRestore, "Restore Zenon from a backup"},
 		{ActionBootstrap, "Restore Zenon from a bootstrap snapshot"},
 		{ActionAnalytics, "Set up a Grafana dashboard"},
+		{ActionOrch, "Orchestrator (hard reset, status, logs)"},
 		{ActionExit, ""},
 	}
 	opts := make([]huh.Option[string], 0, len(entries))
@@ -137,15 +141,17 @@ func Dispatch(cfg *config.Config, action Action) error {
 	case ActionSupport:
 		return SupportBundle(*cfg)
 	case ActionResync:
-		return withLock("resync", func() error { return Resync(*cfg) })
+		return Resync(*cfg)
 	case ActionBackup:
 		return withLock("backup", func() error { return Backup(cfg) })
 	case ActionRestore:
-		return withLock("restore", func() error { return Restore(*cfg) })
+		return Restore(*cfg)
 	case ActionBootstrap:
-		return withLock("bootstrap", func() error { return Bootstrap(*cfg) })
+		return Bootstrap(*cfg)
 	case ActionAnalytics:
 		return analytics.Install(*cfg)
+	case ActionOrch:
+		return OrchestratorMenu(*cfg)
 	case ActionExit:
 		return nil
 	}
@@ -179,6 +185,64 @@ func AlertsAction() error {
 	return AlertsSetup()
 }
 
+// Orchestrator submenu actions.
+const (
+	orchStatus    = "status"
+	orchLogs      = "logs"
+	orchHardReset = "hard-reset"
+	orchBack      = "back"
+)
+
+// OrchestratorMenu shows the orchestrator functions and runs the chosen
+// one. It returns to the main menu on "Back".
+func OrchestratorMenu(cfg config.Config) error {
+	installed, err := orchestrator.Installed(cfg)
+	if err != nil {
+		return err
+	}
+	if !installed {
+		slog.Warn(orchestrator.ErrNotInstalled.Error() + " (unit " + cfg.OrchestratorService + ")")
+		return nil
+	}
+	choice, err := Select("Orchestrator", []huh.Option[string]{
+		huh.NewOption("Hard reset (delete queues and events, restart)", orchHardReset),
+		huh.NewOption("Show status", orchStatus),
+		huh.NewOption("View orchestrator logs in real-time", orchLogs),
+		huh.NewOption("Back", orchBack),
+	})
+	if err != nil {
+		return err
+	}
+	switch choice {
+	case orchHardReset:
+		return OrchestratorHardReset(cfg)
+	case orchStatus:
+		st, err := service.Status(cfg.OrchestratorService)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "%s: %s\n", cfg.OrchestratorService, st)
+		return nil
+	case orchLogs:
+		return MonitorUnit(cfg.OrchestratorService, true, 20)
+	}
+	return nil
+}
+
+// OrchestratorHardReset confirms, then runs the hard reset.
+func OrchestratorHardReset(cfg config.Config) error {
+	ok, err := Confirm(orchestrator.ConfirmText)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		slog.Warn("Hard reset cancelled by user")
+		return nil
+	}
+	// The lock is taken only now so the prompt never holds it.
+	return withLock("orchestrator hard-reset", func() error { return orchestrator.HardReset(cfg) })
+}
+
 // SupportBundle collects a bundle with defaults and prints where it went.
 func SupportBundle(cfg config.Config) error {
 	res, err := support.Collect(context.Background(), cfg, support.Options{Version: Version})
@@ -204,7 +268,11 @@ func withLock(operation string, fn func() error) error {
 // Monitor ports monitor.sh: follow the journal, or show the last lines with
 // a warning when the service is not running.
 func Monitor(cfg config.Config, follow bool, lines int) error {
-	name := cfg.ServiceName
+	return MonitorUnit(cfg.ServiceName, follow, lines)
+}
+
+// MonitorUnit is Monitor for any systemd unit.
+func MonitorUnit(name string, follow bool, lines int) error {
 	if follow && !service.IsActive(name) {
 		slog.Warn(fmt.Sprintf("%s service is not running. Showing last %d log lines:", name, lines))
 		follow = false
@@ -277,7 +345,7 @@ func Resync(cfg config.Config) error {
 		slog.Warn("Resync cancelled by user")
 		return nil
 	}
-	return resync.Run(cfg)
+	return withLock("resync", func() error { return resync.Run(cfg) })
 }
 
 // Bootstrap asks for the snapshot URL and whether to keep the previous
@@ -308,16 +376,34 @@ func Bootstrap(cfg config.Config) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return bootstrap.Run(ctx, cfg, bootstrap.Options{URL: url, Discard: !keep})
+	return withLock("bootstrap", func() error {
+		return bootstrap.Run(ctx, cfg, bootstrap.Options{URL: url, Discard: !keep})
+	})
 }
 
 // Restore lets the user pick an archive and restores it.
 func Restore(cfg config.Config) error {
-	archive, err := PickBackup(cfg)
-	if err != nil {
-		return err
+	for {
+		archive, err := PickBackup(cfg)
+		if err != nil {
+			return err
+		}
+		// The picker runs outside the lock, so a scheduled backup may have
+		// pruned the chosen archive meanwhile: check under the lock and
+		// offer the list again rather than failing.
+		gone := false
+		err = withLock("restore", func() error {
+			if !fsx.Exists(archive) {
+				gone = true
+				return nil
+			}
+			return restore.Run(cfg, archive)
+		})
+		if err != nil || !gone {
+			return err
+		}
+		slog.Warn(archive + " was removed by a backup run in the meantime; pick another")
 	}
-	return restore.Run(cfg, archive)
 }
 
 var (

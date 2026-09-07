@@ -20,7 +20,9 @@ With no arguments nomctl opens a menu covering every action:
 | resync | Resync, after a confirmation |
 | backup | Backup, then an offer to schedule |
 | restore | Restore, with an archive picker |
+| bootstrap | [Bootstrap](/guide/bootstrap), with URL prompt, keep/discard question and confirmation |
 | analytics | [Analytics stack](/guide/analytics) |
+| orchestrator | [Orchestrator](/guide/orchestrator) submenu: hard reset, status, logs |
 
 After each action the menu asks whether to return. Esc or Ctrl+C leaves.
 

@@ -11,6 +11,7 @@ Planned features in priority order. Each gets a design spec in the repository un
 - **Pillar awareness** (v0.4.0): the node name doubles as the pillar name; `status` and `top` show production; `pillar_missed` and `momentums_stalled` alerts.
 - **Self-update** (v0.5.0): `nomctl upgrade` with verified download, atomic replace and rollback; update lines in `status`/`top`; opt-in `update_available` alert.
 - **Bootstrap sync** (v0.6.0): `nomctl bootstrap` downloads a verified chain snapshot and swaps it in, keeping the previous data unless `--discard`.
+- **Orchestrator** (v0.7.0): submenu and `nomctl orchestrator` with hard reset, status and logs; more orchestrator functions land here.
 
 ## Next
 
