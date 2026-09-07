@@ -114,13 +114,38 @@ func ensureSystemUser(name string) error {
 
 func releaseArch() string { return "linux-" + runtime.GOARCH }
 
-// ensureUnitFile writes the unit if it is missing and reports whether it did.
-func ensureUnitFile(path, content string) (bool, error) {
-	if fsx.Exists(path) {
-		return false, nil
+// ensureUnitFile also migrates a known previous generated unit, while keeping
+// operator-managed units intact.
+func ensureUnitFile(path, content string, previous ...string) (bool, error) {
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return false, fmt.Errorf("%s must be a regular unit file", path)
+		}
+		current, err := readNoFollow(path)
+		if err != nil {
+			return false, err
+		}
+		if string(current) == content {
+			return false, nil
+		}
+		managed := false
+		for _, old := range previous {
+			managed = managed || string(current) == old
+		}
+		if !managed {
+			slog.Warn("Keeping existing custom unit; verify its listen address", "unit", path)
+			return false, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return false, err
 	}
 	slog.Info("Writing " + path)
-	return true, service.WriteUnit(path, content)
+	candidate, err := managedCandidate(path, []byte(content), 0o644)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = os.Remove(candidate) }()
+	return true, os.Rename(candidate, path)
 }
 
 // installNodeExporter converges the node_exporter installation: every step
@@ -155,11 +180,14 @@ func installNodeExporter(cfg config.Config) error {
 	if err := ensureSystemUser(unit); err != nil {
 		return err
 	}
-	wrote, err := ensureUnitFile("/etc/systemd/system/node_exporter.service", NodeExporterUnit())
+	want := NodeExporterUnit()
+	previous := strings.Replace(want, " --web.listen-address=127.0.0.1:9100", "", 1)
+	_, err := ensureUnitFile("/etc/systemd/system/node_exporter.service", want, previous)
 	if err != nil {
 		return err
 	}
-	if err := service.EnsureRunning(unit, wrote); err != nil {
+	wasActive := service.IsActive(unit)
+	if err := activateMonitoringService(unit, wasActive); err != nil {
 		return err
 	}
 	logx.Success("Node Exporter installed and running.")
@@ -176,7 +204,7 @@ After=network-online.target
 User=node_exporter
 Group=node_exporter
 Type=simple
-ExecStart=/usr/local/bin/node_exporter
+ExecStart=/usr/local/bin/node_exporter --web.listen-address=127.0.0.1:9100
 
 [Install]
 WantedBy=multi-user.target
@@ -194,24 +222,13 @@ User=prometheus
 Group=prometheus
 Type=simple
 ExecStart=/usr/local/bin/prometheus \
+  --web.listen-address=127.0.0.1:9090 \
   --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/var/lib/prometheus/
 
 [Install]
 WantedBy=multi-user.target
 `
-}
-
-// nodeScrapeConfig is appended to prometheus.yml when the "node" job is absent.
-const nodeScrapeConfig = `
-  - job_name: "node"
-    static_configs:
-      - targets: ["localhost:9100"]
-`
-
-// NeedsNodeScrapeJob reports whether prometheus.yml lacks the node job.
-func NeedsNodeScrapeJob(promYML string) bool {
-	return !strings.Contains(promYML, `job_name: "node"`)
 }
 
 // AppendManaged appends text to a root-managed configuration file without
@@ -335,7 +352,9 @@ func installPrometheus(cfg config.Config) error {
 	if err := ensureSystemUser(unit); err != nil {
 		return err
 	}
-	wrote, err := ensureUnitFile("/etc/systemd/system/prometheus.service", PrometheusUnit())
+	want := PrometheusUnit()
+	previous := strings.Replace(want, "  --web.listen-address=127.0.0.1:9090 \\\n", "", 1)
+	_, err := ensureUnitFile("/etc/systemd/system/prometheus.service", want, previous)
 	if err != nil {
 		return err
 	}
@@ -348,24 +367,16 @@ func installPrometheus(cfg config.Config) error {
 	if err := execx.Run("chown", "-R", "prometheus:prometheus", "/var/lib/prometheus"); err != nil {
 		return err
 	}
-	if err := service.EnsureRunning(unit, wrote); err != nil {
-		return err
+	wasActive := service.IsActive(unit)
+	var recoverService func() error
+	if wasActive {
+		recoverService = func() error { return service.RestartUnit(unit) }
 	}
-
-	// The node_exporter scrape job is checked on every run, including when
-	// Prometheus was already installed by other means.
-	current, err := os.ReadFile(promYML)
-	if err != nil {
+	validate := func(path string) error { return execx.Run("/usr/local/bin/promtool", "check", "config", path) }
+	// Reapply after validation even on retries where the unit already matches.
+	activate := func(_ bool) error { return activateMonitoringService(unit, wasActive) }
+	if err := configurePrometheus(promYML, validate, activate, recoverService); err != nil {
 		return err
-	}
-	if NeedsNodeScrapeJob(string(current)) {
-		slog.Info("Adding Node Exporter scrape config to Prometheus.")
-		if err := AppendManaged(promYML, nodeScrapeConfig); err != nil {
-			return err
-		}
-		if err := service.RestartUnit(unit); err != nil {
-			return err
-		}
 	}
 	logx.Success("Prometheus installed and running.")
 	return nil
@@ -616,4 +627,17 @@ func importDB(g *Grafana, dashboard []byte) error {
 		return err
 	}
 	return g.PostDashboard(payload)
+}
+
+// activateMonitoringService reapplies the on-disk unit on every setup run.
+// A previous installation may have stopped after writing it but before
+// reloading or restarting. A newly started service is not restarted twice.
+func activateMonitoringService(unit string, wasActive bool) error {
+	if err := service.EnsureRunning(unit, true); err != nil {
+		return err
+	}
+	if wasActive {
+		return service.RestartUnit(unit)
+	}
+	return nil
 }

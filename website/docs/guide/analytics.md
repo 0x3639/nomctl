@@ -14,7 +14,11 @@ Installs a monitoring stack on the node:
 - **Grafana** from its apt repository (the key is stored at `/etc/apt/keyrings/grafana.asc`), listening on port 3000.
 - The **Prometheus** and **Infinity** datasources in Grafana, the Infinity plugin (`NOMCTL_INFINITY_PLUGIN_VERSION`), the public **Node Exporter Full** dashboard, and the **znnd** dashboard embedded in the nomctl binary.
 
-Every step checks its own precondition, so an interrupted run is completed by running the command again, and re-running on a finished install skips what exists (it still re-applies file ownership and waits for Grafana to answer).
+Every step checks its own precondition, so an interrupted run can be resumed by running the command again. The installer updates known nomctl-generated monitoring units to listen on loopback, while preserving other custom units and warning that their listen addresses should be reviewed. Changed running units are restarted.
+
+Prometheus configuration is edited as YAML. Existing jobs and unrelated sections are preserved, including an existing `node` job with operator-selected targets. A staged configuration must pass `promtool check config` before it is published or the service starts. If activation fails after an edit, the previous configuration is restored and a previously running service is restarted with it. The command reports any recovery failure. Aliased or inherited scrape lists that need editing are refused without changing the file; edit those layouts explicitly before retrying.
+
+Generated services bind node_exporter to `127.0.0.1:9100` and Prometheus to `127.0.0.1:9090`. For remote monitoring, deliberately configure the listener in a custom unit and restrict access with authentication and network controls. Custom units are not overwritten by the installer.
 
 ## Reaching Grafana safely
 
@@ -33,3 +37,5 @@ sudo NOMCTL_GRAFANA_ADMIN_PASSWORD='a long passphrase' nomctl analytics install
 ```
 
 For a quick look without a browser, `nomctl status` and `nomctl top` cover the same signals from the terminal.
+
+Rerunning analytics setup reloads systemd and restarts already running monitoring services after configuration validation. This also applies a unit written by an interrupted previous setup. Newly started services are not restarted a second time.
