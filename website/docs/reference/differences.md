@@ -23,7 +23,7 @@ nomctl reproduces the behaviour of [hypercore-one/deployment](https://github.com
 - Backup and restore honour `NOMCTL_ZNN_DIR`; the bash scripts hard-coded `/root/.znn`.
 - A backup whose data copy fails restarts the node before reporting the error.
 - Archives are published atomically with their sha256 sidecar; archives without one are ignored.
-- Before a restore, the safety move of current data must succeed or the restore aborts.
+- Before a restore, the archive is inspected and only chain-data folders are extracted (the script ran `tar -x` into the data directory, which would overwrite `config.json` or `wallet/` if the archive held them); the safety move of current data must succeed or the restore rolls back.
 - `resync` fails when a directory cannot be deleted instead of reporting success.
 - `bootstrap` verifies the hash and inspects the archive before stopping the node, keeps the previous data by default under the restore directory (the script left it in `~/.znn` as `nom_<date>` and friends; `--discard` deletes it instead), puts it back if the swap fails, and extracts with Go's zip reader, so `unzip` and `wget` are not needed.
 - Destructive operations abort when `systemctl` cannot report the service state, and are mutually exclusive through a lock file.

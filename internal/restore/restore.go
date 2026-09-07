@@ -99,7 +99,17 @@ func MoveBack(cfg config.Config, moved map[string]string) error {
 	return errors.Join(errs...)
 }
 
-// Run restores archive into the node data directory.
+// Hooks so tests can stub the host.
+var (
+	stopService  = service.Stop
+	startService = service.Start
+)
+
+// Run restores archive into the node data directory: verify the hash,
+// inspect every entry, extract into a private staging directory while the
+// node still runs, then stop, move the current folders aside, rename the
+// staged ones into place and start. A failure after the stop puts the
+// previous data back.
 func Run(cfg config.Config, archive string) error {
 	restoreDir := backup.RestoreDir(cfg)
 	if err := os.MkdirAll(restoreDir, 0o755); err != nil {
@@ -108,21 +118,44 @@ func Run(cfg config.Config, archive string) error {
 	if err := Verify(archive); err != nil {
 		return err
 	}
-	if err := service.Stop(cfg.ServiceName); err != nil {
-		return err
-	}
-
-	if _, err := MoveAside(cfg, time.Now(), backup.Folders); err != nil {
+	manifest, err := Inspect(archive)
+	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(cfg.ZnnDir, 0o755); err != nil {
 		return err
 	}
-	if err := ui.Step("Extracting backup…", func() error {
-		return execx.Run("tar", "-xzf", archive, "-C", cfg.ZnnDir)
-	}); err != nil {
+	now := time.Now()
+	staging, err := os.MkdirTemp(cfg.ZnnDir, ".restore-")
+	if err != nil {
 		return err
 	}
+	defer func() { _ = os.RemoveAll(staging) }()
+	if err := ui.Step("Extracting backup…", func() error { return Extract(archive, staging) }); err != nil {
+		return err
+	}
+
+	if err := stopService(cfg.ServiceName); err != nil {
+		return err
+	}
+	moved, err := MoveAside(cfg, now, manifest.Folders)
+	if err == nil {
+		for _, folder := range manifest.Folders {
+			if err = os.Rename(filepath.Join(staging, folder), filepath.Join(cfg.ZnnDir, folder)); err != nil {
+				err = fmt.Errorf("install %s: %w", folder, err)
+				break
+			}
+		}
+	}
+	if err != nil {
+		if backErr := MoveBack(cfg, moved); backErr != nil {
+			return fmt.Errorf("%w; and the previous data could not all be put back: %w (the node is stopped)", err, backErr)
+		}
+		if startErr := startService(cfg.ServiceName); startErr != nil {
+			return fmt.Errorf("%w; previous data put back but the node did not start: %w", err, startErr)
+		}
+		return fmt.Errorf("%w; previous data put back and the node restarted", err)
+	}
 	logx.Success(cfg.ServiceName + " data restored successfully.")
-	return service.Start(cfg.ServiceName)
+	return startService(cfg.ServiceName)
 }
