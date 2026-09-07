@@ -31,7 +31,7 @@ func Inspect(archive string) (Manifest, error) {
 	var m Manifest
 	present := map[string]bool{}
 	err := walk(archive, func(h *tar.Header, _ io.Reader) error {
-		folder, _, err := entryPath(h.Name)
+		folder, rel, err := entryPath(h.Name)
 		if err != nil {
 			return err
 		}
@@ -41,6 +41,9 @@ func Inspect(archive string) (Manifest, error) {
 		switch h.Typeflag {
 		case tar.TypeDir:
 		case tar.TypeReg, tar.TypeRegA: //nolint:staticcheck // TypeRegA is what older tar writers emit
+			if rel == "" {
+				return fmt.Errorf("backup entry %s is a file where the %s directory should be; refusing to restore", h.Name, folder)
+			}
 			m.Files++
 			m.Uncompressed += h.Size
 		default:
@@ -79,6 +82,9 @@ func Extract(archive, dst string) error {
 		case tar.TypeDir:
 			return os.MkdirAll(target, 0o755)
 		case tar.TypeReg, tar.TypeRegA: //nolint:staticcheck // see Inspect
+			if rel == "" {
+				return fmt.Errorf("backup entry %s is a file where the %s directory should be; refusing to restore", h.Name, folder)
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}

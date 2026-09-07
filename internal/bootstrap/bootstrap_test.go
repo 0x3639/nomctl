@@ -300,8 +300,15 @@ func TestRunRollsBackWhenInstallFails(t *testing.T) {
 	cfg := testConfig(t)
 	h := &fakeHost{}
 	h.install(t)
-	installDirs = func(config.Config, string) error { return errors.New("rename exploded") }
-	err := Run(context.Background(), cfg, Options{URL: srv.URL + "/b/snap.zip"})
+	// Install the first directory for real, then fail, so the rollback has
+	// to clear what was installed before putting the old data back.
+	installDirs = func(cfg config.Config, staging string) error {
+		if err := os.Rename(filepath.Join(staging, "nom"), filepath.Join(cfg.ZnnDir, "nom")); err != nil {
+			return err
+		}
+		return errors.New("rename exploded")
+	}
+	err := Run(context.Background(), cfg, Options{URL: srv.URL + "/b/snap.zip", Now: func() time.Time { return time.Unix(1_700_000_000, 0) }})
 	if err == nil || !strings.Contains(err.Error(), "rename exploded") || !strings.Contains(err.Error(), "put back") {
 		t.Fatalf("err = %v", err)
 	}
@@ -312,6 +319,12 @@ func TestRunRollsBackWhenInstallFails(t *testing.T) {
 		if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, d, "old")); string(got) != "old-"+d {
 			t.Errorf("%s not put back: %q", d, got)
 		}
+		if _, err := os.Stat(filepath.Join(cfg.ZnnDir, d, d+".bak.1700000000")); err == nil {
+			t.Errorf("%s: safety copy nested inside the installed directory", d)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ZnnDir, "nom", "000001.log")); err == nil {
+		t.Error("installed snapshot data still live after rollback")
 	}
 	if entries, _ := os.ReadDir(filepath.Join(cfg.BackupDir, "restore")); len(entries) != 0 {
 		t.Errorf("restore dir should be empty after rollback: %v", entries)
