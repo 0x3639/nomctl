@@ -48,4 +48,10 @@ echo "Verifying checksum..."
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP" nomctl
 install -m 0755 "$TMP/nomctl" "$INSTALL_DIR/nomctl"
 echo "Installed $("$INSTALL_DIR/nomctl" --version) to $INSTALL_DIR/nomctl"
-echo "Next: sudo nomctl deploy && sudo nomctl start   (or just: sudo nomctl)"
+echo
+echo "To set up a node on this machine:"
+echo "  sudo nomctl deploy      builds go-zenon, installs the service and starts syncing"
+echo "or open the menu:"
+echo "  sudo nomctl"
+echo
+echo "Already running a node here?  sudo nomctl status"
