@@ -418,25 +418,30 @@ type RestoreResult struct {
 
 // Hooks so tests can stub the host.
 var (
-	isActive = func(string) bool { return false }
-	restart  = func(string) error { return nil }
-	// installRename places one staged file; tests make it fail.
-	installRename = os.Rename
+	serviceRunning = func(string) (bool, error) { return false, nil }
+	stop           = func(string) error { return nil }
+	restart        = func(string) error { return nil }
+	// Rename hooks inject installation and recovery failures in tests.
+	installRename  = os.Rename
+	rollbackRename = os.Rename
 )
 
 // SetServiceHooks wires the service functions (the cmd package does).
-func SetServiceHooks(active func(string) bool, restartFn func(string) error) {
-	isActive, restart = active, restartFn
+func SetServiceHooks(running func(string) (bool, error), stopFn, restartFn func(string) error) {
+	serviceRunning, stop, restart = running, stopFn, restartFn
 }
 
 // Restore installs an archive's files into the data directory. The whole
-// current wallet directory and config.json are moved into
-// <backup dir>/restore/wallet-safety.<unix>/ first, so nothing stale
-// survives next to the restored files. When the archive's config names a
-// producer key, that key must be present, open with the archived password
-// and match the archived address, or nothing is touched. A failure after
-// the move puts the previous files back. With restartNode the node is
-// restarted so it loads the files.
+// current wallet directory and config.json are moved into a unique private
+// .wallet-safety.<unix>-* directory under the node data directory, so the
+// safety moves stay on the same filesystem. When the archive's config names
+// a producer key, that key must be present, open with the archived password
+// and derive the archived address at Producer.Index, or nothing is touched.
+// A running node requires restartNode. The service is stopped before any
+// live files move. A failure after the move puts the previous files back,
+// including the absence of paths that did not originally exist, and leaves
+// the node stopped. If a failed restart cannot be stopped, the installed
+// files are left intact and the safety files are preserved for recovery.
 func Restore(cfg config.Config, archive []byte, restartNode bool, now time.Time) (RestoreResult, error) {
 	c, err := Inspect(archive)
 	if err != nil {
@@ -472,54 +477,79 @@ func Restore(cfg config.Config, archive []byte, restartNode bool, now time.Time)
 	}); err != nil {
 		return RestoreResult{}, err
 	}
-	res := RestoreResult{Files: c.Files, WasRunning: isActive(cfg.ServiceName)}
+	res := RestoreResult{Files: c.Files}
 	if c.Producer != nil {
 		if c.KeyFile == "" {
 			return res, fmt.Errorf("the archived config.json names key file %q but the archive does not contain it", c.Producer.KeyFilePath)
 		}
-		addr, err := producer.Verify(filepath.Join(staging, filepath.FromSlash(c.KeyFile)), c.Producer.Password)
+		addr, err := producer.VerifyAtIndex(filepath.Join(staging, filepath.FromSlash(c.KeyFile)), c.Producer.Password, c.Producer.Index)
 		if err != nil {
-			return res, fmt.Errorf("archived key file does not open with the archived password: %w", err)
+			return res, fmt.Errorf("verify archived producer key: %w", err)
 		}
 		if !strings.EqualFold(addr, c.Producer.Address) {
-			return res, fmt.Errorf("archived key file holds %s but the archived config expects %s", addr, c.Producer.Address)
+			return res, fmt.Errorf("archived key file derives %s at index %d but the archived config expects %s", addr, c.Producer.Index, c.Producer.Address)
 		}
 		res.Address = addr
 	}
 
-	// Move the live wallet directory and config.json aside, remembering
-	// each move so a failure can undo it.
-	safety := filepath.Join(backup.RestoreDir(cfg), fmt.Sprintf("wallet-safety.%d", now.Unix()))
-	if err := os.MkdirAll(safety, 0o700); err != nil {
+	res.WasRunning, err = serviceRunning(cfg.ServiceName)
+	if err != nil {
+		return res, fmt.Errorf("cannot determine node state before wallet restore: %w", err)
+	}
+	if res.WasRunning && !restartNode {
+		return res, errors.New("the node is running; stop it first or pass --restart to restore wallet files")
+	}
+
+	// Staging and safety both live on the data filesystem. A separate backup
+	// disk must not turn the safety rename into a cross-device operation.
+	safety, err := os.MkdirTemp(cfg.ZnnDir, fmt.Sprintf(".wallet-safety.%d-", now.Unix()))
+	if err != nil {
 		return res, err
 	}
+	// Even a service that was inactive may be transitioning. Stop must
+	// establish that it is stopped before any live path is changed.
+	if err := stop(cfg.ServiceName); err != nil {
+		_ = os.Remove(safety)
+		return res, fmt.Errorf("stop node before wallet restore: %w", err)
+	}
 	res.SafetyDir = safety
-	type move struct{ from, to string }
-	var moved []move
+	type original struct {
+		live, saved string
+		existed     bool
+	}
+	var originals []original
 	rollback := func(cause error) error {
 		var errs []error
-		for i := len(moved) - 1; i >= 0; i-- {
-			m := moved[i]
-			_ = os.RemoveAll(m.from) // whatever was installed there
-			if err := os.Rename(m.to, m.from); err != nil {
-				errs = append(errs, fmt.Errorf("put back %s: %w", m.from, err))
+		for i := len(originals) - 1; i >= 0; i-- {
+			o := originals[i]
+			if err := os.RemoveAll(o.live); err != nil {
+				errs = append(errs, fmt.Errorf("remove replacement %s: %w", filepath.Base(o.live), err))
+				continue
+			}
+			if o.existed {
+				if err := rollbackRename(o.saved, o.live); err != nil {
+					errs = append(errs, fmt.Errorf("put back %s: %w", filepath.Base(o.live), err))
+				}
 			}
 		}
 		if len(errs) > 0 {
-			return fmt.Errorf("%w; and the previous files could not all be put back (see %s): %w", cause, safety, errors.Join(errs...))
+			return fmt.Errorf("%w; previous files could not all be put back; node left stopped; inspect the data directory and %s before starting: %w", cause, safety, errors.Join(errs...))
 		}
-		return fmt.Errorf("%w (previous files put back)", cause)
+		return fmt.Errorf("%w (previous files put back; node left stopped)", cause)
 	}
 	for _, name := range []string{"wallet", "config.json"} {
-		live := filepath.Join(cfg.ZnnDir, name)
-		if _, err := os.Lstat(live); err != nil {
-			continue
+		o := original{live: filepath.Join(cfg.ZnnDir, name), saved: filepath.Join(safety, name)}
+		if _, err := os.Lstat(o.live); err == nil {
+			if err := os.Rename(o.live, o.saved); err != nil {
+				return res, rollback(fmt.Errorf("move %s aside: %w", name, err))
+			}
+			o.existed = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return res, rollback(fmt.Errorf("inspect current %s: %w", name, err))
 		}
-		keep := filepath.Join(safety, name)
-		if err := os.Rename(live, keep); err != nil {
-			return res, rollback(fmt.Errorf("move %s aside: %w", name, err))
-		}
-		moved = append(moved, move{live, keep})
+		// Record absent paths as well, so rollback removes newly installed
+		// files and directories that have no previous version to put back.
+		originals = append(originals, o)
 	}
 	for _, rel := range c.Files {
 		src := filepath.Join(staging, filepath.FromSlash(rel))
@@ -533,7 +563,12 @@ func Restore(cfg config.Config, archive []byte, restartNode bool, now time.Time)
 	}
 	if restartNode && res.WasRunning {
 		if err := restart(cfg.ServiceName); err != nil {
-			return res, err
+			// A failed start may have spawned a process. Never replace its
+			// files until a subsequent stop confirms it cannot use them.
+			if stopErr := stop(cfg.ServiceName); stopErr != nil {
+				return res, fmt.Errorf("restart restored node: %w; cannot confirm node stopped: %w; restored files remain installed and previous files are preserved in %s; stop the node before recovery", err, stopErr, safety)
+			}
+			return res, rollback(fmt.Errorf("restart restored node: %w", err))
 		}
 		res.Restarted = true
 	}

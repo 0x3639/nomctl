@@ -15,7 +15,7 @@ func TestDiagnosticCommandsSkipPreflight(t *testing.T) {
 }
 
 // diagnosticCommands grows as the commands are added.
-var diagnosticCommands = []string{"status", "top", "support-bundle", "upgrade"}
+var diagnosticCommands = []string{"status", "top", "support-bundle", "upgrade", "start", "stop", "restart", "logs"}
 
 func TestAlertsCommands(t *testing.T) {
 	for _, c := range []string{"setup", "probe", "status", "list", "test"} {
@@ -37,5 +37,17 @@ func TestAlertsCommands(t *testing.T) {
 		if err != nil || sub.Name() != c || sub.Annotations[annotationRoot] != "true" {
 			t.Errorf("alerts %s must require root: %v", c, err)
 		}
+	}
+}
+
+func TestOrchestratorLogsSkipPreflight(t *testing.T) {
+	if orchestratorLogsCmd.Annotations[annotationRoot] != "true" || orchestratorLogsCmd.Annotations[annotationNoPreflight] != "true" {
+		t.Fatal("orchestrator logs must require root and skip preflight")
+	}
+}
+
+func TestMenuEntrySkipsPreflight(t *testing.T) {
+	if rootCmd.Annotations[annotationRoot] != "true" || rootCmd.Annotations[annotationNoPreflight] != "true" {
+		t.Fatal("opening the menu must require root without running setup preflight")
 	}
 }

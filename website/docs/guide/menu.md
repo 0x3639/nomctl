@@ -7,6 +7,8 @@ description: "The interactive menu that wraps every nomctl command."
 sudo nomctl
 ```
 
+Opening the menu does not run hardware, NTP or Internet pre-flight checks. Those checks run when you choose node deployment, Pillar deployment or analytics setup. Service controls, configuration, diagnostics and recovery remain accessible during an outage. `--skip-preflight` also skips the setup checks.
+
 With no arguments nomctl opens a menu covering every action:
 
 | Entry | Runs |

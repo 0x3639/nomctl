@@ -169,7 +169,7 @@ func Run(cfg config.Config, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	wasActive := st == service.Active
+	wasActive := st.Running()
 	if err := service.Stop(cfg.ServiceName); err != nil {
 		return "", err
 	}
