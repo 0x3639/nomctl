@@ -139,6 +139,71 @@ are deferred until the upgrade or its recovery finishes. If a child command is
 interrupted, its error follows the same recovery path and any incomplete snapshot
 is removed. Wait for the final result before closing the terminal.
 
+### Downgrading with matching data
+
+Use the pre-upgrade archive reported by the upgrade and the binary that was
+running when it was taken. A later upgrade can replace `.previous`, so confirm
+that it still matches this archive. Keep the archive and its `.hash` sidecar.
+If only an uncompressed `snapshot-*` recovery directory remains, keep it intact
+and arrange recovery before proceeding with this archive-based procedure.
+
+`nomctl restore` attempts to start the service after a successful restore and
+after some failure-recovery paths. Block activation first so neither binary can
+open the data until recovery is complete. These commands use the default service
+and binary paths; substitute your configured values throughout. Stop on any
+unexpected error and leave the guard installed.
+
+1. Install a persistent systemd drop-in that prevents starts while the drop-in
+   itself exists, then stop the service:
+
+   ```bash
+   sudo mkdir -p /etc/systemd/system/go-zenon.service.d
+   sudo tee /etc/systemd/system/go-zenon.service.d/90-nomctl-offline-restore.conf >/dev/null <<'EOF'
+   [Unit]
+   ConditionPathExists=!/etc/systemd/system/go-zenon.service.d/90-nomctl-offline-restore.conf
+   EOF
+   sudo systemctl daemon-reload
+   sudo nomctl stop
+   sudo systemctl show go-zenon.service -p ActiveState -p Conditions
+   ```
+
+   Confirm `ActiveState=inactive` and that the new condition is listed before
+   continuing. The guard also survives a reboot.
+
+2. Restore the matching chain backup while the new binary remains blocked:
+
+   ```bash
+   sudo nomctl --skip-preflight restore --file /backup/YOUR_PRE_UPGRADE_ARCHIVE.tar.gz
+   sudo systemctl show go-zenon.service -p ActiveState
+   ```
+
+   The restore must succeed and the service must remain inactive. Systemd skips
+   its start attempt because the condition is false; a nomctl start-success
+   message does not override that state check. If extraction, installation or
+   rollback fails, leave the guard in place and inspect the reported recovery
+   directories. Do not replace the binary or enable starts until the matching
+   data has been restored successfully.
+
+3. Install the matching previous binary while starts are still blocked:
+
+   ```bash
+   sudo install -m 0755 /usr/local/bin/znnd.previous /usr/local/bin/znnd
+   ```
+
+   If installation fails, keep the guard installed and the node stopped.
+
+4. Once both the matching data and binary are in place, remove only this guard
+   and start the node:
+
+   ```bash
+   sudo rm /etc/systemd/system/go-zenon.service.d/90-nomctl-offline-restore.conf
+   sudo systemctl daemon-reload
+   sudo nomctl start
+   sudo nomctl status
+   ```
+
+Keep the backup and recovery copies until the node is healthy and synchronized.
+
 ## Knowing when to upgrade
 
 `nomctl status` and `top` check, at most every hour, whether a newer nomctl release exists and whether the configured go-zenon branch has commits beyond the running node's build. When either is true a line is added:
