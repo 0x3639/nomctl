@@ -12,6 +12,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/tyler-smith/go-bip39 v1.1.0
 	github.com/zenon-network/go-zenon v0.0.8-alphanet
+	go.yaml.in/yaml/v3 v3.0.4
 	modernc.org/sqlite v1.40.0
 )
 
