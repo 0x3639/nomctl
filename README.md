@@ -1,6 +1,6 @@
 # nomctl
 
-`nomctl` is a single static binary for deploying and operating [Zenon Network](https://zenon.network) (NoM) nodes on Debian/Ubuntu. It is a Go port of the bash toolkit at [hypercore-one/deployment](https://github.com/hypercore-one/deployment): the same interactive menu, the same non-interactive commands for automation, no dependency on `gum`, `jq` or any other helper.
+`nomctl` is a single static binary for deploying and operating [Zenon Network](https://zenon.network) (NoM) nodes on Debian/Ubuntu. It is a Go port of the bash toolkit at [hypercore-one/deployment](https://github.com/hypercore-one/deployment): a grouped interactive menu and non-interactive commands for automation, no dependency on `gum`, `jq` or any other helper.
 
 **Documentation: [nomctl.0x3639.com](https://nomctl.0x3639.com)**
 
@@ -10,7 +10,9 @@
 curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
 sudo nomctl deploy     # installs Go, builds znnd, creates and starts the go-zenon service
 sudo nomctl status     # sync state, peers, pillar production, CPU, memory, disk
-sudo nomctl            # the interactive menu
+sudo nomctl upgrade-node           # build, back up and upgrade from source
+sudo nomctl upgrade-node --signed  # choose a signed node release
+sudo nomctl            # Manage node, Backups & recovery, Install & upgrade, and more
 ```
 
 Then, optionally, `sudo nomctl alerts setup` for Telegram alerts (send `/start` to the bot first) and `sudo nomctl backup --schedule --cadence 7` for a backup timer.

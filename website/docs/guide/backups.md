@@ -9,7 +9,7 @@ description: "Chain-data backups with checksums and retention, a systemd timer f
 sudo nomctl backup [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]
 ```
 
-A backup stops the node, copies `nom`, `network`, `consensus` and `cache` from the data directory into a staging area, restarts the node, and only then compresses the copy into `<backup dir>/go-zenon_backup_<MM-DD-YY_HHMMSS>.tar.gz` with a sha256 sidecar (`.hash`). The backup directory is `/backup` by default and `NOMCTL_BACKUP_DIR` changes it. Archives beyond `--max-backups` (default 7, maximum 30) are pruned, oldest first.
+A backup stops the node, copies `nom`, `network`, `consensus` and `cache` from the data directory into a staging area, restarts the node, and only then compresses the copy into `<backup dir>/go-zenon_backup_<MM-DD-YY_HHMMSS>_snapshot-<id>.tar.gz` with a sha256 sidecar (`.hash`). The backup directory is `/backup` by default and `NOMCTL_BACKUP_DIR` changes it. Archives beyond `--max-backups` (default 7, maximum 30) are pruned, oldest first.
 
 The backup directory must have at least 15 GB free (`NOMCTL_MIN_FREE_SPACE_KB`). If it does not, old archives are pruned first; if that is not enough the backup fails before touching the node.
 
@@ -31,7 +31,16 @@ The service unit carries the backup, data and service settings and the free-spac
 systemctl list-timers nomctl-backup.timer
 ```
 
-From the menu, a backup ends with an offer to set up scheduling interactively.
+From **Backups & recovery**, choose **Backup chain data locally** to take a backup,
+or **Configure scheduled backups** to set retention, cadence and time without
+running a backup immediately. The equivalent schedule-only command is:
+
+```bash
+sudo nomctl backup schedule --max-backups 7 --cadence 7 --hour 3
+```
+
+The existing `nomctl backup --schedule` option still takes a backup and then
+configures the timer.
 
 ## Restoring
 
@@ -75,4 +84,4 @@ The whole current wallet directory and `config.json` are moved to a unique priva
 
 An installation failure puts back the previous files, removes paths that did not previously exist, and leaves the node stopped. If the restored node fails to restart, nomctl first confirms it is stopped, then restores the previous files and leaves it stopped for inspection. If that stop fails, the complete restored files stay installed and the previous files stay in the reported safety directory; stop the node before recovery. Any incomplete rollback is reported with the recovery directory. Inspect the data and safety directories before starting the node after an error.
 
-The menu offers both under **Pillar**. The `wallet_backup_missing` alert (off by default) sends one message when a producer key exists without a backup newer than the key; see [Alert rules](/alerts/rules).
+The menu offers both under **Backups & recovery**. The `wallet_backup_missing` alert (off by default) sends one message when a producer key exists without a backup newer than the key; see [Alert rules](/alerts/rules).

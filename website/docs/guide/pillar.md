@@ -29,7 +29,7 @@ This downloads the release for your architecture, verifies its checksum and inst
 sudo nomctl pillar deploy
 ```
 
-Or run `sudo nomctl` and pick the first entry, **Deploy a Pillar**. Either way nomctl:
+Or run `sudo nomctl` and choose **Install & upgrade › Deploy a Pillar**. Either way nomctl:
 
 1. runs the pre-flight checks (cores, memory, time sync, connectivity);
 2. installs `git`, `make` and `gcc` if missing and a Go toolchain under `/opt/nomctl/go`;
@@ -106,7 +106,7 @@ On a terminal, let `setup` prompt: the answer is not echoed and never lands in s
 
 :::
 
-The menu has the same under **Pillar**.
+The menu exposes producer status and setup under **Pillar & orchestrator**. Wallet backups are under **Backups & recovery**.
 
 ## What the producer step does
 

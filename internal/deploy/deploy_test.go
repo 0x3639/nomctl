@@ -89,9 +89,13 @@ func TestCloneAndBuildKeepsServiceRunningUntilBuildSucceeds(t *testing.T) {
 			t.Setenv("STOPPED", filepath.Join(root, "stopped"))
 			scripts := map[string]string{
 				filepath.Join(toolsDir, "git"): `#!/bin/sh
+if [ "$1" = -C ]; then
+  printf '1111111111111111111111111111111111111111\n'
+  exit 0
+fi
 printf 'clone\n' >> "$CALLS"
 if [ "$FAIL_PHASE" = clone ]; then exit 1; fi
-mkdir -p "$5/build"
+mkdir -p "$7/build"
 `,
 				cfg.GoBinary(): `#!/bin/sh
 printf 'build\n' >> "$CALLS"

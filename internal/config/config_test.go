@@ -124,7 +124,17 @@ func TestVarsCoverEveryField(t *testing.T) {
 		}
 		names[v.Name] = true
 	}
-	if len(names) != 29 {
-		t.Errorf("expected 29 documented variables, got %d", len(names))
+	if len(names) != 30 {
+		t.Errorf("expected 30 documented variables, got %d", len(names))
+	}
+}
+
+func TestGitHubTokenRedacted(t *testing.T) {
+	c, err := LoadFrom(envOf(map[string]string{"NOMCTL_GITHUB_TOKEN": "private-token"}))
+	if err != nil || c.GitHubToken != "private-token" {
+		t.Fatalf("token not loaded: %v", err)
+	}
+	if strings.Contains(c.Redacted(), "private-token") {
+		t.Fatal("GitHub token leaked in logs")
 	}
 }

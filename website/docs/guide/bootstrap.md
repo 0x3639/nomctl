@@ -11,7 +11,7 @@ sudo nomctl bootstrap https://host/path/bootstrap-20260901.zip
 sudo nomctl bootstrap --discard            # small disk: delete the old data instead of keeping it
 ```
 
-The interactive menu has the same under **Restore Zenon from a bootstrap snapshot**. It asks for the URL, whether to keep the previous data, and confirms before starting. The command line does not confirm, like `resync` and `restore`.
+The interactive menu has the same under **Backups & recovery › Restore from "trusted" bootstrap snapshot**. It asks for the URL, whether to keep the previous data, and confirms before starting. The command line does not confirm, like `resync` and `restore`.
 
 ## What happens
 
@@ -38,3 +38,6 @@ If the swap fails after the node was stopped, nomctl puts the previous data back
 `NOMCTL_BOOTSTRAP_URL` sets the default; the built-in value points at the snapshot published on DigitalOcean Spaces for this release. Snapshots are produced by a separate service; nomctl expects a `.zip` in the layout above and a sidecar holding the hex SHA-256 (a bare digest or a `sha256sum` line).
 
 Disk needed, for the September 2026 snapshot: about 9 GB for the archive, 13 GB extracted, plus the old data if you keep it.
+
+In the menu, "trusted" refers to the snapshot publisher you choose. The hash
+sidecar checks download integrity and does not authenticate that publisher.

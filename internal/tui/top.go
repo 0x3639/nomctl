@@ -129,7 +129,7 @@ func renderTop(s metrics.Sample, history []float64, width int, now time.Time, no
 		panel("HOST", hostLines(s.Host)...),
 	}
 	if NodeRemoteCommit != "" && s.Node.Commit != "" && !update.SameCommit(s.Node.Commit, NodeRemoteCommit) {
-		notes = append(notes, fmt.Sprintf("go-zenon %s has new commits (deployed %s): sudo nomctl deploy", NodeBranch, s.Node.Commit))
+		notes = append(notes, fmt.Sprintf("go-zenon %s has new commits (deployed %s): sudo nomctl upgrade-node", NodeBranch, s.Node.Commit))
 	}
 	for _, n := range notes {
 		parts = append(parts, styleWarn.Render("update: "+n))

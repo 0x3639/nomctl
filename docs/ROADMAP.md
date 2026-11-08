@@ -175,3 +175,20 @@ migrate without a manual step.
 generated password, or configures an existing key after verifying its
 password, writes the `Producer` section of `config.json` (backup kept) and
 restarts the node. Prints the address to register as the Pillar's producer.
+
+## Signed node release upgrades — done (v0.14.0)
+
+`nomctl upgrade-node --signed` and the signed-release menu action select a published
+`zenon-network/go-zenon-releases` release, verify its pinned GPG signature and
+SHA-256, copy chain data while stopped, atomically install, restart, and finish
+the normal backup archive. Private access uses `NOMCTL_GITHUB_TOKEN`.
+Spec: `docs/superpowers/specs/2026-11-08-release-upgrade-design.md`.
+
+## Grouped menus and source upgrades — done (v0.14.0)
+
+Five menu groups organize management, backups/recovery, installation/upgrades,
+Pillar/orchestrator and alerts/tools. Source upgrades use
+`nomctl upgrade-node` (source by default): build before stopping, then reuse the mandatory
+backup and atomic installation flow. `nomctl backup schedule` configures timers
+without running a backup. Spec:
+`docs/superpowers/specs/2026-11-08-menu-and-source-upgrade-design.md`.

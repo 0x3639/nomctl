@@ -47,6 +47,16 @@ deterministic time between 02:00 and 04:59).`,
 	},
 }
 
+var backupScheduleCmd = &cobra.Command{
+	Use:         "schedule",
+	Short:       "Configure scheduled backups without running a backup now",
+	Args:        cobra.NoArgs,
+	Annotations: rootOnly(),
+	RunE: func(*cobra.Command, []string) error {
+		return withLock("schedule backups", func() error { return backup.Schedule(cfg) })
+	},
+}
+
 var restoreCmd = &cobra.Command{
 	Use:   "restore",
 	Short: "Restore the node data directory from a backup archive",
@@ -112,10 +122,13 @@ func applyBackupFlags(cmd *cobra.Command) error {
 }
 
 func init() {
-	applyFlags[backupCmd] = applyBackupFlags
-	backupCmd.Flags().IntVar(&flagBackupMax, "max-backups", 0, "backups to keep, 1-30 (NOMCTL_MAX_BACKUPS)")
-	backupCmd.Flags().IntVar(&flagBackupCadence, "cadence", 0, "days between scheduled backups, 0-365 (NOMCTL_BACKUP_CADENCE_DAYS)")
-	backupCmd.Flags().IntVar(&flagBackupHour, "hour", -1, "hour of day 0-23 for the scheduled backup (NOMCTL_BACKUP_HOUR)")
+	for _, command := range []*cobra.Command{backupCmd, backupScheduleCmd} {
+		applyFlags[command] = applyBackupFlags
+		command.Flags().IntVar(&flagBackupMax, "max-backups", 0, "backups to keep, 1-30 (NOMCTL_MAX_BACKUPS)")
+		command.Flags().IntVar(&flagBackupCadence, "cadence", 0, "days between scheduled backups, 0-365 (NOMCTL_BACKUP_CADENCE_DAYS)")
+		command.Flags().IntVar(&flagBackupHour, "hour", -1, "hour of day 0-23 for the scheduled backup (NOMCTL_BACKUP_HOUR)")
+	}
+	backupCmd.AddCommand(backupScheduleCmd)
 	backupCmd.Flags().BoolVar(&flagBackupSchedule, "schedule", false, "install a systemd timer that runs the backup daily")
 	restoreCmd.Flags().StringVar(&flagRestoreFile, "file", "", "archive to restore (path or name in the backup directory)")
 	rootCmd.AddCommand(backupCmd, restoreCmd, resyncCmd)

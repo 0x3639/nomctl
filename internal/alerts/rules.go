@@ -411,7 +411,7 @@ func updateAvailable(h []metrics.Sample, _ RuleConfig) Result {
 		parts = append(parts, fmt.Sprintf("nomctl %s available (running %s): sudo nomctl upgrade", strings.TrimPrefix(info.NomctlLatest, "v"), info.NomctlRunning))
 	}
 	if info.NodeBehind {
-		parts = append(parts, fmt.Sprintf("go-zenon %s has new commits: sudo nomctl deploy", info.NodeBranch))
+		parts = append(parts, fmt.Sprintf("go-zenon %s has new commits: sudo nomctl upgrade-node", info.NodeBranch))
 	}
 	if len(parts) == 0 {
 		return Result{}
