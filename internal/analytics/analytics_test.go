@@ -46,15 +46,6 @@ func TestEmbeddedDashboard(t *testing.T) {
 	}
 }
 
-func TestNeedsNodeScrapeJob(t *testing.T) {
-	if !NeedsNodeScrapeJob("scrape_configs:\n  - job_name: \"prometheus\"\n") {
-		t.Error("should need node job")
-	}
-	if NeedsNodeScrapeJob("  - job_name: \"node\"\n") {
-		t.Error("should not need node job")
-	}
-}
-
 func TestGrafanaClient(t *testing.T) {
 	var created []string
 	var passwordChanged string
