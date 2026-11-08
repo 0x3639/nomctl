@@ -56,9 +56,9 @@ func Verify(archive string) error {
 
 // MoveAside moves the given data folders into the restore directory as
 // <folder>.bak.<unix>, keeping a safety copy of what is about to be replaced.
-// It returns the folders that were moved, keyed by name, with their new
-// paths; on error the map holds what had been moved so far so the caller can
-// put it back with MoveBack.
+// It returns the original state of each prepared folder: its safety-copy
+// path, or an empty string if it did not exist. On error the map holds only
+// the folders prepared so far, which the caller can roll back with MoveBack.
 func MoveAside(cfg config.Config, now time.Time, folders []string) (map[string]string, error) {
 	restoreDir := backup.RestoreDir(cfg)
 	moved := map[string]string{}
@@ -69,8 +69,16 @@ func MoveAside(cfg config.Config, now time.Time, folders []string) (map[string]s
 	stamp := fmt.Sprint(now.Unix())
 	for _, folder := range folders {
 		src := filepath.Join(cfg.ZnnDir, folder)
-		if !fsx.IsDir(src) {
+		info, err := os.Lstat(src)
+		if errors.Is(err, os.ErrNotExist) {
+			moved[folder] = ""
 			continue
+		}
+		if err != nil {
+			return moved, fmt.Errorf("inspect %s before moving aside: %w", folder, err)
+		}
+		if !info.IsDir() {
+			return moved, fmt.Errorf("%s is not a data directory", src)
 		}
 		dst := filepath.Join(restoreDir, folder+".bak."+stamp)
 		if fsx.Exists(dst) {
@@ -90,16 +98,18 @@ func MoveAside(cfg config.Config, now time.Time, folders []string) (map[string]s
 // the rollback of a failed install, so anything already installed at a
 // destination is removed first: mv into an existing directory would nest
 // the safety copy inside it. It keeps going after a failure and reports
-// every folder it could not restore.
+// every folder it could not restore. An empty source records a folder that
+// was originally absent; rollback removes any newly installed replacement.
 func MoveBack(cfg config.Config, moved map[string]string) error {
 	var errs []error
 	for folder, src := range moved {
 		dst := filepath.Join(cfg.ZnnDir, folder)
-		if fsx.Exists(dst) {
-			if err := os.RemoveAll(dst); err != nil {
-				errs = append(errs, fmt.Errorf("clear %s before putting the previous data back: %w", dst, err))
-				continue
-			}
+		if err := os.RemoveAll(dst); err != nil {
+			errs = append(errs, fmt.Errorf("clear %s before putting the previous data back: %w", dst, err))
+			continue
+		}
+		if src == "" {
+			continue
 		}
 		if err := execx.Run("mv", src, dst); err != nil {
 			errs = append(errs, fmt.Errorf("put back %s from %s: %w", folder, src, err))

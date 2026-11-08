@@ -160,7 +160,7 @@ func Run(cfg config.Config, opts Options) (string, error) {
 		_ = snapshot.Discard()
 		return "", err
 	}
-	wasActive := st == service.Active
+	wasActive := st.Running()
 	if err := service.Stop(cfg.ServiceName); err != nil {
 		_ = snapshot.Discard()
 		return "", err

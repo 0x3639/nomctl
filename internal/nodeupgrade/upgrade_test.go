@@ -3,12 +3,15 @@ package nodeupgrade
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/config"
@@ -46,18 +49,19 @@ func fixture(t *testing.T) (config.Config, string, string) {
 	t.Setenv("TEST_EVENTS", events)
 	t.Setenv("TEST_BINARY", cfg.BinaryPath())
 	t.Setenv("TEST_DATA", cfg.ZnnDir)
-	for _, v := range []string{"FAIL_STOP", "FAIL_COPY", "FAIL_START", "FAIL_ARCHIVE", "INACTIVE_AFTER_START"} {
+	for _, v := range []string{"FAIL_STOP", "FAIL_COPY", "FAIL_START", "FAIL_ARCHIVE", "INACTIVE_AFTER_START", "AFTER_STOP"} {
 		t.Setenv(v, "")
 	}
 	commands := filepath.Join(root, "commands")
 	stub(t, commands, "systemctl", `
 case "$1" in
  status) exit 0 ;;
+ show) printf 'LoadState=loaded\nActiveState=%s\n' "$(cat "$TEST_STATE")" ;;
  is-active) [ "$(cat "$TEST_STATE")" = active ] && exit 0; exit 3 ;;
  stop)
   echo stop >> "$TEST_EVENTS"
   [ -z "$FAIL_STOP" ] || exit 1
-  echo inactive > "$TEST_STATE" ;;
+  echo "${AFTER_STOP:-inactive}" > "$TEST_STATE" ;;
  start)
   echo "start:$(cat "$TEST_BINARY")" >> "$TEST_EVENTS"
   [ -z "$FAIL_START" ] || exit 1
@@ -154,6 +158,99 @@ func TestUpgradeSequenceAndPreUpgradeBackup(t *testing.T) {
 	snapshots, _ := filepath.Glob(filepath.Join(cfg.BackupDir, "snapshot-*"))
 	if len(snapshots) != 0 {
 		t.Fatal("finished snapshot not cleaned")
+	}
+}
+
+func TestUpgradeRequiresConfirmedStop(t *testing.T) {
+	cfg, binary, events := fixture(t)
+	t.Setenv("AFTER_STOP", "active")
+	if err := installPrepared(cfg, binary, "test"); err == nil || !strings.Contains(err.Error(), "did not stop") {
+		t.Fatalf("expected stop verification failure, got %v", err)
+	}
+	data, _ := os.ReadFile(events)
+	if string(data) != "stop\n" {
+		t.Fatalf("data operation ran without a confirmed stop: %s", data)
+	}
+	installed, _ := os.ReadFile(cfg.BinaryPath())
+	if string(installed) != "old" {
+		t.Fatal("binary replaced without a confirmed stop")
+	}
+}
+
+func TestUpgradeRecoversPreviouslyStartingNode(t *testing.T) {
+	cfg, binary, events := fixture(t)
+	put(t, os.Getenv("TEST_STATE"), "activating")
+	t.Setenv("FAIL_COPY", "1")
+	if err := installPrepared(cfg, binary, "test"); err == nil {
+		t.Fatal("copy failure was ignored")
+	}
+	data, _ := os.ReadFile(events)
+	if string(data) != "stop\ncopy\nstart:old\n" {
+		t.Fatalf("previously starting node not recovered: %s", data)
+	}
+}
+
+// Run signal scenarios in a separate process so failures cannot terminate the
+// main test runner and each scenario starts with the default signal handlers.
+func TestUpgradeSignals(t *testing.T) {
+	for _, sig := range []string{"INT", "TERM"} {
+		for _, phase := range []string{"complete", "stop", "copy"} {
+			t.Run(sig+"/"+phase, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestUpgradeSignalHelper$", "-test.v")
+				cmd.Env = append(os.Environ(), "NOMCTL_UPGRADE_SIGNAL_TEST="+sig, "NOMCTL_UPGRADE_SIGNAL_PHASE="+phase)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("signal recovery: %v\n%s", err, out)
+				}
+			})
+		}
+	}
+}
+
+func TestUpgradeSignalHelper(t *testing.T) {
+	sig := os.Getenv("NOMCTL_UPGRADE_SIGNAL_TEST")
+	if sig == "" {
+		t.Skip("subprocess helper")
+	}
+	cfg, binary, events := fixture(t)
+	commands := filepath.Dir(events) + "/commands"
+	phase := os.Getenv("NOMCTL_UPGRADE_SIGNAL_PHASE")
+	if phase == "stop" {
+		path := filepath.Join(commands, "systemctl")
+		script, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		put(t, path, strings.Replace(string(script), "stop)\n", "stop)\n  echo inactive > \"$TEST_STATE\"\n  kill -"+sig+" \"$PPID\"\n  kill -"+sig+" $$\n", 1))
+	} else {
+		script := "kill -" + sig + " \"$PPID\"\n"
+		if phase == "copy" {
+			script += "kill -" + sig + " $$\n"
+		} else {
+			script += "exec /bin/cp \"$@\"\n"
+		}
+		stub(t, commands, "cp", script)
+	}
+	err := installPrepared(cfg, binary, "test")
+	if (err == nil) != (phase == "complete") {
+		t.Fatalf("unexpected transaction result: %v", err)
+	}
+	state, _ := os.ReadFile(os.Getenv("TEST_STATE"))
+	if strings.TrimSpace(string(state)) != "active" {
+		t.Fatalf("node left stopped after signal: %s", state)
+	}
+	want := "old"
+	if phase == "complete" {
+		want = "new"
+	}
+	installed, _ := os.ReadFile(cfg.BinaryPath())
+	if string(installed) != want {
+		t.Fatalf("installed %q, want %q", installed, want)
+	}
+	snapshots, _ := filepath.Glob(filepath.Join(cfg.BackupDir, "snapshot-*"))
+	if len(snapshots) != 0 {
+		t.Fatal("incomplete snapshot retained after signal recovery")
 	}
 }
 

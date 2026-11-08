@@ -109,7 +109,8 @@ Every step is printed to the terminal and the regular nomctl log:
 
 1. Download the architecture's archive, checksum file, signature and signing key.
 2. Verify the signature and archive checksum, then extract the binary.
-3. Check the backup directory and free space, then stop the service.
+3. Check the backup directory and free space, then stop the service and verify
+   that it has reached a stopped state before copying data.
 4. Copy the existing chain data using the normal backup framework.
 5. Atomically install the binary at `NOMCTL_INSTALL_DIR/NOMCTL_BINARY_NAME`
    (default `/usr/local/bin/znnd`), preserving the old binary as `.previous`.
@@ -124,7 +125,7 @@ separate `nomctl backup wallet` operation. Existing service configuration is
 preserved; the configured binary path must be the executable used by the service.
 
 If the copy or installation fails, nomctl attempts to restart the original node
-when it was previously active. If the new service fails to start, nomctl finishes
+when it was previously running or starting. If the new service fails to start, nomctl finishes
 the pre-upgrade archive and reports the retained previous binary for recovery.
 It does not automatically run the old binary against potentially migrated data:
 restore the matching pre-upgrade data before downgrading. An archive failure is
@@ -132,6 +133,11 @@ reported separately from a successful service start, and the uncompressed data
 is retained under a unique `snapshot-*` directory in the backup directory. A
 subsequent backup does not clear that recovery copy. An active service check
 confirms systemd startup, not full chain synchronization.
+
+During the backup and installation transaction, Ctrl+C and termination requests
+are deferred until the upgrade or its recovery finishes. If a child command is
+interrupted, its error follows the same recovery path and any incomplete snapshot
+is removed. Wait for the final result before closing the terminal.
 
 ## Knowing when to upgrade
 

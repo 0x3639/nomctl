@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/config"
-	"github.com/0x3639/nomctl/internal/execx"
 	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/service"
@@ -63,6 +64,8 @@ func checkInstalled(cfg config.Config) error {
 }
 
 func installPrepared(cfg config.Config, binary, tag string) error {
+	finishSignals := protectTransaction()
+	defer finishSignals()
 	slog.Info("Preparing the pre-upgrade backup (scheduled cadence does not apply)...")
 	snapshot, err := backup.Prepare(cfg)
 	if err != nil {
@@ -87,16 +90,16 @@ func installPrepared(cfg config.Config, binary, tag string) error {
 		return err
 	}
 	recoverOriginal := func(cause error) error {
-		if state == service.Active {
+		if state.Running() {
 			slog.Info("Restarting the original node after upgrade failure...")
 			cause = errors.Join(cause, service.Start(cfg.ServiceName))
 		}
 		return cause
 	}
 	slog.Info("Stopping " + cfg.ServiceName + " for the backup and upgrade...")
-	// An unconditional systemctl stop also cancels activating/auto-restarting
-	// units, which is-active alone can report as inactive.
-	if err := execx.Run("systemctl", "stop", cfg.ServiceName); err != nil {
+	// Stop also cancels pending starts and verifies the terminal state before
+	// any chain data is copied or the installed binary is replaced.
+	if err := service.Stop(cfg.ServiceName); err != nil {
 		_ = snapshot.Discard()
 		return recoverOriginal(err)
 	}
@@ -149,6 +152,32 @@ func installPrepared(cfg config.Config, binary, tag string) error {
 	}
 	logx.Success(fmt.Sprintf("Node upgraded to %s; service is active and backup is complete", tag))
 	return nil
+}
+
+// protectTransaction defers process termination until the transaction has
+// finished or recovered. Child processes still receive terminal signals and
+// return failures through the ordinary recovery paths.
+func protectTransaction() func() {
+	signals := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		defer close(stopped)
+		for {
+			select {
+			case sig := <-signals:
+				slog.Warn("Received " + sig.String() + "; waiting for the upgrade or recovery to finish safely...")
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() {
+		signal.Stop(signals)
+		close(done)
+		<-stopped
+	}
 }
 
 func stageCopy(src, target string) (string, error) {

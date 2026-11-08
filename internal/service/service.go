@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	"github.com/0x3639/nomctl/internal/execx"
@@ -18,7 +19,7 @@ import (
 // ErrNotFound is returned when the unit does not exist.
 var ErrNotFound = errors.New("service does not exist")
 
-// State is the answer of `systemctl is-active`.
+// State is the active state reported by systemd.
 type State int
 
 // Unit states nomctl distinguishes.
@@ -26,35 +27,97 @@ const (
 	Inactive State = iota
 	Active
 	NotFound
+	Failed
+	Activating
+	Deactivating
+	Reloading
+	Maintenance
+	Refreshing
+	Unknown
 )
 
 // String names the state the way systemctl does.
 func (s State) String() string {
 	switch s {
+	case Inactive:
+		return "inactive"
 	case Active:
 		return "active"
 	case NotFound:
 		return "not found"
+	case Failed:
+		return "failed"
+	case Activating:
+		return "activating"
+	case Deactivating:
+		return "deactivating"
+	case Reloading:
+		return "reloading"
+	case Maintenance:
+		return "maintenance"
+	case Refreshing:
+		return "refreshing"
 	default:
-		return "inactive"
+		return "unknown"
 	}
 }
 
-// Status queries the unit state. Exit codes 0 (active), 3 (inactive/failed;
-// also what is-active reports for an unknown unit) and 4 (no such unit) are
-// answers; anything else, including a missing systemctl, is an error so
-// callers do not mistake "unknown" for "stopped".
+// Running reports states in which systemd is running or starting the unit.
+func (s State) Running() bool {
+	return s == Active || s == Activating || s == Reloading || s == Refreshing
+}
+
+// Stopped reports terminal states with no running service processes.
+func (s State) Stopped() bool {
+	return s == Inactive || s == Failed || s == NotFound
+}
+
+// Status reads the load and active states separately. Exit codes alone do
+// not distinguish a stopped unit from a transition or a missing unit.
+// Unrecognized output or command failures are errors, never a stopped state.
 func Status(name string) (State, error) {
-	err := execx.New("systemctl", "is-active", "--quiet", name).Quiet()
-	switch {
-	case err == nil:
-		return Active, nil
-	case execx.ExitCode(err) == 3:
-		return Inactive, nil
-	case execx.ExitCode(err) == 4:
+	out, err := execx.Output("systemctl", "show", "--property=LoadState", "--property=ActiveState", name)
+	if err != nil {
+		return Unknown, fmt.Errorf("cannot determine state of %s: %w", name, err)
+	}
+	var loadState, activeState string
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "LoadState":
+			loadState = value
+		case "ActiveState":
+			activeState = value
+		}
+	}
+	if loadState == "not-found" && activeState == "inactive" {
 		return NotFound, nil
+	}
+	if loadState == "" {
+		return Unknown, fmt.Errorf("cannot determine state of %s: missing LoadState", name)
+	}
+	switch activeState {
+	case "active":
+		return Active, nil
+	case "inactive":
+		return Inactive, nil
+	case "failed":
+		return Failed, nil
+	case "activating":
+		return Activating, nil
+	case "deactivating":
+		return Deactivating, nil
+	case "reloading":
+		return Reloading, nil
+	case "maintenance":
+		return Maintenance, nil
+	case "refreshing":
+		return Refreshing, nil
 	default:
-		return Inactive, fmt.Errorf("cannot determine state of %s: %w", name, err)
+		return Unknown, fmt.Errorf("cannot determine state of %s: unexpected ActiveState %q", name, activeState)
 	}
 }
 
@@ -66,7 +129,7 @@ func IsActive(name string) bool {
 		slog.Warn(err.Error())
 		return false
 	}
-	return st == Active
+	return st == Active || st == Reloading || st == Refreshing
 }
 
 // Exists reports whether systemd knows the unit. `systemctl status` exits
@@ -118,41 +181,35 @@ func Start(name string) error {
 	return nil
 }
 
-// Stop stops the unit if it is running. An unknown state is an error so
-// that callers about to modify node data do not proceed blindly.
+// Stop synchronously stops the unit and verifies that it reached a terminal
+// state. Even an inactive unit gets a stop job to cancel any pending start.
+// Callers about to modify node data must hold the operation lock throughout
+// this call and the data operation.
 func Stop(name string) error {
 	st, err := Status(name)
 	if err != nil {
 		return err
 	}
-	if st != Active {
-		slog.Info(name + " service is not running")
+	if st == NotFound {
+		slog.Info(name + " service does not exist")
 		return nil
 	}
 	if err := execx.Run("systemctl", "stop", name); err != nil {
 		return fmt.Errorf("failed to stop %s service: %w", name, err)
+	}
+	st, err = Status(name)
+	if err != nil {
+		return err
+	}
+	if !st.Stopped() {
+		return fmt.Errorf("%s service did not stop (state: %s)", name, st)
 	}
 	logx.Success(name + " service stopped successfully")
 	return nil
 }
 
-// StopIfRunning is Stop with the wording used during deploy.
-func StopIfRunning(name string) error {
-	st, err := Status(name)
-	if err != nil {
-		return err
-	}
-	if st != Active {
-		slog.Info(name + " service is not running")
-		return nil
-	}
-	slog.Info("Stopping " + name + " service...")
-	if err := execx.Run("systemctl", "stop", name); err != nil {
-		return fmt.Errorf("failed to stop %s service: %w", name, err)
-	}
-	logx.Success(name + " service stopped")
-	return nil
-}
+// StopIfRunning stops the unit, including any pending start or restart job.
+func StopIfRunning(name string) error { return Stop(name) }
 
 // Restart stops then starts the unit.
 func Restart(name string) error {

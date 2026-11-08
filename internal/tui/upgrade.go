@@ -77,6 +77,9 @@ func ConfirmSourceUpgrade(cfg config.Config) (bool, error) {
 }
 
 func UpgradeSource(cfg config.Config) error {
+	if err := setupPreflight(cfg); err != nil {
+		return err
+	}
 	repo, branch, err := PickSource(cfg)
 	if err != nil {
 		return err

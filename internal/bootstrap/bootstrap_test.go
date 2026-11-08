@@ -478,3 +478,47 @@ func TestRunNoSpace(t *testing.T) {
 		t.Errorf("service touched: %v", h.calls)
 	}
 }
+
+func TestRunRollbackRestoresAbsentFolders(t *testing.T) {
+	for _, missing := range []string{"nom", "network", "consensus", "all"} {
+		t.Run(missing, func(t *testing.T) {
+			data := makeZip(t, goodEntries())
+			srv := host(t, data, sum(data))
+			cfg := testConfig(t)
+			h := &fakeHost{}
+			h.install(t)
+			for _, folder := range Dirs {
+				if missing == folder || missing == "all" {
+					if err := os.RemoveAll(filepath.Join(cfg.ZnnDir, folder)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			installDirs = func(cfg config.Config, staging string) error {
+				if err := install(cfg, staging); err != nil {
+					return err
+				}
+				return errors.New("install interrupted")
+			}
+			if err := Run(context.Background(), cfg, Options{URL: srv.URL + "/b/snap.zip"}); err == nil || !strings.Contains(err.Error(), "install interrupted") {
+				t.Fatalf("bootstrap = %v", err)
+			}
+			for _, folder := range Dirs {
+				path := filepath.Join(cfg.ZnnDir, folder)
+				if missing == folder || missing == "all" {
+					if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+						t.Errorf("%s should remain absent: %v", folder, err)
+					}
+				} else {
+					got, err := os.ReadFile(filepath.Join(path, "old"))
+					if err != nil || string(got) != "old-"+folder {
+						t.Errorf("%s not restored: %q, %v", folder, got, err)
+					}
+				}
+			}
+			if strings.Join(h.calls, ",") != "stop go-zenon,start go-zenon" {
+				t.Errorf("calls = %v", h.calls)
+			}
+		})
+	}
+}

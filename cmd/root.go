@@ -58,7 +58,7 @@ Run "nomctl env" to list every variable with its default.`),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Version:       versionString(),
-	Annotations:   map[string]string{annotationRoot: "true"},
+	Annotations:   diagnostic(),
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		return setup(cmd)
 	},
@@ -163,10 +163,12 @@ func setup(cmd *cobra.Command) error {
 	return nil
 }
 
-// withLock runs fn while holding the node-data lock, so backup, restore,
-// resync and deploy never overlap each other or the scheduled backup timer.
+var operationLockPath = lock.DefaultPath
+
+// withLock runs fn while holding the operation lock, so service control and
+// node-data operations never overlap each other or the scheduled backup timer.
 func withLock(operation string, fn func() error) error {
-	l, err := lock.Acquire(lock.DefaultPath, operation)
+	l, err := lock.Acquire(operationLockPath, operation)
 	if err != nil {
 		return err
 	}

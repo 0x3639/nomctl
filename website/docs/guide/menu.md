@@ -14,6 +14,8 @@ fails, or is cancelled, you stay in the same submenu with that option selected.
 Esc at the main menu exits; Ctrl+C cancels a prompt. Ctrl+C while following logs
 stops the log view and returns to the submenu.
 
+Opening the menu does not run hardware, NTP or Internet pre-flight checks. Those checks run when you choose node deployment, source upgrade, Pillar deployment or analytics setup. Service controls, configuration, diagnostics and recovery remain accessible during an outage. `--skip-preflight` also skips the setup checks.
+
 ## Manage node
 
 | Entry | Runs |
