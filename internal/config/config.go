@@ -81,6 +81,9 @@ type Config struct {
 	// ReleaseRepo is the GitHub repository nomctl upgrades itself from.
 	// Env: NOMCTL_REPO.
 	ReleaseRepo string
+	// GitHubToken grants read access to private node releases. Never logged.
+	// Env: NOMCTL_GITHUB_TOKEN.
+	GitHubToken string
 	// UpdateCheck enables the "update available" check in status/top.
 	// Env: NOMCTL_UPDATE_CHECK.
 	UpdateCheck bool
@@ -233,6 +236,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("GO_VERSION", &c.GoVersion)
 	str("PILLAR_NAME", &c.PillarName)
 	str("REPO", &c.ReleaseRepo)
+	str("GITHUB_TOKEN", &c.GitHubToken)
 	boolean("UPDATE_CHECK", &c.UpdateCheck)
 	str("BOOTSTRAP_URL", &c.BootstrapURL)
 	duration("RPC_TIMEOUT", &c.RPCTimeout)
@@ -258,6 +262,9 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 
 // Redacted returns a printable copy with secrets masked, for debug logs.
 func (c Config) Redacted() string {
+	if c.GitHubToken != "" {
+		c.GitHubToken = "***"
+	}
 	if c.GrafanaAdminPassword != "" {
 		c.GrafanaAdminPassword = "***"
 	}
@@ -341,6 +348,7 @@ func Vars() []Var {
 		{"NOMCTL_SERVICE_NAME", DefaultServiceName, "systemd service name"},
 		{"NOMCTL_GO_VERSION", DefaultGoVersion, "Go toolchain version used to build the node"},
 		{"NOMCTL_PILLAR_NAME", "(unset)", "Pillar name for status/top production stats (alerts config takes precedence)"},
+		{"NOMCTL_GITHUB_TOKEN", "(unset)", "GitHub token with Contents read access for private go-zenon-releases upgrades"},
 		{"NOMCTL_REPO", DefaultReleaseRepo, "GitHub repository nomctl upgrade downloads releases from"},
 		{"NOMCTL_UPDATE_CHECK", "true", "Check GitHub for newer nomctl and go-zenon in status/top (cached 1h)"},
 		{"NOMCTL_BOOTSTRAP_URL", DefaultBootstrapURL, "Snapshot for nomctl bootstrap (.zip with a .hash sidecar next to it)"},

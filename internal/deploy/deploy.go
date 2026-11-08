@@ -4,6 +4,7 @@
 package deploy
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -190,18 +191,9 @@ func CloneAndBuild(cfg config.Config, repoURL, branch string) error {
 	if err := fsx.RenameExisting(srcDir); err != nil {
 		return fmt.Errorf("failed to prepare directories: %w", err)
 	}
-	if err := ui.Step(fmt.Sprintf("Cloning branch '%s' from repository...", branch), func() error {
-		return execx.Run("git", "clone", "-b", branch, repoURL, srcDir)
-	}); err != nil {
-		return fmt.Errorf("failed to clone repository: %w", err)
-	}
-
-	built := filepath.Join(srcDir, "build", cfg.BinaryName)
-	if err := ui.Step("Building "+cfg.BinaryName+"...", func() error {
-		return execx.New(cfg.GoBinary(), "build", "-o", built, "./cmd/"+cfg.BinaryName).
-			Dir(srcDir).Env("GO111MODULE=on").Run()
-	}); err != nil {
-		return fmt.Errorf("failed to build %s: %w", cfg.BinaryName, err)
+	built, _, err := BuildSource(context.Background(), cfg, repoURL, branch, srcDir)
+	if err != nil {
+		return err
 	}
 
 	if err := ui.Step("Installing "+cfg.BinaryName+" binary...", func() error {

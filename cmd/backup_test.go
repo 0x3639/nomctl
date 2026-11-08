@@ -38,7 +38,7 @@ func TestApplyBackupFlagsPrecedence(t *testing.T) {
 }
 
 func TestPrivilegedCommandsAreAnnotated(t *testing.T) {
-	for _, c := range []string{"deploy", "start", "stop", "restart", "logs", "resync", "backup", "restore"} {
+	for _, c := range []string{"deploy", "upgrade-node", "start", "stop", "restart", "logs", "resync", "backup", "restore"} {
 		sub, _, err := rootCmd.Find([]string{c})
 		if err != nil || sub.Annotations[annotationRoot] != "true" {
 			t.Errorf("%s should require root", c)

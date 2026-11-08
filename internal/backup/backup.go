@@ -37,9 +37,6 @@ func (i Info) Name() string {
 	return strings.TrimSuffix(filepath.Base(i.Path), ".tar.gz")
 }
 
-// TempDir is the staging directory used while copying node data.
-func TempDir(cfg config.Config) string { return filepath.Join(cfg.BackupDir, "temp") }
-
 // RestoreDir holds safety snapshots taken before a restore.
 func RestoreDir(cfg config.Config) string { return filepath.Join(cfg.BackupDir, "restore") }
 
@@ -132,7 +129,7 @@ type Options struct {
 // run was skipped because of the cadence.
 func Run(cfg config.Config, opts Options) (string, error) {
 	slog.Info(fmt.Sprintf("Using backup directory: %s (Keeping %d copies)", cfg.BackupDir, cfg.MaxBackups))
-	for _, d := range []string{cfg.BackupDir, TempDir(cfg), RestoreDir(cfg)} {
+	for _, d := range []string{cfg.BackupDir, RestoreDir(cfg)} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return "", err
 		}
@@ -153,27 +150,23 @@ func Run(cfg config.Config, opts Options) (string, error) {
 		}
 	}
 
-	if err := ensureFreeSpace(cfg); err != nil {
-		return "", err
-	}
-
-	if !fsx.IsDir(cfg.ZnnDir) {
-		return "", fmt.Errorf("cannot access %s", cfg.ZnnDir)
-	}
-	tmp := TempDir(cfg)
-	if err := clearDir(tmp); err != nil {
+	snapshot, err := Prepare(cfg)
+	if err != nil {
 		return "", err
 	}
 
 	st, err := service.Status(cfg.ServiceName)
 	if err != nil {
+		_ = snapshot.Discard()
 		return "", err
 	}
 	wasActive := st == service.Active
 	if err := service.Stop(cfg.ServiceName); err != nil {
+		_ = snapshot.Discard()
 		return "", err
 	}
-	if err := copyData(cfg, tmp); err != nil {
+	if err := snapshot.Capture(); err != nil {
+		_ = snapshot.Discard()
 		// Never leave the node down because the snapshot failed.
 		if wasActive {
 			if startErr := service.Start(cfg.ServiceName); startErr != nil {
@@ -183,19 +176,76 @@ func Run(cfg config.Config, opts Options) (string, error) {
 		return "", err
 	}
 	if err := service.Start(cfg.ServiceName); err != nil {
-		return "", err
+		return "", fmt.Errorf("restart failed; snapshot retained at %s: %w", snapshot.Path(), err)
 	}
 
-	archive := filepath.Join(cfg.BackupDir, ArchiveName(cfg.ServiceName, time.Now()))
-	if err := writeArchive(tmp, archive); err != nil {
-		return "", err
+	return snapshot.Finish()
+}
+
+// Snapshot separates the stopped-node copy from online compression. Callers
+// must hold the node-operation lock through Prepare, Capture and Finish.
+// Failed finalization leaves its unique directory available for recovery.
+type Snapshot struct {
+	cfg      config.Config
+	dir      string
+	captured bool
+}
+
+// Prepare checks configuration, data and free space before service downtime.
+func Prepare(cfg config.Config) (*Snapshot, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
-	if err := clearDir(tmp); err != nil {
-		return "", err
+	if !fsx.IsDir(cfg.ZnnDir) {
+		return nil, fmt.Errorf("cannot access %s", cfg.ZnnDir)
+	}
+	if err := os.MkdirAll(cfg.BackupDir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := ensureFreeSpace(cfg); err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(cfg.BackupDir, "snapshot-")
+	if err != nil {
+		return nil, err
+	}
+	return &Snapshot{cfg: cfg, dir: dir}, nil
+}
+
+// Path is the uncompressed recovery copy, retained if Finish fails.
+func (s *Snapshot) Path() string { return s.dir }
+
+// Capture copies the existing backup folders. The caller must stop the node.
+func (s *Snapshot) Capture() error {
+	if s.captured {
+		return fmt.Errorf("snapshot already captured")
+	}
+	if err := copyData(s.cfg, s.dir); err != nil {
+		return err
+	}
+	s.captured = true
+	return nil
+}
+
+// Discard removes an incomplete snapshot; never call it on finalization failure.
+func (s *Snapshot) Discard() error { return os.RemoveAll(s.dir) }
+
+// Finish creates the ordinary archive/hash pair and applies normal retention.
+func (s *Snapshot) Finish() (string, error) {
+	if !s.captured {
+		return "", fmt.Errorf("snapshot has not been captured")
+	}
+	// The unique suffix also avoids overwriting two backups in the same second.
+	name := strings.TrimSuffix(ArchiveName(s.cfg.ServiceName, time.Now()), ".tar.gz")
+	archive := filepath.Join(s.cfg.BackupDir, name+"_"+filepath.Base(s.dir)+".tar.gz")
+	if err := writeArchive(s.dir, archive); err != nil {
+		return "", fmt.Errorf("finish backup archive (snapshot retained at %s): %w", s.dir, err)
+	}
+	if err := s.Discard(); err != nil {
+		return archive, err
 	}
 	logx.Success("Backup completed: " + filepath.Base(archive))
-
-	if err := Prune(cfg); err != nil {
+	if err := Prune(s.cfg); err != nil {
 		return archive, err
 	}
 	return archive, nil
@@ -263,20 +313,6 @@ func ensureFreeSpace(cfg config.Config) error {
 	}
 	if avail < cfg.MinFreeSpaceKB {
 		return fmt.Errorf("insufficient disk space even after cleanup: %d MB available", avail/1024)
-	}
-	return nil
-}
-
-// clearDir removes every entry inside dir, keeping dir itself.
-func clearDir(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
-			return err
-		}
 	}
 	return nil
 }

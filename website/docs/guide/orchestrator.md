@@ -3,7 +3,7 @@ title: Orchestrator
 description: "Operate the orchestrator service that runs next to a pillar: hard reset its queues and events, check status, follow its logs."
 ---
 
-The orchestrator is a separate service, usually installed on a pillar's node. nomctl groups its functions under **Orchestrator** in the menu and `nomctl orchestrator` on the command line. Every function first checks that the orchestrator unit exists and refuses on a node without it.
+The orchestrator is a separate service, usually installed on a pillar's node. nomctl groups its functions under **Pillar & orchestrator** in the menu and `nomctl orchestrator` on the command line. Every function first checks that the orchestrator unit exists and refuses on a node without it.
 
 ```bash
 sudo nomctl orchestrator status        # active / inactive / not found

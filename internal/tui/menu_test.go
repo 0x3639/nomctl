@@ -7,12 +7,84 @@ import (
 )
 
 func TestMenuOptions(t *testing.T) {
-	opts := MenuOptions(config.Default())
-	if len(opts) != 18 || opts[0].Value != "pillar-deploy" || opts[1].Value != "deploy" || opts[6].Value != "status" || opts[7].Value != "alerts" || opts[8].Value != "support" || opts[12].Value != "bootstrap" || opts[14].Value != "pillar" || opts[15].Value != "config" || opts[16].Value != "orchestrator" || opts[17].Value != "exit" {
-		t.Errorf("unexpected options: %+v", opts)
+	opts := MenuOptions()
+	want := []string{"Manage node", "Backups & recovery", "Install & upgrade", "Pillar & orchestrator", "Alerts & tools", "Exit"}
+	if len(opts) != len(want) {
+		t.Fatalf("unexpected options: %+v", opts)
 	}
-	if opts[2].Key != "restart → Restart the go-zenon service" {
-		t.Errorf("label = %q", opts[2].Key)
+	for i, label := range want {
+		if opts[i].Key != label {
+			t.Errorf("label %d = %q", i, opts[i].Key)
+		}
+	}
+}
+
+func TestRequestedLabelsAndReachableActions(t *testing.T) {
+	labels := map[Action]string{
+		ActionBackup: "Backup chain data locally", ActionRestore: "Restore local chain data",
+		ActionBootstrap: `Restore from "trusted" bootstrap snapshot`,
+		ActionDeploy:    "Deploy a node from source", ActionUpgradeSource: "Upgrade a node from source",
+		ActionUpgradeNode: "Upgrade a node from signed release",
+	}
+	seen := map[Action]bool{}
+	for group, menu := range menus {
+		if group == "" {
+			continue
+		}
+		entries := menuEntries(group)
+		if entries[len(entries)-1].action != ActionBack {
+			t.Errorf("%s has no Back", group)
+		}
+		for _, entry := range menu.entries {
+			if seen[entry.action] {
+				t.Errorf("duplicate action %s", entry.action)
+			}
+			seen[entry.action] = true
+			if expected, ok := labels[entry.action]; ok && entry.label != expected {
+				t.Errorf("%s: %q", entry.action, entry.label)
+			}
+		}
+	}
+	for action := range labels {
+		if !seen[action] {
+			t.Errorf("missing action %s", action)
+		}
+	}
+}
+
+func TestSubmenuNavigation(t *testing.T) {
+	steps := []struct {
+		menu, previous, choice Action
+		err                    error
+	}{
+		{"", "", menuBackups, nil},
+		{menuBackups, "", ActionBackup, nil},
+		{menuBackups, ActionBackup, ActionRestore, nil},
+		{menuBackups, ActionRestore, ActionBack, nil},
+		{"", menuBackups, menuInstall, nil},
+		{menuInstall, "", "", ErrCancelled},
+		{"", menuInstall, ActionExit, nil},
+	}
+	index := 0
+	choose := func(menu, previous Action) (Action, error) {
+		if index >= len(steps) {
+			t.Fatal("menu did not exit")
+		}
+		step := steps[index]
+		index++
+		if menu != step.menu || previous != step.previous {
+			t.Fatalf("step %d: menu=%s previous=%s", index, menu, previous)
+		}
+		return step.choice, step.err
+	}
+	var calls []Action
+	dispatch := func(_ *config.Config, a Action) error { calls = append(calls, a); return ErrCancelled }
+	cfg := config.Default()
+	if err := runMenus(&cfg, choose, dispatch); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[0] != ActionBackup || calls[1] != ActionRestore {
+		t.Fatal(calls)
 	}
 }
 

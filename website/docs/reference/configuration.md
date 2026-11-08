@@ -13,13 +13,14 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_WORK_DIR` | `/opt/nomctl` | Where the Go toolchain and source checkout are kept |
 | `NOMCTL_INSTALL_DIR` | `/usr/local/bin` | Where the node binary is installed |
 | `NOMCTL_ZNN_DIR` | `/root/.znn` | Node data directory used by backup, restore and resync. Not passed to `znnd`, which uses its own default |
-| `NOMCTL_REPO_URL` | `https://github.com/zenon-network/go-zenon.git` | Git repository to build |
-| `NOMCTL_BRANCH_NAME` | `master` | Git branch to build |
+| `NOMCTL_REPO_URL` | `https://github.com/zenon-network/go-zenon.git` | Git repository for `deploy` and `upgrade-node` |
+| `NOMCTL_BRANCH_NAME` | `master` | Git branch for `deploy` and `upgrade-node` |
 | `NOMCTL_BINARY_NAME` | `znnd` | Node binary name (also the `cmd/` package built) |
 | `NOMCTL_SERVICE_NAME` | `go-zenon` | systemd service name |
 | `NOMCTL_GO_VERSION` | `1.23.0` | Go toolchain version used to build the node |
 | `NOMCTL_PILLAR_NAME` | unset | Pillar shown by `status`/`top` when alerts are not set up (the alerts config takes precedence) |
 | `NOMCTL_REPO` | `0x3639/nomctl` | GitHub repository `nomctl upgrade` downloads releases from |
+| `NOMCTL_GITHUB_TOKEN` | unset | Optional GitHub token with Contents read access to `zenon-network/go-zenon-releases`; required while private, redacted from logs |
 | `NOMCTL_UPDATE_CHECK` | `true` | Check GitHub for newer nomctl and go-zenon in `status`/`top` and the `update_available` alert (cached 1 h) |
 | `NOMCTL_BOOTSTRAP_URL` | the snapshot published for this release | Snapshot `.zip` for [`nomctl bootstrap`](/guide/bootstrap); a `.hash` sidecar must sit next to it |
 | `NOMCTL_RPC_TIMEOUT` | `3s` | Per-call timeout for the node's JSON-RPC; raise it on slow disks |
@@ -47,8 +48,10 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `/etc/systemd/system/nomctl-alerts.service` | `alerts setup` |
 | `/etc/nomctl/alerts.json` (0600) | `alerts setup`, `alerts set`, `enable`, `disable` |
 | `/run/nomctl/alerts-state.json` | the alerts daemon, read by `alerts status` |
-| `/run/nomctl.lock` | backup, restore, resync, deploy while running |
+| `/run/nomctl.lock` | backup, restore, resync, deploy, upgrade-node while running |
 | `/run/nomctl/update-check.json` | the cached update check |
+| `/usr/local/bin/znnd.previous` | `upgrade-node`, previous node binary (path follows install directory and binary name settings) |
+| `/backup/snapshot-*` | Uncompressed chain-data snapshot retained when backup finalization fails |
 | `/usr/local/bin/nomctl.previous` | `upgrade`, for `--rollback` |
 | `/etc/systemd/timesyncd.conf` | pre-flight, only if NTP is not `time.cloudflare.com` |
 

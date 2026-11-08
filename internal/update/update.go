@@ -352,7 +352,7 @@ func Lines(c Check, runningVersion, nodeCommit string) []string {
 		out = append(out, fmt.Sprintf("nomctl %s available (running %s): sudo nomctl upgrade", strings.TrimPrefix(c.NomctlLatest, "v"), runningVersion))
 	}
 	if c.NodeRemote != "" && nodeCommit != "" && !SameCommit(nodeCommit, c.NodeRemote) {
-		out = append(out, fmt.Sprintf("go-zenon %s has new commits (deployed %s, remote %s): sudo nomctl deploy", c.NodeBranch, shortCommit(nodeCommit), shortCommit(c.NodeRemote)))
+		out = append(out, fmt.Sprintf("go-zenon %s has new commits (deployed %s, remote %s): sudo nomctl upgrade-node", c.NodeBranch, shortCommit(nodeCommit), shortCommit(c.NodeRemote)))
 	}
 	return out
 }

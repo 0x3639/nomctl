@@ -41,9 +41,16 @@ WantedBy=multi-user.target
 
 ## Choosing a repository and branch
 
-From the menu, deploy offers `zenon-network`, `hypercore-one` or a custom URL, then lists the remote branches with `master` first. From the command line pass `--repo` and `--branch`, or set `NOMCTL_REPO_URL` and `NOMCTL_BRANCH_NAME`.
+From **Install & upgrade › Deploy a node from source**, the menu offers `zenon-network`, `hypercore-one` or a custom URL, then lists the remote branches with `master` first. From the command line pass `--repo` and `--branch`, or set `NOMCTL_REPO_URL` and `NOMCTL_BRANCH_NAME`.
 
 Stopping sends SIGTERM to the service's own processes and SIGKILL after 10 seconds; nothing outside the unit's cgroup is touched, so several nodes can share a host. (The bash toolkit's unit ran `pkill -9 znnd`, which would have killed all of them.)
+
+## Upgrading an existing node
+
+Use **Install & upgrade › Upgrade a node from source**, or
+`sudo nomctl upgrade-node`. It builds while the node runs, then stops
+for a backup copy and atomic binary replacement, starts the service, and finishes
+the backup archive. It preserves the current systemd unit. See [Upgrading](/guide/upgrading#source-upgrades).
 
 ## Redeploying
 

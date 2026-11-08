@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/huh"
 
 	"github.com/0x3639/nomctl/internal/backup"
@@ -120,7 +121,9 @@ func Select(title string, options []huh.Option[string]) (string, error) {
 }
 
 func runForm(field huh.Field) error {
-	form := huh.NewForm(huh.NewGroup(field)).WithTheme(theme())
+	keys := huh.NewDefaultKeyMap()
+	keys.Quit = key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "back"))
+	form := huh.NewForm(huh.NewGroup(field)).WithTheme(theme()).WithKeyMap(keys)
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return ErrCancelled

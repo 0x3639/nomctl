@@ -15,7 +15,7 @@ sudo nomctl config unset Net.MaxPeers         # back to go-zenon's default
 sudo nomctl config edit                       # $EDITOR, validated before it is installed
 ```
 
-The menu has the same under **Edit config.json**: show, set one setting with a picker, edit in the editor. There it asks whether to restart the node after a change; on the command line pass `--restart`, otherwise `sudo nomctl restart` when you are done, since znnd reads the file only at start.
+The menu has the same under **Manage node › Node configuration**: show, set one setting with a picker, edit in the editor. There it asks whether to restart the node after a change; on the command line pass `--restart`, otherwise `sudo nomctl restart` when you are done, since znnd reads the file only at start.
 
 ## Keys
 
