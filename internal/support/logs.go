@@ -1,13 +1,16 @@
 package support
 
 import (
+	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -57,31 +60,102 @@ func ListLogs(logDir string) ([]LogFile, error) {
 	return logs, nil
 }
 
-// TailLog writes the last maxBytes of src (decompressing .gz) to dst.
+// TailLog writes a bounded, redacted tail of src (decompressing .gz) to a new dst.
 func TailLog(src, dst string, maxBytes int64) error {
-	f, err := os.Open(src)
+	return tailLogContext(context.Background(), src, dst, maxBytes)
+}
+
+func tailLogContext(ctx context.Context, src, dst string, maxBytes int64) error {
+	data, err := readLogTail(ctx, src, maxBytes)
 	if err != nil {
 		return err
 	}
+	return writePrivateFile(dst, []byte(Redact(string(data))))
+}
+
+func readLogTail(ctx context.Context, src string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	f, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = f.Close() }()
-	var r io.Reader = f
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("log is not a regular file")
+	}
+	var data []byte
+	truncated := false
 	if strings.HasSuffix(src, ".gz") {
 		gz, err := gzip.NewReader(f)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer func() { _ = gz.Close() }()
-		r = gz
-	} else if info, err := f.Stat(); err == nil && info.Size() > maxBytes {
-		if _, err := f.Seek(info.Size()-maxBytes, io.SeekStart); err != nil {
-			return err
+		data, err = tailBytes(contextReader{ctx, gz}, maxBytes+1)
+		if err != nil {
+			return nil, err
+		}
+		truncated = int64(len(data)) > maxBytes
+		if truncated {
+			data = data[len(data)-int(maxBytes):]
+		}
+	} else {
+		truncated = info.Size() > maxBytes
+		if truncated {
+			if _, err := f.Seek(info.Size()-maxBytes, io.SeekStart); err != nil {
+				return nil, err
+			}
+		}
+		data, err = io.ReadAll(io.LimitReader(contextReader{ctx, f}, maxBytes))
+		if err != nil {
+			return nil, err
 		}
 	}
-	data, err := tailBytes(r, maxBytes)
-	if err != nil {
-		return err
+	// Do not retain a record whose secret key might have been cut off.
+	if truncated {
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			data = data[i+1:]
+		} else {
+			data = nil
+		}
+		// A multiline structured record may begin before the retained tail.
+		// Omit its leading continuation fields rather than keep an orphaned
+		// value after dropping the field name at the boundary.
+		for len(data) > 0 {
+			line := data
+			next := len(data)
+			if i := bytes.IndexByte(data, '\n'); i >= 0 {
+				line, next = data[:i], i+1
+			}
+			trimmed := bytes.TrimSpace(line)
+			if len(trimmed) > 0 && !bytes.ContainsAny(trimmed[:1], "\"'}]") {
+				break
+			}
+			data = data[next:]
+		}
+		data = append([]byte("[log truncated; showing complete tail lines]\n"), data...)
 	}
-	return os.WriteFile(dst, data, 0o600)
+	return []byte(Redact(string(data))), nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 // tailBytes returns at most maxBytes from the end of r without holding more

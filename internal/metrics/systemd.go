@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -24,11 +25,19 @@ var serviceProperties = []string{"ActiveState", "SubState", "Result", "ControlGr
 
 // ReadServiceProps runs systemctl show for the unit.
 func ReadServiceProps(unit string) (ServiceProps, error) {
+	return ReadServicePropsContext(context.Background(), unit)
+}
+
+// ReadServicePropsContext bounds the status query by its caller and a short
+// timeout, so an unavailable service manager cannot stall a diagnostic sample.
+func ReadServicePropsContext(ctx context.Context, unit string) (ServiceProps, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	args := []string{"show", unit}
 	for _, p := range serviceProperties {
 		args = append(args, "-p", p)
 	}
-	out, err := execx.Output("systemctl", args...)
+	out, err := execx.New("systemctl", args...).Context(ctx).OutputLimited(64 << 10)
 	if err != nil {
 		return ServiceProps{}, err
 	}

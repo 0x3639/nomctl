@@ -29,7 +29,7 @@ Update    nomctl 0.5.0 available (running 0.4.0): sudo nomctl upgrade
 Update    go-zenon master has new commits (deployed 1a2b3c4, remote 9f8e7d6): sudo nomctl deploy
 ```
 
-Nothing is printed when up to date or when the check fails. The result is cached in `/run/nomctl/update-check.json`. `NOMCTL_UPDATE_CHECK=false` (or `--no-update-check` on `status` and `top`) disables the check entirely for nodes that should not contact GitHub.
+Nothing is printed when up to date or when the check fails. The result is cached in `/run/nomctl-system/update-check.json` for root commands; the unprivileged alerts daemon keeps its own cache in `/run/nomctl/update-check.json`. `NOMCTL_UPDATE_CHECK=false` (or `--no-update-check` on `status` and `top`) disables the check entirely for nodes that should not contact GitHub.
 
 The same signal is available as the `update_available` alert, which is off by default:
 

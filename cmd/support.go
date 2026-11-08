@@ -28,9 +28,9 @@ var supportCmd = &cobra.Command{
 	Long: `Collects systemd state, journals, process and cgroup details, host
 resources, node log tails, a node RPC snapshot (peer IPs redacted) and
 nomctl's own state into a directory and a .tar.gz beside it. Read-only:
-it never stops the node or touches its data. Config contents are never
-collected. With --watch it first samples the live process until systemd
-restarts it, so the bundle contains the moments before a crash.`,
+it never stops the node or touches its data. Configuration files are never
+collected; known credential fields are redacted from captured output. With --watch it first samples the live process
+until systemd restarts it, retaining bounded diagnostics before the restart.`,
 	Args:        cobra.NoArgs,
 	Annotations: diagnostic(),
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -40,18 +40,15 @@ restarts it, so the bundle contains the moments before a crash.`,
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
+		opts := support.Options{OutputDir: out, Since: flagSupportSince, Version: versionString()}
 		if flagSupportWatch {
 			if flagSupportPoll < time.Second {
 				return errors.New("--poll must be at least 1s")
 			}
-			if err := support.Watch(ctx, cfg, support.WatchOptions{Poll: flagSupportPoll, Timeout: flagSupportTimeout, Out: out}); err != nil {
-				return err
-			}
-			// A Ctrl+C that ended the watch must not abort the collection.
-			stop()
-			ctx = context.Background()
+			opts.Watch = &support.WatchOptions{Poll: flagSupportPoll, Timeout: flagSupportTimeout}
+			opts.AfterWatch = stop
 		}
-		res, err := support.Collect(ctx, cfg, support.Options{OutputDir: out, Since: flagSupportSince, Version: versionString()})
+		res, err := support.Collect(ctx, cfg, opts)
 		if err != nil {
 			return err
 		}
@@ -65,11 +62,11 @@ func printBundleResult(cmd *cobra.Command, res support.Result) {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "\nDiagnostics directory: %s\nBundle:                %s\nCrash markers:         %s\n\n", res.Dir, res.Archive, res.Markers)
 	fmt.Fprintln(w, "The bundle may contain the host name, node addresses, paths and service arguments.")
-	fmt.Fprintln(w, "Review it before sharing publicly. Configuration contents are not collected.")
+	fmt.Fprintln(w, "Review it before sharing publicly. Configuration files are not collected; redaction is best effort.")
 }
 
 func init() {
-	supportCmd.Flags().StringVar(&flagSupportOut, "output", "", "diagnostics directory (default /root/nomctl-support-<host>-<time>)")
+	supportCmd.Flags().StringVar(&flagSupportOut, "output", "", "new diagnostics directory; must not exist (default /root/nomctl-support-<host>-<time>)")
 	supportCmd.Flags().StringVar(&flagSupportSince, "since", support.DefaultSince, "journal window passed to journalctl --since")
 	supportCmd.Flags().BoolVar(&flagSupportWatch, "watch", false, "sample the live process until systemd restarts it, then collect")
 	supportCmd.Flags().DurationVar(&flagSupportPoll, "poll", 10*time.Second, "watch sampling interval")

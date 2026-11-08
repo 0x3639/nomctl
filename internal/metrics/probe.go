@@ -3,9 +3,9 @@ package metrics
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/0x3639/nomctl/internal/fsx"
 )
 
 // Probe is what the root-run `nomctl alerts probe` records for the daemon:
@@ -31,7 +31,7 @@ type Probe struct {
 }
 
 // DefaultProbePath is where the probe timer writes and the daemon reads.
-const DefaultProbePath = "/run/nomctl/process-probe.json"
+const DefaultProbePath = "/run/nomctl-system/process-probe.json"
 
 // ProbeMaxAge is how old a probe may be before the daemon ignores it: the
 // timer runs every 30 s, so two minutes means four missed runs.
@@ -62,44 +62,20 @@ func TakeProbe(procRoot string, pid int, dataDir string, now time.Time) (Probe, 
 	return p, nil
 }
 
-// WriteProbe stores p at path atomically. The directory may belong to the
-// daemon's user: the temp file is created O_EXCL with a random name, and
-// rename replaces whatever is at path, link or not.
+// WriteProbe atomically stores p in the root-owned runtime directory. The
+// daemon can read the published file but cannot change it or its directory.
 func WriteProbe(path string, p Probe) error {
 	data, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".probe-")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	return nil
+	return fsx.WriteRuntimeFile(path, data, 0o644)
 }
 
 // ReadProbe loads a fresh probe from path. Callers using the process
 // fields must check PID themselves (see ForPID).
 func ReadProbe(path string, now time.Time) (Probe, error) {
-	data, err := os.ReadFile(path)
+	data, err := fsx.ReadRuntimeFile(path, 64<<10)
 	if err != nil {
 		return Probe{}, err
 	}
