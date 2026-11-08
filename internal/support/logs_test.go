@@ -3,8 +3,10 @@ package support
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,19 +61,56 @@ func TestTailLog(t *testing.T) {
 	if err := TailLog(src, dst, 10); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(dst); len(data) != 10 {
-		t.Errorf("tail size = %d", len(data))
+	if data, _ := os.ReadFile(dst); !strings.Contains(string(data), "truncated") || bytes.Contains(data, []byte("xxxxx")) {
+		t.Errorf("partial log record retained: %q", data)
 	}
 	gz := filepath.Join(dir, "old.log.gz")
 	f, _ := os.Create(gz)
 	w := gzip.NewWriter(f)
-	_, _ = w.Write([]byte("hello gzip world"))
+	_, _ = w.Write([]byte("hello gzip\nworld\n"))
 	_ = w.Close()
 	_ = f.Close()
-	if err := TailLog(gz, dst, 5); err != nil {
+	dst = filepath.Join(dir, "gzip.tail")
+	if err := TailLog(gz, dst, 7); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(dst); string(data) != "world" {
+	if data, _ := os.ReadFile(dst); !strings.HasSuffix(string(data), "world\n") {
 		t.Errorf("gz tail = %q", data)
+	}
+}
+
+func TestLogTailRedactionAndCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.log")
+	input := strings.Repeat("old record\n", 20000) + "Password=example-log-value\nlatest record\n"
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "tail.log")
+	if err := TailLog(path, out, 100); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(out)
+	if strings.Contains(string(data), "example-log-value") || !strings.Contains(string(data), "latest record") || len(data) > 200 {
+		t.Fatalf("unexpected bounded log tail: %q", data)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := readLogTail(ctx, path, 100); err == nil {
+		t.Fatal("cancelled log read succeeded")
+	}
+}
+
+func TestLogTailOmitsLeadingStructuredFragment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.log")
+	fragment := "\"Password\":\n  \"example-fragment-value\"\n}\nINFO latest record\n"
+	if err := os.WriteFile(path, []byte(strings.Repeat("previous record\n", 100)+fragment), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readLogTail(context.Background(), path, int64(len(fragment)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "example-fragment-value") || !strings.Contains(string(data), "INFO latest record") {
+		t.Fatalf("unexpected structured tail: %q", data)
 	}
 }

@@ -10,14 +10,21 @@ import (
 )
 
 var (
+	// Quoted JSON keys and escaped characters occur in structured log records.
+	reJSON = regexp.MustCompile(`(?i)("(?:password|passwd|token|secret|api[-_]?key|authorization|mnemonic|private[-_]?key)[[:alnum:]_.-]*"[ \t\r\n]*:[ \t\r\n]*)("(?:\\.|[^"\\])*"|'[^']*'|[^,}\r\n]+)`)
+	// An Authorization header may include a scheme and several space-separated
+	// parameters. Remove the whole value rather than just its first word.
+	reAuthorization = regexp.MustCompile(`(?im)((?:proxy-)?authorization[ \t]*[=:][ \t]*)([^\r\n]*)`)
 	// reAssign matches password=..., token: ... and friends.
-	reAssign = regexp.MustCompile(`(?i)((password|passwd|token|secret|api[-_]?key|authorization|mnemonic|private[-_]?key)[[:alnum:]_.-]*[=:][ \t]*)("[^"]*"|'[^']*'|[^[:space:]"']+)`)
+	reAssign = regexp.MustCompile(`(?i)((password|passwd|token|secret|api[-_]?key|mnemonic|private[-_]?key)[[:alnum:]_.-]*[ \t]*[=:][ \t]*)("(?:\\.|[^"\\])*"|'[^']*'|[^[:space:]"']+)`)
 	// reEnv matches systemd Environment= settings carrying secrets.
 	reEnv = regexp.MustCompile(`(?i)(Environment="?[^" ]*(PASSWORD|TOKEN|SECRET|API_KEY|PRIVATE_KEY|MNEMONIC)=)[^" ]+`)
 )
 
 // Redact masks secret-looking assignments, matching the script's sed rules.
 func Redact(s string) string {
+	s = reJSON.ReplaceAllString(s, `${1}"<redacted>"`)
+	s = reAuthorization.ReplaceAllString(s, "${1}<redacted>")
 	s = reAssign.ReplaceAllString(s, "${1}<redacted>")
 	return reEnv.ReplaceAllString(s, "${1}<redacted>")
 }
@@ -31,7 +38,7 @@ func FilterCrashMarkers(r io.Reader, w io.Writer) error {
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for sc.Scan() {
 		if CrashMarkers.Match(sc.Bytes()) {
-			if _, err := w.Write(append(sc.Bytes(), '\n')); err != nil {
+			if _, err := io.WriteString(w, Redact(sc.Text())+"\n"); err != nil {
 				return err
 			}
 		}

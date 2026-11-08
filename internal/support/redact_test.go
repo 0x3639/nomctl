@@ -57,3 +57,20 @@ func TestRedactPeers(t *testing.T) {
 		t.Error("invalid JSON must error")
 	}
 }
+
+func TestRedactStructuredCredentials(t *testing.T) {
+	input := "startup config: {\n  \"Producer\": {\n    \"Password\": \"example-credential\\\"-suffix\",\n    \"Name\": \"example-node\"\n  },\n  \"Token\":\n    \"example-token\"\n}\nAuthorization: Bearer example-bearer\nProxy-Authorization: Basic example-basic\nauthorization = Digest username=example, response=example-response\n"
+	out := Redact(input)
+	for _, secret := range []string{"example-credential", "-suffix", "example-token", "example-bearer", "example-basic", "example-response"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("credential fixture was retained: %s", secret)
+		}
+	}
+	if !strings.Contains(out, "example-node") || !strings.Contains(out, `"Password": "<redacted>"`) {
+		t.Errorf("expected redacted structured record: %s", out)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(Redact(`{"Password":"example","Authorization":"Bearer example","port":1234}`)), &doc); err != nil {
+		t.Fatalf("redacted JSON should remain valid: %v", err)
+	}
+}

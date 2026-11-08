@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/0x3639/nomctl/internal/backup"
@@ -28,6 +29,10 @@ type Options struct {
 	Since     string
 	Version   string
 	NodeURL   string
+	// Watch is performed in the same fresh, private collection directory.
+	Watch *WatchOptions
+	// AfterWatch lets a caller restore signal handling before the final snapshot.
+	AfterWatch func()
 }
 
 // Result is where the bundle landed.
@@ -55,35 +60,33 @@ func DefaultOutputDir(now time.Time) string {
 // bundle carries state through the collection steps.
 type bundle struct {
 	dir  string
+	ctx  context.Context
 	cfg  config.Config
 	opts Options
 	unit string
 }
 
-// write creates (or truncates) a file in the bundle with the given content.
+// write creates a new private file in the bundle with redacted content.
 func (b *bundle) write(name, content string) {
-	if err := os.WriteFile(filepath.Join(b.dir, name), []byte(content), 0o600); err != nil {
+	if err := writePrivateFile(filepath.Join(b.dir, name), []byte(Redact(content))); err != nil {
 		slog.Warn("bundle: cannot write " + name + ": " + err.Error())
 	}
 }
 
 // capture runs a command and stores its output (or error) in a file. It
 // mirrors the script's capture(): a header, then output, best effort.
-func (b *bundle) capture(name string, redact bool, cmd string, args ...string) {
-	out, err := execx.New(cmd, args...).Output()
+func (b *bundle) capture(name string, cmd string, args ...string) {
+	out, err := b.output(cmd, args...)
 	header := fmt.Sprintf("command: %s %s\ncollected: %s\n\n", cmd, strings.Join(args, " "), time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		out += "\n[error] " + err.Error()
-	}
-	if redact {
-		out = Redact(out)
 	}
 	b.write(name, header+out+"\n")
 }
 
 // section runs a command and returns a titled block for a combined file.
-func section(title, cmd string, args ...string) string {
-	out, err := execx.Output(cmd, args...)
+func (b *bundle) section(title, cmd string, args ...string) string {
+	out, err := b.output(cmd, args...)
 	if err != nil {
 		out += "\n[error] " + err.Error()
 	}
@@ -103,11 +106,30 @@ func Collect(ctx context.Context, cfg config.Config, opts Options) (Result, erro
 	if opts.NodeURL == "" {
 		opts.NodeURL = node.DefaultURL
 	}
-	if err := os.MkdirAll(opts.OutputDir, 0o700); err != nil {
+	// A collection never reuses an existing directory or archive. Files are
+	// staged privately here, and only a complete archive is published.
+	opts.OutputDir = filepath.Clean(opts.OutputDir)
+	if _, err := os.Lstat(opts.OutputDir + ".tar.gz"); !os.IsNotExist(err) {
+		return Result{}, fmt.Errorf("archive destination is unavailable: %s.tar.gz", opts.OutputDir)
+	}
+	if err := os.Mkdir(opts.OutputDir, 0o700); err != nil {
 		return Result{}, fmt.Errorf("create %s: %w", opts.OutputDir, err)
 	}
-	_ = os.Chmod(opts.OutputDir, 0o700)
-	b := &bundle{dir: opts.OutputDir, cfg: cfg, opts: opts, unit: cfg.ServiceUnit()}
+	if opts.Watch != nil {
+		watch := *opts.Watch
+		watch.Out = opts.OutputDir
+		if err := watchInto(ctx, cfg, watch); err != nil {
+			return Result{}, err
+		}
+		if opts.AfterWatch != nil {
+			opts.AfterWatch()
+		}
+		// Interrupting the watch still collects a bounded final snapshot.
+		ctx = context.WithoutCancel(ctx)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	b := &bundle{dir: opts.OutputDir, ctx: ctx, cfg: cfg, opts: opts, unit: cfg.ServiceUnit()}
 
 	sampler := metrics.NewSampler(cfg)
 	sampler.Node = node.New(opts.NodeURL)
@@ -136,8 +158,8 @@ func Collect(ctx context.Context, cfg config.Config, opts Options) (Result, erro
 
 func (b *bundle) summary(s metrics.Sample) {
 	host, _ := os.Hostname()
-	uname, _ := execx.Output("uname", "-a")
-	uptime, _ := execx.Output("uptime")
+	uname, _ := b.output("uname", "-a")
+	uptime, _ := b.output("uptime")
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "host=%s\ncollected=%s\nnomctl=%s\nservice=%s\ndata-dir=%s\njournal-since=%s\nuid=%d\n\n%s\n%s\n",
 		host, time.Now().UTC().Format(time.RFC3339), b.opts.Version, b.unit, b.cfg.ZnnDir, b.opts.Since, os.Getuid(), uname, uptime)
@@ -153,20 +175,20 @@ func (b *bundle) summary(s metrics.Sample) {
 var showProperties = []string{"Id", "Description", "LoadState", "ActiveState", "SubState", "Result", "MainPID", "ControlPID", "NRestarts", "Restart", "RestartUSec", "Type", "User", "Group", "ExecStart", "ExecStop", "ExecStopPost", "ControlGroup", "ExecMainStartTimestamp", "ExecMainExitTimestamp", "ExecMainCode", "ExecMainStatus", "WatchdogUSec", "WatchdogTimestamp", "OOMPolicy", "MemoryCurrent", "MemoryPeak", "MemoryMax", "TasksCurrent", "TasksMax", "LimitNOFILE", "CPUUsageNSec"}
 
 func (b *bundle) service() {
-	b.capture("03-service-status.txt", false, "systemctl", "status", b.unit, "--full", "--no-pager")
+	b.capture("03-service-status.txt", "systemctl", "status", b.unit, "--full", "--no-pager")
 	args := []string{"show", b.unit}
 	for _, p := range showProperties {
 		args = append(args, "-p", p)
 	}
-	b.capture("04-service-properties.txt", true, "systemctl", args...)
-	b.capture("05-service-unit.txt", true, "systemctl", "cat", b.unit)
+	b.capture("04-service-properties.txt", "systemctl", args...)
+	b.capture("05-service-unit.txt", "systemctl", "cat", b.unit)
 }
 
 func (b *bundle) journals() {
 	since := b.opts.Since
-	b.capture("06-service-journal.log", false, "journalctl", "-u", b.unit, "--since", since, "-o", "short-iso-precise", "--no-pager")
-	b.capture("07-kernel-journal.log", false, "journalctl", "-k", "--since", since, "-o", "short-iso-precise", "--no-pager")
-	b.capture("08-system-warnings.log", false, "journalctl", "--since", since, "-p", "warning..alert", "-o", "short-iso-precise", "--no-pager")
+	b.capture("06-service-journal.log", "journalctl", "-u", b.unit, "--since", since, "-o", "short-iso-precise", "--no-pager", "--lines=10000")
+	b.capture("07-kernel-journal.log", "journalctl", "-k", "--since", since, "-o", "short-iso-precise", "--no-pager", "--lines=10000")
+	b.capture("08-system-warnings.log", "journalctl", "--since", since, "-p", "warning..alert", "-o", "short-iso-precise", "--no-pager", "--lines=10000")
 }
 
 func (b *bundle) process(s metrics.Sample) {
@@ -207,7 +229,7 @@ func (b *bundle) process(s metrics.Sample) {
 
 func (b *bundle) hostResources() {
 	var sb strings.Builder
-	sb.WriteString(section("memory", "free", "-h"))
+	sb.WriteString(b.section("memory", "free", "-h"))
 	if data, err := os.ReadFile("/proc/meminfo"); err == nil {
 		fmt.Fprintf(&sb, "%s\n", data)
 	}
@@ -218,10 +240,10 @@ func (b *bundle) hostResources() {
 		}
 	}
 	sb.WriteString("\n")
-	sb.WriteString(section("filesystems", "df", "-hT"))
-	sb.WriteString(section("inodes", "df", "-i"))
-	sb.WriteString(section("top processes by RSS", "sh", "-c", "ps -eo pid,ppid,user,stat,%cpu,%mem,rss,vsz,nlwp,etimes,comm --sort=-rss | head -50"))
-	sb.WriteString(section("shell limits", "sh", "-c", "ulimit -a"))
+	sb.WriteString(b.section("filesystems", "df", "-hT"))
+	sb.WriteString(b.section("inodes", "df", "-i"))
+	sb.WriteString(b.section("top processes by RSS", "sh", "-c", "ps -eo pid,ppid,user,stat,%cpu,%mem,rss,vsz,nlwp,etimes,comm --sort=-rss | head -50"))
+	sb.WriteString(b.section("shell limits", "sh", "-c", "ulimit -a"))
 	b.write("10-host-resources.txt", sb.String())
 }
 
@@ -240,7 +262,7 @@ func (b *bundle) appLogs() {
 	}
 	b.write("11-app-log-inventory.txt", inv.String())
 	tails := filepath.Join(b.dir, "12-app-log-tails")
-	if err := os.MkdirAll(tails, 0o700); err != nil {
+	if err := os.Mkdir(tails, 0o700); err != nil {
 		return
 	}
 	for i, l := range logs {
@@ -248,14 +270,14 @@ func (b *bundle) appLogs() {
 			break
 		}
 		dst := filepath.Join(tails, fmt.Sprintf("%02d-%s.tail", i+1, filepath.Base(l.Path)))
-		if err := TailLog(l.Path, dst, LogTailBytes); err != nil {
+		if err := tailLogContext(b.ctx, l.Path, dst, LogTailBytes); err != nil {
 			slog.Warn("bundle: cannot tail " + l.Path + ": " + err.Error())
 		}
 	}
 }
 
 func (b *bundle) crashMarkers() {
-	out, err := os.OpenFile(filepath.Join(b.dir, "13-crash-markers.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(filepath.Join(b.dir, "13-crash-markers.log"), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return
 	}
@@ -279,8 +301,8 @@ func (b *bundle) coredumps() {
 		b.write("15-coredumps-info.txt", "coredumpctl is not installed\n")
 		return
 	}
-	b.capture("14-coredumps-list.txt", false, "coredumpctl", "--since", b.opts.Since, "list", b.cfg.BinaryName, "--no-pager")
-	b.capture("15-coredumps-info.txt", false, "coredumpctl", "--since", b.opts.Since, "info", b.cfg.BinaryName, "--no-pager")
+	b.capture("14-coredumps-list.txt", "coredumpctl", "--since", b.opts.Since, "list", b.cfg.BinaryName, "--no-pager")
+	b.capture("15-coredumps-info.txt", "coredumpctl", "--since", b.opts.Since, "info", b.cfg.BinaryName, "--no-pager")
 }
 
 func (b *bundle) binary(s metrics.Sample) {
@@ -304,7 +326,7 @@ func (b *bundle) binary(s metrics.Sample) {
 		fmt.Fprintf(&sb, "sha256=%s\n", sum)
 	}
 	if goBin := b.cfg.GoBinary(); fsx.Exists(goBin) {
-		if out, err := execx.Output(goBin, "version", "-m", exe); err == nil {
+		if out, err := b.output(goBin, "version", "-m", exe); err == nil {
 			fmt.Fprintf(&sb, "\n%s\n", out)
 		}
 	}
@@ -313,10 +335,10 @@ func (b *bundle) binary(s metrics.Sample) {
 
 func (b *bundle) oomAndBoots() {
 	var sb strings.Builder
-	sb.WriteString(section("boot history", "journalctl", "--list-boots", "--no-pager"))
-	sb.WriteString(section("systemd-oomd", "systemctl", "status", "systemd-oomd", "--full", "--no-pager"))
+	sb.WriteString(b.section("boot history", "journalctl", "--list-boots", "--no-pager"))
+	sb.WriteString(b.section("systemd-oomd", "systemctl", "status", "systemd-oomd", "--full", "--no-pager"))
 	if execx.Exists("oomctl") {
-		sb.WriteString(section("oomctl", "oomctl"))
+		sb.WriteString(b.section("oomctl", "oomctl"))
 	}
 	b.write("17-oom-and-boots.txt", sb.String())
 }
@@ -361,9 +383,9 @@ func (b *bundle) nodeRPC(ctx context.Context, url string) {
 func (b *bundle) nomctl() {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "version=%s\nconfig=%s\n\n", b.opts.Version, b.cfg.Redacted())
-	sb.WriteString(section("backup timer", "systemctl", "list-timers", backup.TimerName+".timer", "--all", "--no-pager"))
+	sb.WriteString(b.section("backup timer", "systemctl", "list-timers", backup.TimerName+".timer", "--all", "--no-pager"))
 	fmt.Fprintf(&sb, "== last 200 lines of %s ==\n", b.cfg.LogFile)
-	data, err := os.ReadFile(b.cfg.LogFile)
+	data, err := readLogTail(b.ctx, b.cfg.LogFile, LogTailBytes)
 	if err != nil {
 		fmt.Fprintf(&sb, "[error] %s\n", err)
 	} else {
@@ -376,19 +398,50 @@ func (b *bundle) nomctl() {
 	b.write("19-nomctl.txt", sb.String())
 }
 
-// writeArchive tars dir into dir.tar.gz (entries prefixed with the base name).
+// writePrivateFile reserves a fresh output without following an existing link.
+func writePrivateFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// output bounds every diagnostic subprocess and captures stderr privately.
+func (b *bundle) output(cmd string, args ...string) (string, error) {
+	ctx := b.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return execx.New(cmd, args...).Context(ctx).OutputLimited(LogTailBytes)
+}
+
+// writeArchive publishes a complete archive without replacing an existing file.
 func writeArchive(dir string) (string, error) {
 	archive := strings.TrimSuffix(dir, "/") + ".tar.gz"
-	f, err := os.OpenFile(archive, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.CreateTemp(dir, ".archive-*")
 	if err != nil {
 		return "", err
 	}
+	defer func() { _ = f.Close(); _ = os.Remove(f.Name()) }()
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
 	base := filepath.Base(dir)
 	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		if path == f.Name() {
+			return nil
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("unexpected file type in collection: %s", path)
 		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
@@ -405,28 +458,40 @@ func writeArchive(dir string) (string, error) {
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() {
+		if info.IsDir() {
 			return nil
 		}
-		src, err := os.Open(path)
+		src, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = src.Close() }()
-		_, err = io.Copy(tw, src)
+		st, err := src.Stat()
+		if err != nil || !st.Mode().IsRegular() || !os.SameFile(info, st) {
+			return fmt.Errorf("collection file changed during archival: %s", path)
+		}
+		_, err = io.CopyN(tw, src, info.Size())
 		return err
 	})
 	if err != nil {
 		_ = tw.Close()
 		_ = gz.Close()
-		_ = f.Close()
-		_ = os.Remove(archive)
 		return "", err
 	}
-	for _, c := range []io.Closer{tw, gz, f} {
+	for _, c := range []io.Closer{tw, gz} {
 		if err := c.Close(); err != nil {
 			return "", err
 		}
+	}
+	if err := f.Sync(); err != nil {
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	// Link is an exclusive, atomic publication and never follows archive.
+	if err := os.Link(f.Name(), archive); err != nil {
+		return "", err
 	}
 	return archive, nil
 }

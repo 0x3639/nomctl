@@ -111,3 +111,28 @@ func TestContextBoundsCommand(t *testing.T) {
 		t.Fatalf("command must be killed when the context ends: err=%v elapsed=%s", err, time.Since(start))
 	}
 }
+
+func TestOutputLimitedKeepsPrivateBoundedCapture(t *testing.T) {
+	var sink bytes.Buffer
+	Configure(false, &sink)
+	defer Configure(false, nil)
+	out, err := New("sh", "-c", "printf 'first line\\nsecond line\\n'; printf 'stderr record\\n' >&2").OutputLimited(15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "first line\n[output truncated]\n" {
+		t.Fatalf("unexpected bounded output: %q", out)
+	}
+	if sink.Len() != 0 {
+		t.Fatal("captured command output was copied to the log sink")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, err := New("sleep", "5").Context(ctx).OutputLimited(100); err == nil {
+		t.Fatal("command ignored its context")
+	}
+	if time.Since(started) > 2*time.Second {
+		t.Fatal("cancelled command took too long")
+	}
+}

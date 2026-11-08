@@ -48,10 +48,12 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `/etc/systemd/system/nomctl-alerts.service` | `alerts setup` |
 | `/etc/nomctl/alerts.json` (0600) | `alerts setup`, `alerts set`, `enable`, `disable` |
 | `/run/nomctl/alerts-state.json` | the alerts daemon, read by `alerts status` |
-| `/run/nomctl.lock` | backup, restore, resync, deploy, upgrade-node while running |
-| `/run/nomctl/update-check.json` | the cached update check |
+| `/run/nomctl.lock` | service controls, backup, restore, resync, deploy, upgrade-node while running |
 | `/usr/local/bin/znnd.previous` | `upgrade-node`, previous node binary (path follows install directory and binary name settings) |
 | `/backup/snapshot-*` | Uncompressed chain-data snapshot retained when backup finalization fails |
+| `/run/nomctl-system/update-check.json` | the cached update check for root commands |
+| `/run/nomctl-system/process-probe.json` | root-written metrics, readable by the alerts daemon |
+| `/run/nomctl/update-check.json` | the alerts daemon's cached update check |
 | `/usr/local/bin/nomctl.previous` | `upgrade`, for `--rollback` |
 | `/etc/systemd/timesyncd.conf` | pre-flight, only if NTP is not `time.cloudflare.com` |
 
