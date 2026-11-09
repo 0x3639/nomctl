@@ -33,7 +33,7 @@ var backupPointCmd = &cobra.Command{
 
 var restorePointCmd = &cobra.Command{
 	Use: "point ID", Short: "Restore chain data and optionally the saved znnd from a restore point",
-	Long: "Restore a protected restore point. Interactive use asks whether to also restore\nthe saved znnd. Non-interactive use restores the matching data and znnd by default;\n--data-only keeps the installed znnd, which must support the saved chain data.",
+	Long: "Restore a protected restore point. Without flags, interactive use asks whether to\nalso restore the saved znnd. Non-interactive use restores the matching pair by default.\n--data-only starts without prompts, even in a terminal, and keeps the installed znnd,\nwhich must support the saved chain data.",
 	Args: cobra.ExactArgs(1), Annotations: rootOnly(),
 	RunE: func(_ *cobra.Command, args []string) error {
 		if ui.Interactive() && !flagPointDataOnly {

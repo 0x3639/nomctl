@@ -25,7 +25,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl resync` | wipe chain data, keep wallet and config |
 | `nomctl backup [--retention-days DAYS] [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | [Backups](/guide/backups) |
 | `nomctl backup point [--keep DAYS_OR_indefinite] [--label TEXT]` | Back up chain data and znnd; record its version and hashes in a protected restore point |
-| `nomctl restore point ID [--data-only]` | Interactive use asks whether to revert znnd too; non-interactive use restores the matching pair unless `--data-only` keeps installed znnd |
+| `nomctl restore point ID [--data-only]` | Without flags, interactive use asks whether to revert znnd and non-interactive use restores the matching pair. `--data-only` keeps installed znnd and skips all prompts, even in a terminal |
 | `nomctl restore-points` | Manage protected points in the UI, or list them non-interactively |
 | `nomctl backup manage` | Review and prune ordinary backups in the UI |
 | `nomctl backup schedule [--retention-days DAYS] [--hour HOUR]` | Configure daily local backups with cron without taking a backup immediately |

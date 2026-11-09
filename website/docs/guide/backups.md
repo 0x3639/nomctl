@@ -91,15 +91,15 @@ Choose **Restore from restore point** and select a completed point. The UI shows
 
 Review the selected behavior and confirm. Chain-data folders created after the point are moved aside too, so they are not mixed with an older state. Wallet and `config.json` remain unchanged.
 
-The current chain data is retained under `<backup dir>/restore/`. When reverting znnd too, its current binary is kept in a unique `.nomctl-before-restore-*` file beside the installed binary. If binary installation fails, the previous chain data is put back before restart. If startup fails after a completed restore, the selected data/binary combination remains in place for inspection. The selected restore point is never consumed by restoration.
+The current chain data is retained under `<backup dir>/restore/`. When reverting znnd too, its current binary is kept in a unique `.nomctl-before-restore-*` file beside the installed binary. If binary installation fails, nomctl attempts to put the previous chain data back before restarting. If that rollback also fails, some previous data may remain under the restore directory and the node stays stopped; inspect the reported recovery paths before restarting. If startup fails after a completed restore, the selected data/binary combination remains in place for inspection. The selected restore point is never consumed by restoration.
 
 ```bash
 sudo nomctl restore-points                 # management UI; lists points when non-interactive
 sudo nomctl restore point RESTORE_POINT_ID # asks about znnd in interactive use
-sudo nomctl restore point RESTORE_POINT_ID --data-only # keep installed znnd
+sudo nomctl restore point RESTORE_POINT_ID --data-only # data only, no prompts
 ```
 
-Non-interactive restoration defaults to the matching data/znnd pair. Pass `--data-only` explicitly to keep the installed znnd.
+Non-interactive restoration defaults to the matching data/znnd pair. Pass `--data-only` explicitly to keep the installed znnd. This flag starts restoration without choice or confirmation prompts, even in an interactive terminal.
 
 Incomplete points are shown in management for inspection or individual deletion, but cannot be restored or bulk-pruned. A failed finalization retains the uncompressed data in the point's `data/` directory for recovery.
 
