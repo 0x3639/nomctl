@@ -35,7 +35,9 @@ filesystem usage at or below 75%, including staging and archive space.
 With --cadence N, a manual backup is skipped when the newest archive is
 younger than N days. With --schedule, a daily cron job is installed after
 this backup. Use "nomctl backup schedule" to install the job without
-running a backup now. Daily cron runs do not use the manual cadence.`,
+running a backup now. Scheduling installs cron with apt if it is missing
+on Debian/Ubuntu, then enables and checks the cron service. Daily cron
+runs do not use the manual cadence.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
@@ -52,8 +54,11 @@ running a backup now. Daily cron runs do not use the manual cadence.`,
 }
 
 var backupScheduleCmd = &cobra.Command{
-	Use:         "schedule",
-	Short:       "Schedule daily local backups with cron (no backup runs now)",
+	Use:   "schedule",
+	Short: "Schedule daily local backups with cron (no backup runs now)",
+	Long: `Schedule one daily local-backup cron job without running a backup now.
+Installs cron with apt if missing on Debian/Ubuntu, enables it at boot,
+and checks it is running before saving the schedule.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {

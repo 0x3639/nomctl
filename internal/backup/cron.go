@@ -9,8 +9,10 @@ import (
 	"strings"
 
 	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/execx"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/service"
+	"github.com/0x3639/nomctl/internal/ui"
 )
 
 const CronPath = "/etc/cron.d/nomctl-backup"
@@ -60,19 +62,9 @@ func installLocalSchedule(cfg config.Config, execPath, hostname, path string) er
 	if err != nil {
 		return err
 	}
-	cronUnit := ""
-	for _, unit := range []string{"cron.service", "crond.service"} {
-		exists, err := service.Exists(unit)
-		if err != nil {
-			return err
-		}
-		if exists {
-			cronUnit = unit
-			break
-		}
-	}
-	if cronUnit == "" {
-		return fmt.Errorf("cron is not installed; install and enable cron (or cronie), then retry")
+	cronUnit, err := ensureCronInstalled()
+	if err != nil {
+		return err
 	}
 	// Stage the complete file before changing the existing schedule. Dotfiles
 	// are ignored by cron; the final rename publishes a single complete job.
@@ -87,7 +79,14 @@ func installLocalSchedule(cfg config.Config, execPath, hostname, path string) er
 		return err
 	}
 	if err := service.EnableNow(cronUnit); err != nil {
+		return fmt.Errorf("enable backup scheduler %s: %w", cronUnit, err)
+	}
+	state, err := service.Status(cronUnit)
+	if err != nil {
 		return err
+	}
+	if state != service.Active {
+		return fmt.Errorf("backup scheduler %s did not start (state: %s); check its service logs and retry", cronUnit, state)
 	}
 	timerExists, err := service.Exists(TimerName + ".timer")
 	if err != nil {
@@ -108,6 +107,52 @@ func installLocalSchedule(cfg config.Config, execPath, hostname, path string) er
 	hour, minute := ScheduleTime(hostname, cfg.ServiceName, cfg.BackupHour)
 	logx.Success(fmt.Sprintf("Local backups scheduled daily at %02d:%02d (server time), keeping up to %d days; disk limit %d%%. Cron job: %s", hour, minute, cfg.BackupRetentionDays, MaxDiskUsedPercent, path))
 	return nil
+}
+
+// ensureCronInstalled reuses an existing cron daemon, or installs the cron
+// package on supported Debian/Ubuntu hosts. A failed query must not trigger
+// package installation, and installation alone does not prove cron is ready.
+func ensureCronInstalled() (string, error) {
+	unit, err := installedCronUnit()
+	if err != nil || unit != "" {
+		return unit, err
+	}
+	if !execx.Exists("apt-get") {
+		return "", fmt.Errorf("cron is missing and apt-get is unavailable; automatic installation requires Debian/Ubuntu; install your distribution's cron or cronie package, then retry")
+	}
+	if err := ui.Step("Installing cron for daily backups...", func() error {
+		if err := execx.Run("apt-get", "update", "-qq"); err != nil {
+			return fmt.Errorf("refresh package lists before installing cron: %w", err)
+		}
+		// needrestart may otherwise restart unrelated services after apt runs.
+		return execx.New("apt-get", "install", "-y", "--no-install-recommends", "cron").Env("NEEDRESTART_MODE=l").Run()
+	}); err != nil {
+		return "", fmt.Errorf("install cron for scheduled backups: %w; resolve the package-manager error and retry scheduling", err)
+	}
+	if err := service.DaemonReload(); err != nil {
+		return "", fmt.Errorf("reload systemd after installing cron: %w", err)
+	}
+	unit, err = installedCronUnit()
+	if err != nil {
+		return "", err
+	}
+	if unit == "" {
+		return "", fmt.Errorf("cron installation completed but neither cron.service nor crond.service was found; check the cron package and retry scheduling")
+	}
+	return unit, nil
+}
+
+func installedCronUnit() (string, error) {
+	for _, unit := range []string{"cron.service", "crond.service"} {
+		exists, err := service.Exists(unit)
+		if err != nil {
+			return "", err
+		}
+		if exists {
+			return unit, nil
+		}
+	}
+	return "", nil
 }
 
 // LocalScheduleInstalled also lets backup-stale alerts recognize cron jobs.

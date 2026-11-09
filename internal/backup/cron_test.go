@@ -62,7 +62,11 @@ func stubCommand(t *testing.T, dir, name, script string) {
 }
 
 func TestInstallCronMigrationAndFailures(t *testing.T) {
-	for _, mode := range []string{"success", "missing", "disable-failure", "rename-failure"} {
+	for _, mode := range []string{
+		"success", "existing-crond", "install-cron", "install-crond", "missing",
+		"query-failure", "update-failure", "install-failure", "reload-failure", "still-missing",
+		"enable-failure", "inactive", "state-query-failure", "disable-failure", "rename-failure",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			cfg := testConfig(t)
 			commands, dest := t.TempDir(), t.TempDir()
@@ -77,22 +81,63 @@ func TestInstallCronMigrationAndFailures(t *testing.T) {
 			events := filepath.Join(dest, "events")
 			t.Setenv("CRON_TEST_EVENTS", events)
 			t.Setenv("CRON_TEST_MODE", mode)
+			t.Setenv("CRON_TEST_INSTALLED", filepath.Join(dest, "installed"))
 			stubCommand(t, commands, "systemctl", `
-echo "$*" >> "$CRON_TEST_EVENTS"
+echo "systemctl $*" >> "$CRON_TEST_EVENTS"
 case "$1" in
- status) [ "$CRON_TEST_MODE" != missing ] || exit 4 ;;
+ status)
+   [ "$CRON_TEST_MODE" != query-failure ] || exit 1
+   [ "$2" != nomctl-backup.timer ] || exit 3
+   case "$CRON_TEST_MODE" in
+     missing|still-missing) exit 4 ;;
+     install-cron|install-crond|update-failure|install-failure|reload-failure)
+       [ -f "$CRON_TEST_INSTALLED" ] || exit 4 ;;
+   esac
+   case "$CRON_TEST_MODE" in
+     existing-crond|install-crond) [ "$2" = crond.service ] || exit 4 ;;
+     *) [ "$2" = cron.service ] || exit 4 ;;
+   esac
+   exit 3 ;;
+ show)
+   [ "$CRON_TEST_MODE" != state-query-failure ] || exit 1
+   echo LoadState=loaded
+   if [ "$CRON_TEST_MODE" = inactive ]; then
+     echo ActiveState=inactive
+   else
+     echo ActiveState=active
+   fi ;;
+ daemon-reload) [ "$CRON_TEST_MODE" != reload-failure ] || exit 1 ;;
  disable) [ "$CRON_TEST_MODE" != disable-failure ] || exit 1 ;;
- enable|is-enabled) ;;
+ enable) [ "$CRON_TEST_MODE" != enable-failure ] || exit 1 ;;
+ is-enabled) ;;
  *) exit 1 ;;
 esac
 `)
-			t.Setenv("PATH", commands+":"+os.Getenv("PATH"))
+			if mode != "missing" {
+				stubCommand(t, commands, "apt-get", `
+echo "apt-get $*" >> "$CRON_TEST_EVENTS"
+[ "$DEBIAN_FRONTEND" = noninteractive ] || exit 1
+case "$*" in
+ "update -qq") [ "$CRON_TEST_MODE" != update-failure ] || exit 1 ;;
+ "install -y --no-install-recommends cron")
+   [ "$NEEDRESTART_MODE" = l ] || exit 1
+   [ "$CRON_TEST_MODE" != install-failure ] || exit 1
+   : > "$CRON_TEST_INSTALLED" ;;
+ *) exit 1 ;;
+esac
+`)
+			}
+			// Isolate every external command: never fall through to the host's
+			// apt or systemctl, even when testing missing dependencies.
+			t.Setenv("PATH", commands)
+			success := mode == "success" || mode == "existing-crond" || mode == "install-cron" || mode == "install-crond"
 			err := installLocalSchedule(cfg, "/usr/local/bin/nomctl", "test-host", path)
-			if (err == nil) != (mode == "success") {
+			if (err == nil) != success {
 				t.Fatalf("unexpected result: %v", err)
 			}
-			if mode == "success" {
-				// Reconfiguration replaces the same file and never runs a backup.
+			if success {
+				// Reconfiguration replaces the same file, never reinstalls cron,
+				// and never runs a backup or touches the node service.
 				cfg.BackupRetentionDays = 30
 				if err := installLocalSchedule(cfg, "/usr/local/bin/nomctl", "test-host", path); err != nil {
 					t.Fatal(err)
@@ -109,19 +154,62 @@ esac
 					t.Fatalf("cron permissions: %v %v", info, err)
 				}
 			} else if mode != "rename-failure" {
-				data, err := os.ReadFile(path)
-				if err != nil || string(data) != "previous job\n" {
-					t.Fatal("failed setup changed existing job", err)
+				data, readErr := os.ReadFile(path)
+				if readErr != nil || string(data) != "previous job\n" {
+					t.Fatal("failed setup changed existing job", readErr)
 				}
 			}
-			data, _ := os.ReadFile(events)
-			if strings.Contains(string(data), "go-zenon") {
+			data, readErr := os.ReadFile(events)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			calls := string(data)
+			if strings.Contains(calls, cfg.ServiceName) {
 				t.Fatal("schedule setup touched node")
 			}
-			if mode == "success" && !strings.Contains(string(data), "disable --now nomctl-backup.timer") {
-				t.Fatal("old timer not disabled")
+			if success {
+				unit := "cron.service"
+				if mode == "existing-crond" || mode == "install-crond" {
+					unit = "crond.service"
+				}
+				for _, call := range []string{"enable --now " + unit, "show --property=LoadState --property=ActiveState " + unit, "disable --now nomctl-backup.timer"} {
+					if !strings.Contains(calls, call) {
+						t.Fatalf("missing %q in:\n%s", call, calls)
+					}
+				}
+				installs := 0
+				if strings.HasPrefix(mode, "install-") {
+					installs = 1
+				}
+				if strings.Count(calls, "apt-get install") != installs || strings.Count(calls, "apt-get update") != installs {
+					t.Fatalf("unnecessary or missing install:\n%s", calls)
+				}
+			} else {
+				want := map[string]string{
+					"missing":             "automatic installation requires Debian/Ubuntu",
+					"query-failure":       "cannot query unit",
+					"update-failure":      "refresh package lists",
+					"install-failure":     "install cron for scheduled backups",
+					"reload-failure":      "reload systemd",
+					"still-missing":       "neither cron.service nor crond.service was found",
+					"enable-failure":      "enable backup scheduler",
+					"inactive":            "did not start",
+					"state-query-failure": "cannot determine state",
+				}[mode]
+				if want != "" && !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %v does not contain %q", err, want)
+				}
+				if mode != "disable-failure" && mode != "rename-failure" && strings.Contains(calls, "disable --now") {
+					t.Fatalf("old timer disabled before cron was ready:\n%s", calls)
+				}
+				if mode == "query-failure" && strings.Contains(calls, "apt-get") {
+					t.Fatal("systemd query failure triggered installation")
+				}
+				if mode == "update-failure" && strings.Contains(calls, "apt-get install") {
+					t.Fatal("package installation proceeded after failed update")
+				}
 			}
-			if mode == "rename-failure" && !strings.Contains(string(data), "enable --now nomctl-backup.timer") {
+			if mode == "rename-failure" && !strings.Contains(calls, "enable --now nomctl-backup.timer") {
 				t.Fatal("old timer not recovered")
 			}
 			staged, _ := filepath.Glob(filepath.Join(dest, ".nomctl-backup-*"))
