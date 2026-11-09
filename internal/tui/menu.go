@@ -50,7 +50,6 @@ const (
 	ActionAlerts      Action = "alerts"
 	ActionSupport     Action = "support"
 	ActionResync      Action = "resync"
-	ActionBackup      Action = "backup"
 	ActionRestore     Action = "restore"
 	ActionBootstrap   Action = "bootstrap"
 	ActionPillarDep   Action = "pillar-deploy"
@@ -129,8 +128,6 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return SupportBundle(*cfg)
 	case ActionResync:
 		return Resync(*cfg)
-	case ActionBackup:
-		return Backup(*cfg)
 	case ActionRestore:
 		return Restore(*cfg)
 	case ActionBootstrap:
@@ -654,14 +651,6 @@ var (
 	reDays       = regexp.MustCompile(`^[1-9][0-9]*$`)
 	reHour       = regexp.MustCompile(`^([0-9]|1[0-9]|2[0-3])$`)
 )
-
-// Backup creates a local chain-data archive without changing its schedule.
-func Backup(cfg config.Config) error {
-	return withLock("backup", func() error {
-		_, err := backup.Run(cfg, backup.Options{Interactive: true})
-		return err
-	})
-}
 
 // BackupSchedule collects settings without taking a backup or holding the lock.
 func BackupSchedule(current *config.Config) error {

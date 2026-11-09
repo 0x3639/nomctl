@@ -7,13 +7,15 @@ nomctl distinguishes automatically managed **backups** from protected **restore 
 
 | | Backups | Restore points |
 | --- | --- | --- |
-| Created by | Daily cron job, or an immediate manual backup | User action, or either node-upgrade option |
+| Created by | Daily cron job, or the `nomctl backup` command | **Create restore point** in the menu, or either node-upgrade option |
 | Contents | Chain data | Chain data and the matching installed node binary |
 | Retention | 7 days by default, maximum 30; oldest backups may be pruned for space | Indefinite by default, or 1–30 days before eligible for **manual** pruning |
 | Deletion | Automatic age/count/disk pruning, or explicit UI cleanup | **Only explicit deletion or confirmed pruning in the UI** |
 | Restore menu | **Restore from backup** | **Restore from restore point** |
 
 Wallet and configuration backups remain a separate encrypted operation.
+
+In the menu, use **Schedule local backups** for daily protection and **Create restore point** for a manual save. Both **Restore from backup** and **Restore from restore point** remain available.
 
 ## Taking a backup
 

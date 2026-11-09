@@ -29,9 +29,10 @@ Opening the menu does not run hardware, NTP or Internet pre-flight checks. Those
 
 ## Backups & recovery
 
+Use **Schedule local backups** for automatic daily backups and **Create restore point** to save a protected recovery point manually. Both backup and restore-point restoration are available below.
+
 | Entry | Runs |
 |---|---|
-| Backup chain data locally | [Backup](/guide/backups) into the configured local backup directory |
 | Restore from backup | Choose and restore a local chain-data archive |
 | Back up wallet & configuration | Encrypted wallet and `config.json` backup |
 | Restore wallet & configuration | Choose a wallet backup, enter its passphrase and restore |
