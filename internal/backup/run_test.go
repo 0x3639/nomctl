@@ -51,12 +51,24 @@ exec /usr/bin/tar "$@"
 			mockCapacity(t, func(string) (int64, int64, error) {
 				data, _ := os.ReadFile(events)
 				if mode == "no-space" || (mode == "pressure-during-copy" && strings.Contains(string(data), "copy")) {
+					if mode == "pressure-during-copy" {
+						files, _ := filepath.Glob(filepath.Join(cfg.BackupDir, "snapshot-*", "nom", "data"))
+						for _, file := range files {
+							info, err := os.Stat(file)
+							if err != nil || info.Size() != 0 {
+								t.Fatal("data written before space guard", err)
+							}
+						}
+					}
 					return 20 << 20, 180 << 20, nil
 				}
 				return 150 << 20, 50 << 20, nil
 			})
 			archive, err := Run(cfg, Options{})
 			success := mode == "active" || mode == "inactive"
+			if mode == "pressure-during-copy" && (err == nil || !strings.Contains(err.Error(), "insufficient disk space")) {
+				t.Fatalf("disk-pressure cause lost: %v", err)
+			}
 			if (err == nil) != success {
 				t.Fatalf("unexpected result: %v", err)
 			}

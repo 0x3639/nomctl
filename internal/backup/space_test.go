@@ -2,6 +2,7 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -75,6 +76,14 @@ func TestRetentionDays(t *testing.T) {
 }
 
 func TestSpacePrunesOldestEvenWithinRetention(t *testing.T) {
+	oldReclaimable := reclaimableBytes
+	reclaimableBytes = func(path string) (int64, error) {
+		if strings.HasSuffix(path, ".tar.gz") {
+			return 20 << 20, nil
+		}
+		return 0, nil
+	}
+	t.Cleanup(func() { reclaimableBytes = oldReclaimable })
 	cfg := testConfig(t)
 	old := archiveFixture(t, cfg, "old", 2*time.Hour)
 	newer := archiveFixture(t, cfg, "new", time.Hour)
@@ -190,6 +199,33 @@ func TestCopyBudgetRejectsLinks(t *testing.T) {
 	}
 }
 
+func TestImpossibleBackupPreservesExistingArchives(t *testing.T) {
+	cfg := testConfig(t)
+	archive := archiveFixture(t, cfg, "only", time.Hour)
+	mockCapacity(t, func(string) (int64, int64, error) { return 20 << 20, 180 << 20, nil })
+	if err := ensureSpace(cfg, 100<<20); err == nil {
+		t.Fatal("oversized backup accepted")
+	}
+	for _, path := range []string{archive, HashPath(archive)} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal("unusable cleanup deleted existing recovery archive", err)
+		}
+	}
+}
+
+func TestCancelledWriterDoesNotWrite(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var dst bytes.Buffer
+	w := spaceWriter{ctx: ctx, cfg: testConfig(t), dst: &dst}
+	if _, err := w.Write([]byte("data")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation lost: %v", err)
+	}
+	if dst.Len() != 0 {
+		t.Fatal("data written after cancellation")
+	}
+}
+
 func TestArchiveWritePressureRemovesPartialAndReportsCause(t *testing.T) {
 	cfg := testConfig(t)
 	src := t.TempDir()
@@ -203,7 +239,7 @@ func TestArchiveWritePressureRemovesPartialAndReportsCause(t *testing.T) {
 		}
 		return 150 << 20, 50 << 20, nil
 	})
-	if err := writeArchiveGuarded(src, archive, &cfg); err == nil || !strings.Contains(err.Error(), "75%") {
+	if err := writeArchiveGuarded(context.Background(), src, archive, &cfg); err == nil || !strings.Contains(err.Error(), "75%") {
 		t.Fatalf("disk-pressure failure lost: %v", err)
 	}
 	for _, path := range []string{archive, archive + ".partial", HashPath(archive)} {

@@ -15,7 +15,7 @@ sudo nomctl upgrade-node --signed  # choose a signed node release
 sudo nomctl            # Manage node, Backups & recovery, Install & upgrade, and more
 ```
 
-Then, optionally, `sudo nomctl alerts setup` for Telegram alerts (send `/start` to the bot first) and `sudo nomctl backup schedule --retention-days 7` for daily local backups.
+Then, optionally, `sudo nomctl alerts setup` for Telegram alerts (send `/start` to the bot first) and `sudo nomctl backup schedule --retention-days 7` for daily local backups. The menu also creates protected restore points, and both node-upgrade paths preserve a matching chain-data/binary restore point before upgrading.
 
 Requirements: Debian or Ubuntu with systemd and apt (Ubuntu 24.04 is the tested target), `amd64` or `arm64`, root, 4 cores and 4 GiB RAM.
 

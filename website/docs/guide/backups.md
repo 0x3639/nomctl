@@ -3,6 +3,18 @@ title: Backups and restore
 description: "Chain-data backups with checksums and retention, daily cron scheduling with a 75% disk-use limit, and restoring from an archive."
 ---
 
+nomctl distinguishes automatically managed **backups** from protected **restore points**:
+
+| | Backups | Restore points |
+| --- | --- | --- |
+| Created by | Daily cron job, or an immediate manual backup | User action, or either node-upgrade option |
+| Contents | Chain data | Chain data and the matching installed node binary |
+| Retention | 7 days by default, maximum 30; oldest backups may be pruned for space | Indefinite by default, or 1–30 days before eligible for **manual** pruning |
+| Deletion | Automatic age/count/disk pruning, or explicit UI cleanup | **Only explicit deletion or confirmed pruning in the UI** |
+| Restore menu | **Restore from backup** | **Restore from restore point** |
+
+Wallet and configuration backups remain a separate encrypted operation.
+
 ## Taking a backup
 
 ```bash
@@ -11,13 +23,13 @@ sudo nomctl backup [--retention-days DAYS] [--max-backups N] [--cadence DAYS]
 
 A backup stops the node, copies `nom`, `network`, `consensus` and `cache` into a private staging directory, and restarts a previously running node **before compression**. The resulting `<backup dir>/go-zenon_backup_<MM-DD-YY_HHMMSS>_snapshot-<id>.tar.gz` has a SHA-256 sidecar (`.hash`). The backup directory is `/backup` by default; set `NOMCTL_BACKUP_DIR` to change it. Wallet files and `config.json` are excluded; back them up separately using the encrypted wallet backup below.
 
-Retention defaults to **7 days**, with a supported range of **1–30 days**. Completed chain backups older than the chosen age are removed, oldest first. Manual backups also apply `--max-backups` (default 7, maximum 30). A manual `--cadence N` skips a backup when the newest archive is younger than N days; scheduled daily jobs always run without that skip.
+Retention defaults to **7 days**, with a supported range of **1–30 days**. Completed chain backups older than the chosen age are removed, oldest first. Manual backups also apply `--max-backups` (default 7, maximum 30). These settings apply to all ordinary chain archives, including those made by cron: after choosing 30-day scheduled retention, use `nomctl backup --retention-days 30 --max-backups 30` for manual runs if you want to preserve that window. Creating a restore point does not apply the ordinary age/count policy, though it may prune ordinary backups if needed for space. A manual `--cadence N` skips a backup when the newest archive is younger than N days; scheduled daily jobs always run without that skip.
 
 ### Disk-space protection
 
 Backups keep total usage of the **filesystem containing the backup directory at or below 75%**, counting all files on that filesystem. Before stopping the node, nomctl estimates space for both the uncompressed copy and the compressed archive, assuming no compression savings. It also preserves `NOMCTL_MIN_FREE_SPACE_KB` (15 GiB by default) and a small safety margin.
 
-When space is tight, completed chain backups for the selected service are removed oldest first, even if they are within the retention period. If pruning cannot make enough room, the backup fails before stopping the node. Disk capacity is checked again after stopping and before each data-write chunk during copying and compression. If space becomes insufficient mid-copy, the incomplete copy is removed and the previously running node is restarted. Compression failures remove the partial archive and retain the snapshot for recovery.
+When space is tight, completed chain backups for the selected service are removed oldest first, even if they are within the retention period. If the allocated space of all eligible archives would still be insufficient, disk-pressure cleanup retains them and the backup fails before stopping the node. Normal age/count retention still applies to ordinary backups. Disk capacity is checked again after stopping and before each data-write chunk during copying and compression. If space becomes insufficient mid-copy, the incomplete copy is removed and the previously running node is restarted. Compression failures remove the partial archive and retain the snapshot for recovery.
 
 Wallet backups, restore safety copies, incomplete archives and recovery snapshots are never automatically pruned. They count toward disk usage and may need manual attention. Other processes can independently fill the disk between checks; this limit governs backup writes, not other applications.
 
@@ -47,12 +59,48 @@ sudo rm /etc/cron.d/nomctl-backup   # stop future scheduled backups
 To take a backup now and then install the daily schedule, use:
 
 ```bash
-sudo nomctl backup --schedule --retention-days 7 --hour 2
+sudo nomctl backup --schedule --cadence 0 --retention-days 7 --hour 2
 ```
 
 Cron does not catch up on runs missed while the machine is off. An overlapping nomctl operation causes the backup to fail safely under the shared operation lock; the next attempt is the following day. Backup failures are recorded in the configured nomctl log (normally `/var/log/nomctl.log`), and the `backup_stale` alert recognizes both cron schedules and older timers.
 
-## Restoring
+## Protected restore points
+
+Choose **Create restore point** under **Backups & recovery**, give it an optional name, and choose **Indefinite** or **1–30 days**. A restore point preserves chain data and the node binary currently installed at the configured binary path. It uses the same 75% disk-use guard and checks the combined copy, archive, and saved-binary requirement before stopping the node. The service restarts before compression.
+
+Both **Upgrade a node from source** and **Upgrade a node from signed release** create a mandatory restore point before replacing the binary. Both ask for its retention choice. For unattended use:
+
+```bash
+sudo nomctl backup point --keep indefinite --label "Before maintenance"
+sudo nomctl upgrade-node --yes --restore-point-keep 7
+sudo nomctl upgrade-node --signed --yes --restore-point-keep indefinite
+```
+
+Restore points live under `<backup dir>/restore-points/<id>/` with the chain archive, checksum, saved binary, and metadata. They are excluded from all routine backup pruning. **A chosen number of days is not an automatic deletion timer:** it only marks the point as eligible for manual pruning. Indefinite points never enter the bulk-pruning selection. If protected points occupy too much space, a new backup or upgrade fails safely and you can free space through the management menu.
+
+### Restoring a restore point
+
+Choose **Restore from restore point**, select a completed point, and confirm. nomctl verifies the archive and saved-binary checksums, stages the files, stops the service, and restores **both chain data and the matching node binary before restarting**. Chain-data folders created after the point are moved aside too, so they are not mixed with an older state. Wallet and `config.json` remain unchanged.
+
+The current chain data is retained under `<backup dir>/restore/`; the current binary is kept in a unique `.nomctl-before-restore-*` file beside the installed binary. If binary installation fails, the previous chain data is put back before restart. If startup fails after a completed restore, the restored pair remains together for inspection. The selected restore point is never consumed by restoration.
+
+```bash
+sudo nomctl restore-points                 # management UI; lists points when non-interactive
+sudo nomctl restore point RESTORE_POINT_ID # restore a matching binary/data pair
+```
+
+Incomplete points are shown in management for inspection or individual deletion, but cannot be restored or bulk-pruned. A failed finalization retains the uncompressed data in the point's `data/` directory for recovery.
+
+### Freeing space in the UI
+
+- **Manage restore points** lists each point's size and retention choice. Delete one selected point, or prune completed points whose chosen days have elapsed. The confirmation lists the exact points and approximate space to free. Indefinite points require individual selection; every deletion requires confirmation.
+- **Manage backups** can delete one ordinary backup or preview backups older than a chosen age. It never includes restore points.
+
+Neither menu expands its deletion list after confirmation. If another operation is running, the shared lock prevents concurrent cleanup. No command-line switch automatically deletes protected restore points.
+
+## Restoring a backup
+
+Choose **Restore from backup** under **Backups & recovery** to select an ordinary local archive. This restores chain data only; the installed binary is unchanged. Use a matching version when restoring older data across upgrades, or select a restore point to restore the matching pair.
 
 ```bash
 sudo nomctl restore --file go-zenon_backup_09-06-26_130405

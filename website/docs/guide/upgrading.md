@@ -25,7 +25,7 @@ backup and preserve its service configuration.
 ### Source upgrades
 
 Choose **Install & upgrade › Upgrade a node from source**, select a repository
-and branch, then confirm. From the command line:
+and branch, choose the restore-point retention, then confirm. From the command line:
 
 ```bash
 sudo nomctl upgrade-node
@@ -46,9 +46,9 @@ The source-upgrade flow prints each step:
 2. Clone the selected branch into a temporary checkout, record its exact commit,
    and build while the installed node keeps running. A clone/build failure
    aborts before stopping the node.
-3. Check the backup location and space, stop the service, and copy chain data.
+3. Check space for the protected restore point, preserve the current binary, stop the service, and copy chain data.
 4. Preserve the previous binary as `.previous`, then atomically install the build.
-5. Start the service, finish the backup archive and hash, and apply retention.
+5. Start the service, finish the restore-point archive and hash, and retain it until explicit UI deletion.
 
 The node-operation lock covers the build and installation. Existing source
 checkouts and systemd unit settings are preserved. Build staging is removed when
@@ -111,15 +111,14 @@ Every step is printed to the terminal and the regular nomctl log:
 2. Verify the signature and archive checksum, then extract the binary.
 3. Check the backup directory and free space, then stop the service and verify
    that it has reached a stopped state before copying data.
-4. Copy the existing chain data using the normal backup framework.
+4. Create a protected restore point holding the existing chain data and matching installed binary.
 5. Atomically install the binary at `NOMCTL_INSTALL_DIR/NOMCTL_BINARY_NAME`
    (default `/usr/local/bin/znnd`), preserving the old binary as `.previous`.
 6. Start the configured service and check that it is active.
-7. Compress the pre-upgrade data, write its `.hash` sidecar, and apply normal
-   backup retention.
+7. Compress the pre-upgrade data, write its `.hash` sidecar, and finish the protected restore point. It is never automatically pruned.
 
 The entire operation uses the same lock as backup/restore/deploy. The mandatory
-backup bypasses scheduled cadence, uses `NOMCTL_BACKUP_DIR`, and includes `nom`,
+restore point bypasses scheduled cadence, uses `NOMCTL_BACKUP_DIR`, and includes `nom`,
 `network`, `consensus` and `cache`. Wallet and `config.json` backups remain a
 separate `nomctl backup wallet` operation. Existing service configuration is
 preserved; the configured binary path must be the executable used by the service.
@@ -130,8 +129,7 @@ the pre-upgrade archive and reports the retained previous binary for recovery.
 It does not automatically run the old binary against potentially migrated data:
 restore the matching pre-upgrade data before downgrading. An archive failure is
 reported separately from a successful service start, and the uncompressed data
-is retained under a unique `snapshot-*` directory in the backup directory. A
-subsequent backup does not clear that recovery copy. An active service check
+is retained under the restore point's `data/` directory. A subsequent backup does not clear that recovery copy. An active service check
 confirms systemd startup, not full chain synchronization.
 
 During the backup and installation transaction, Ctrl+C and termination requests
@@ -139,7 +137,13 @@ are deferred until the upgrade or its recovery finishes. If a child command is
 interrupted, its error follows the same recovery path and any incomplete snapshot
 is removed. Wait for the final result before closing the terminal.
 
+Both source builds and signed releases use this same protected restore-point transaction. Before either upgrade, choose **Indefinite** (the default) or **1–30 days**. Days only mark eligibility for manual UI pruning; no restore point is deleted automatically. The CLI flag is `--restore-point-keep 7` or `--restore-point-keep indefinite`, with `NOMCTL_RESTORE_POINT_KEEP_DAYS=0` meaning indefinite. Space checks include the uncompressed copy, archive and saved binary before the service is stopped.
+
 ### Downgrading with matching data
+
+For restore points created by v0.15.0 or later, choose **Backups & recovery → Restore from restore point**, or run `sudo nomctl restore point RESTORE_POINT_ID`. This restores the saved binary and its matching chain data together before starting the node. Subsequent upgrades cannot overwrite the binary stored in a restore point. See [restore-point management](/guide/backups#protected-restore-points) for retention and manual cleanup.
+
+The following offline procedure is for **older standalone upgrade archives** that do not contain a protected matching binary.
 
 Use the pre-upgrade archive reported by the upgrade and the binary that was
 running when it was taken. A later upgrade can replace `.previous`, so confirm

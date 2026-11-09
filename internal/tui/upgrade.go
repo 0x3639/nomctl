@@ -51,7 +51,7 @@ func ChooseNodeRelease(ctx context.Context, client *nodeupgrade.Client, tag stri
 }
 
 func ConfirmNodeUpgrade(cfg config.Config, release nodeupgrade.Release) (bool, error) {
-	return Confirm(fmt.Sprintf("Upgrade %s to %s from go-zenon-releases?\n\nVerify download, stop %s, copy chain data, install at %s,\nstart service, then finish the backup archive.\nWallet and config are not included in chain-data backups.", cfg.BinaryName, release.Tag, cfg.ServiceName, cfg.BinaryPath()))
+	return Confirm(fmt.Sprintf("Upgrade %s to %s from go-zenon-releases?\n\nVerify download, stop %s, create a protected restore point, install at %s,\nstart service, then finish the restore point.\nWallet and config are not included in chain-data backups.", cfg.BinaryName, release.Tag, cfg.ServiceName, cfg.BinaryPath()))
 }
 
 func UpgradeNode(cfg config.Config) error {
@@ -59,6 +59,9 @@ func UpgradeNode(cfg config.Config) error {
 	client := nodeupgrade.NewClient(cfg.GitHubToken)
 	release, err := ChooseNodeRelease(ctx, client, "", true)
 	if err != nil {
+		return err
+	}
+	if err := ChooseRestorePointKeep(&cfg); err != nil {
 		return err
 	}
 	ok, err := ConfirmNodeUpgrade(cfg, release)
@@ -73,7 +76,7 @@ func UpgradeNode(cfg config.Config) error {
 
 // ConfirmSourceUpgrade describes downtime and the mandatory safety backup.
 func ConfirmSourceUpgrade(cfg config.Config) (bool, error) {
-	return Confirm(fmt.Sprintf("Upgrade a node from source?\n\nRepository: %s\nBranch: %s\n\nBuild while the node runs, then stop %s, copy chain data,\ninstall at %s, start, and finish the backup archive.", cfg.RepoURL, cfg.BranchName, cfg.ServiceName, cfg.BinaryPath()))
+	return Confirm(fmt.Sprintf("Upgrade a node from source?\n\nRepository: %s\nBranch: %s\n\nBuild while the node runs, then stop %s, create a protected restore point,\ninstall at %s, start, and finish the restore point.", cfg.RepoURL, cfg.BranchName, cfg.ServiceName, cfg.BinaryPath()))
 }
 
 func UpgradeSource(cfg config.Config) error {
@@ -85,6 +88,9 @@ func UpgradeSource(cfg config.Config) error {
 		return err
 	}
 	cfg.RepoURL, cfg.BranchName = repo, branch
+	if err := ChooseRestorePointKeep(&cfg); err != nil {
+		return err
+	}
 	ok, err := ConfirmSourceUpgrade(cfg)
 	if err != nil {
 		return err

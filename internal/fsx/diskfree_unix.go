@@ -2,7 +2,25 @@
 
 package fsx
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
+
+// ReclaimableBytes estimates allocated space released by unlinking a file.
+// Hard-linked files are conservatively excluded because another link may keep
+// their blocks allocated. Shared/COW blocks and open files can reduce recovery.
+func ReclaimableBytes(path string) (int64, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return 0, err
+	}
+	stat, ok := st.Sys().(*syscall.Stat_t)
+	if !ok || stat.Nlink > 1 {
+		return 0, nil
+	}
+	return stat.Blocks * 512, nil
+}
 
 // DiskCapacity returns bytes available to ordinary users and bytes already
 // used. Reserved blocks are excluded, matching df's percentage denominator.

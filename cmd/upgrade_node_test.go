@@ -32,6 +32,10 @@ func TestNodeUpgradeFlags(t *testing.T) {
 		signed, wantErr bool
 	}{
 		{"configured source by default", nil, false, false},
+		{"source point days", []string{"--restore-point-keep", "7"}, false, false},
+		{"signed point indefinite", []string{"--signed", "--restore-point-keep", "indefinite"}, true, false},
+		{"invalid point days", []string{"--restore-point-keep", "31"}, false, true},
+		{"invalid signed point days", []string{"--signed", "--restore-point-keep", "0"}, true, true},
 		{"unattended source", []string{"--yes"}, false, false},
 		{"source overrides", []string{"--repo", "https://example.invalid/chosen.git", "--branch", "next"}, false, false},
 		{"signed picker", []string{"--signed"}, true, false},
@@ -63,6 +67,12 @@ func TestNodeUpgradeFlags(t *testing.T) {
 			}
 			if err := applyNodeUpgradeFlags(upgradeNodeCmd); (err != nil) != tc.wantErr {
 				t.Fatal(err)
+			}
+			if tc.name == "source point days" && cfg.RestorePointKeepDays != 7 {
+				t.Fatal("upgrade retention flag ignored")
+			}
+			if tc.name == "signed point indefinite" && cfg.RestorePointKeepDays != 0 {
+				t.Fatal("indefinite retention flag ignored")
 			}
 			if tc.name == "source overrides" {
 				if cfg.RepoURL != "https://example.invalid/chosen.git" || cfg.BranchName != "next" {

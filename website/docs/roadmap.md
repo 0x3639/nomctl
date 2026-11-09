@@ -7,7 +7,7 @@ Planned features in priority order. Each gets a design spec in the repository un
 
 ## Done
 
-- **Daily local backups** (v0.15.0): cron scheduling from the menu, 1–30 days of retention (default 7), a 75% disk-use limit with automatic pruning, and compression after the node restarts.
+- **Daily local backups and protected restore points** (v0.15.0): cron scheduling from the menu, 1–30 days of retention (default 7), a 75% disk-use limit with automatic pruning, and compression after the node restarts. Manual actions and both upgrade paths create protected data/binary restore points with days-or-indefinite retention, paired restoration and confirmed UI cleanup.
 - **Alerting** (v0.3.0): Telegram through a shared relay, pairing by code, per-alert thresholds, mutes, `node_silent`.
 - **Pillar awareness** (v0.4.0): the node name doubles as the pillar name; `status` and `top` show production; `pillar_missed` and `momentums_stalled` alerts.
 - **Self-update** (v0.5.0): `nomctl upgrade` with verified download, atomic replace and rollback; update lines in `status`/`top`; opt-in `update_available` alert.

@@ -33,20 +33,21 @@ func TestDefaults(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	c, err := LoadFrom(envOf(map[string]string{
-		"NOMCTL_DEBUG":                 "true",
-		"NOMCTL_REPO_URL":              " https://example.com/x.git ",
-		"NOMCTL_MAX_BACKUPS":           "3",
-		"NOMCTL_BACKUP_CADENCE_DAYS":   "7",
-		"NOMCTL_BACKUP_HOUR":           "5",
-		"NOMCTL_BACKUP_RETENTION_DAYS": "30",
-		"NOMCTL_MIN_FREE_SPACE_KB":     "1024",
-		"NOMCTL_ZNN_DIR":               "/data/.znn",
-		"NOMCTL_BACKUP_DIR":            "",
+		"NOMCTL_DEBUG":                   "true",
+		"NOMCTL_REPO_URL":                " https://example.com/x.git ",
+		"NOMCTL_MAX_BACKUPS":             "3",
+		"NOMCTL_BACKUP_CADENCE_DAYS":     "7",
+		"NOMCTL_BACKUP_HOUR":             "5",
+		"NOMCTL_BACKUP_RETENTION_DAYS":   "30",
+		"NOMCTL_RESTORE_POINT_KEEP_DAYS": "7",
+		"NOMCTL_MIN_FREE_SPACE_KB":       "1024",
+		"NOMCTL_ZNN_DIR":                 "/data/.znn",
+		"NOMCTL_BACKUP_DIR":              "",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.Debug || c.RepoURL != "https://example.com/x.git" || c.MaxBackups != 3 || c.BackupCadenceDays != 7 || c.BackupHour != 5 || c.BackupRetentionDays != 30 || c.MinFreeSpaceKB != 1024 || c.ZnnDir != "/data/.znn" {
+	if !c.Debug || c.RepoURL != "https://example.com/x.git" || c.MaxBackups != 3 || c.BackupCadenceDays != 7 || c.BackupHour != 5 || c.BackupRetentionDays != 30 || c.RestorePointKeepDays != 7 || c.MinFreeSpaceKB != 1024 || c.ZnnDir != "/data/.znn" {
 		t.Errorf("overrides not applied: %+v", c)
 	}
 	if c.BackupDir != DefaultBackupDir {
@@ -65,6 +66,8 @@ func TestInvalidValues(t *testing.T) {
 		}
 	}
 	outOfRange := map[string]map[string]string{
+		"point negative":     {"NOMCTL_RESTORE_POINT_KEEP_DAYS": "-1"},
+		"point too long":     {"NOMCTL_RESTORE_POINT_KEEP_DAYS": "31"},
 		"retention zero":     {"NOMCTL_BACKUP_RETENTION_DAYS": "0"},
 		"retention too long": {"NOMCTL_BACKUP_RETENTION_DAYS": "31"},
 		"too many copies":    {"NOMCTL_MAX_BACKUPS": "31"},
@@ -128,8 +131,8 @@ func TestVarsCoverEveryField(t *testing.T) {
 		}
 		names[v.Name] = true
 	}
-	if len(names) != 31 {
-		t.Errorf("expected 31 documented variables, got %d", len(names))
+	if len(names) != 32 {
+		t.Errorf("expected 32 documented variables, got %d", len(names))
 	}
 }
 

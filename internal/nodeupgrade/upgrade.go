@@ -66,8 +66,8 @@ func checkInstalled(cfg config.Config) error {
 func installPrepared(cfg config.Config, binary, tag string) error {
 	finishSignals := protectTransaction()
 	defer finishSignals()
-	slog.Info("Preparing the pre-upgrade backup (scheduled cadence does not apply)...")
-	snapshot, err := backup.Prepare(cfg)
+	slog.Info("Preparing the pre-upgrade restore point (protected from backup pruning)...")
+	snapshot, err := backup.PrepareRestorePoint(cfg, "Before upgrade to "+tag)
 	if err != nil {
 		return err
 	}
@@ -110,10 +110,10 @@ func installPrepared(cfg config.Config, binary, tag string) error {
 		return recoverOriginal(err)
 	}
 	finish := func(operationErr error) error {
-		slog.Info("Finishing the pre-upgrade backup archive and SHA-256 sidecar...")
+		slog.Info("Finishing the pre-upgrade restore point and SHA-256 sidecar...")
 		archive, backupErr := snapshot.Finish()
 		if archive != "" {
-			slog.Info("Pre-upgrade backup: " + archive)
+			slog.Info("Pre-upgrade restore point: " + archive)
 		}
 		return errors.Join(operationErr, backupErr)
 	}
@@ -150,7 +150,7 @@ func installPrepared(cfg config.Config, binary, tag string) error {
 	if st != service.Active {
 		return fmt.Errorf("backup complete, but %s is %s; previous binary: %s.previous", cfg.ServiceName, st, cfg.BinaryPath())
 	}
-	logx.Success(fmt.Sprintf("Node upgraded to %s; service is active and backup is complete", tag))
+	logx.Success(fmt.Sprintf("Node upgraded to %s; service is active and restore point is complete", tag))
 	return nil
 }
 

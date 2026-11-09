@@ -106,10 +106,11 @@ type Config struct {
 	// Backup settings. Env: NOMCTL_BACKUP_DIR, NOMCTL_MAX_BACKUPS,
 	// NOMCTL_BACKUP_RETENTION_DAYS, NOMCTL_BACKUP_CADENCE_DAYS,
 	// NOMCTL_BACKUP_HOUR, NOMCTL_MIN_FREE_SPACE_KB.
-	BackupDir           string
-	MaxBackups          int
-	BackupRetentionDays int
-	BackupCadenceDays   int
+	BackupDir            string
+	MaxBackups           int
+	BackupRetentionDays  int
+	RestorePointKeepDays int // 0 = indefinite; otherwise eligible for UI pruning after 1-30 days
+	BackupCadenceDays    int
 	// BackupHour is the hour (0-23) for scheduled backups. -1 means "unset",
 	// in which case a deterministic hour between 02:00 and 04:59 is derived
 	// from the hostname.
@@ -249,6 +250,7 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("BACKUP_DIR", &c.BackupDir)
 	integer("MAX_BACKUPS", &c.MaxBackups)
 	integer("BACKUP_RETENTION_DAYS", &c.BackupRetentionDays)
+	integer("RESTORE_POINT_KEEP_DAYS", &c.RestorePointKeepDays)
 	integer("BACKUP_CADENCE_DAYS", &c.BackupCadenceDays)
 	integer("BACKUP_HOUR", &c.BackupHour)
 	integer64("MIN_FREE_SPACE_KB", &c.MinFreeSpaceKB)
@@ -285,6 +287,9 @@ func (c Config) Validate() error {
 	}
 	if c.BackupRetentionDays < 1 || c.BackupRetentionDays > 30 {
 		return fmt.Errorf("backup retention must be between 1 and 30 days (got %d)", c.BackupRetentionDays)
+	}
+	if c.RestorePointKeepDays < 0 || c.RestorePointKeepDays > 30 {
+		return fmt.Errorf("restore point retention must be 0 (indefinite) or 1-30 days (got %d)", c.RestorePointKeepDays)
 	}
 	if c.BackupCadenceDays < 0 {
 		return fmt.Errorf("backup cadence must not be negative (got %d)", c.BackupCadenceDays)
@@ -366,6 +371,7 @@ func Vars() []Var {
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},
 		{"NOMCTL_MAX_BACKUPS", strconv.Itoa(DefaultMaxBackups), "Number of backups to retain"},
 		{"NOMCTL_BACKUP_RETENTION_DAYS", strconv.Itoa(DefaultBackupRetentionDays), "Maximum age of local backups in days (1-30)"},
+		{"NOMCTL_RESTORE_POINT_KEEP_DAYS", "0", "Restore points: 0 = indefinite; 1-30 = days before eligible for manual UI pruning; never automatically deleted"},
 		{"NOMCTL_BACKUP_CADENCE_DAYS", strconv.Itoa(DefaultBackupCadenceDays), "Minimum age of newest backup before a manual run (0 = every run); cron jobs use 0"},
 		{"NOMCTL_BACKUP_HOUR", "(unset)", "Hour (0-23) for scheduled backups; unset = derived, between 02:00 and 04:59"},
 		{"NOMCTL_MIN_FREE_SPACE_KB", strconv.Itoa(DefaultMinFreeSpaceKB), "Minimum free space left after backup writes (15 GiB); the 75% disk limit also applies"},

@@ -17,7 +17,7 @@ The daemon samples every 30 seconds and keeps 30 minutes of history. Each rule i
 | `disk_low` | warning | the data directory's filesystem has less than `min_free_gb` free | `min_free_gb=15` |
 | `memory_high` | warning | znnd's resident memory exceeds `pct` of host memory | `pct=85` |
 | `fds_high` | warning | open files exceed `pct` of the limit (32768); the count comes from the root probe timer (see [Pairing](/alerts/pairing#what-runs-on-the-node)) | `pct=80` |
-| `backup_stale` | warning | a daily cron schedule or older backup timer is configured and the newest archive is older than cadence + 1 day | |
+| `backup_stale` | warning | a daily cron schedule or older backup timer is configured and no archive exists (including before the first scheduled run), or the newest archive is older than cadence + 1 day | |
 | `rpc_unreachable` | warning | the service is active but the local RPC's stats calls have not answered for the window; a slow ledger call alone does not count | `minutes=5` |
 | `node_silent` | critical | raised by the relay: no heartbeat from the node for 5 minutes | relay setting |
 | `wallet_backup_missing` | info, **off by default** | a producer key is configured and no [wallet backup](/guide/backups#wallet-and-config-backup) is newer than the key file; sent once, clears after `nomctl backup wallet` | |

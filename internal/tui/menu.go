@@ -97,6 +97,14 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return WalletBackup(*cfg)
 	case ActionWalletRestore:
 		return WalletRestore(*cfg)
+	case ActionCreatePoint:
+		return CreateRestorePoint(*cfg)
+	case ActionRestorePoint:
+		return RestorePoint(*cfg)
+	case ActionManagePoints:
+		return ManageRestorePoints(*cfg)
+	case ActionManageBackups:
+		return ManageBackups(*cfg)
 	case ActionBackupSchedule:
 		return BackupSchedule(cfg)
 	case ActionPillarSetup:
@@ -677,13 +685,17 @@ func BackupSchedule(current *config.Config) error {
 		cfg.BackupRetentionDays = n
 		break
 	}
+	defaultHour := cfg.BackupHour
+	if defaultHour < 0 {
+		defaultHour = 2
+	}
 	for {
-		hour, err := Input("Daily backup hour (0-23, server time) ➜", "2")
+		hour, err := Input("Daily backup hour (0-23, server time) ➜", strconv.Itoa(defaultHour))
 		if err != nil {
 			return err
 		}
 		if strings.TrimSpace(hour) == "" {
-			hour = "2"
+			hour = strconv.Itoa(defaultHour)
 		}
 		h, valid := ParseHour(hour)
 		if !valid {

@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,6 +19,22 @@ const MaxDiskUsedPercent = 75
 const diskHeadroom int64 = 16 << 20
 
 var diskCapacity = fsx.DiskCapacity
+var reclaimableBytes = fsx.ReclaimableBytes
+
+// CheckRestoreSpace checks a destination without deleting anything. Restore
+// staging may be on a different filesystem from backup archives.
+func CheckRestoreSpace(cfg config.Config, path string, additional int64) error {
+	available, used, err := diskCapacity(path)
+	if err != nil {
+		return fmt.Errorf("check restore space: %w", err)
+	}
+	need := additional + diskHeadroom
+	limit := (available + used) / 4 * 3
+	if available < need || used > limit-need || (available-need)/1024 < cfg.MinFreeSpaceKB {
+		return fmt.Errorf("insufficient space for restore at %s while preserving the %d%% disk limit and free-space reserve", path, MaxDiskUsedPercent)
+	}
+	return nil
+}
 
 // copyBudget uses apparent file sizes (including sparse files), with generous
 // per-entry allocation/metadata overhead. No compression savings are assumed.
@@ -25,10 +42,16 @@ func copyBudget(root string) (int64, error) {
 	var size int64
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
+			if path != root && os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		info, err := entry.Info()
 		if err != nil {
+			if path != root && os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		if !info.IsDir() && !info.Mode().IsRegular() {
@@ -44,10 +67,15 @@ func copyBudget(root string) (int64, error) {
 func dataBudget(cfg config.Config) (int64, error) {
 	var size int64
 	for _, folder := range Folders {
-		n, err := copyBudget(filepath.Join(cfg.ZnnDir, folder))
+		root := filepath.Join(cfg.ZnnDir, folder)
+		_, err := os.Lstat(root)
 		if os.IsNotExist(err) {
 			continue
 		}
+		if err != nil {
+			return 0, err
+		}
+		n, err := copyBudget(root)
 		if err != nil {
 			return 0, err
 		}
@@ -83,6 +111,21 @@ func ensureSpace(cfg config.Config, additional int64) error {
 		if len(infos) == 0 {
 			return fmt.Errorf("insufficient disk space: backup needs %d MiB plus free-space reserve while keeping disk usage at or below %d%%; no more chain backups can be pruned", need>>20, MaxDiskUsedPercent)
 		}
+		// Avoid sacrificing existing recovery archives when even deleting all
+		// eligible files cannot make this operation fit.
+		var reclaimable int64
+		for _, info := range infos {
+			for _, path := range []string{info.Path, HashPath(info.Path)} {
+				n, err := reclaimableBytes(path)
+				if err != nil {
+					return err
+				}
+				reclaimable += n
+			}
+		}
+		if available+reclaimable < need || used-reclaimable > limit-need || (available+reclaimable-need)/1024 < cfg.MinFreeSpaceKB {
+			return fmt.Errorf("insufficient disk space: pruning available chain backups cannot meet the %d%% limit and free-space reserve; existing archives retained", MaxDiskUsedPercent)
+		}
 		oldest := infos[len(infos)-1]
 		infos = infos[:len(infos)-1]
 		slog.Warn("Pruning oldest chain backup to preserve disk space: " + filepath.Base(oldest.Path))
@@ -95,9 +138,12 @@ func ensureSpace(cfg config.Config, additional int64) error {
 // copyContents fills the metadata-only tree made by GNU cp. All data writes
 // pass through the same space guard used during online compression. The node
 // is stopped, so database files cannot change while they are being copied.
-func copyContents(cfg config.Config, src, dst string) error {
+func copyContents(ctx context.Context, cfg config.Config, src, dst string) error {
 	buffer := make([]byte, 1<<20)
 	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			return cancelErr
+		}
 		if err != nil {
 			return err
 		}
@@ -125,7 +171,7 @@ func copyContents(cfg config.Config, src, dst string) error {
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.CopyBuffer(spaceWriter{cfg: cfg, dst: out}, struct{ io.Reader }{in}, buffer)
+		_, copyErr := io.CopyBuffer(spaceWriter{ctx: ctx, cfg: cfg, dst: out}, struct{ io.Reader }{in}, buffer)
 		closeErr := out.Close()
 		if copyErr != nil {
 			return copyErr
@@ -140,11 +186,17 @@ func copyContents(cfg config.Config, src, dst string) error {
 // spaceWriter checks each output chunk against current filesystem usage. This
 // also catches node/log growth while the archive is compressed online.
 type spaceWriter struct {
+	ctx context.Context
 	cfg config.Config
 	dst io.Writer
 }
 
 func (w spaceWriter) Write(p []byte) (int, error) {
+	if w.ctx != nil {
+		if err := w.ctx.Err(); err != nil {
+			return 0, err
+		}
+	}
 	if err := ensureSpace(w.cfg, int64(len(p))); err != nil {
 		return 0, err
 	}

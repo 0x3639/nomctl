@@ -4,6 +4,7 @@
 package backup
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -124,6 +125,21 @@ func removeArchive(old Info) error {
 	return nil
 }
 
+// DeleteBackup removes only a completed archive selected from this service's
+// ordinary backup list. The caller holds the operation lock after UI approval.
+func DeleteBackup(cfg config.Config, path string) error {
+	infos, err := List(cfg)
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		if info.Path == path {
+			return removeArchive(info)
+		}
+	}
+	return fmt.Errorf("backup is no longer in the configured backup list")
+}
+
 // CadenceReached reports whether at least `days` whole days have passed
 // since last (the bash version compares integer day differences).
 func CadenceReached(last, now time.Time, days int) bool {
@@ -144,10 +160,6 @@ func Run(cfg config.Config, opts Options) (string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", err
 	}
-	// Catch termination while the service is stopped so recovery can run.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
 	slog.Info(fmt.Sprintf("Using backup directory: %s (Keeping %d copies)", cfg.BackupDir, cfg.MaxBackups))
 	for _, d := range []string{cfg.BackupDir, RestoreDir(cfg)} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -177,9 +189,19 @@ func Run(cfg config.Config, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return runSnapshot(cfg, snapshot)
+}
 
+func runSnapshot(cfg config.Config, snapshot *Snapshot) (string, error) {
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	snapshot.ctx = ctx
 	st, err := service.Status(cfg.ServiceName)
 	if err != nil {
+		_ = snapshot.Discard()
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		_ = snapshot.Discard()
 		return "", err
 	}
@@ -215,10 +237,16 @@ type Snapshot struct {
 	cfg      config.Config
 	dir      string
 	captured bool
+	point    *RestorePoint
+	ctx      context.Context
 }
 
 // Prepare checks configuration, data and free space before service downtime.
 func Prepare(cfg config.Config) (*Snapshot, error) {
+	return prepare(cfg, 0)
+}
+
+func prepare(cfg config.Config, extraBytes int64) (*Snapshot, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -232,17 +260,14 @@ func Prepare(cfg config.Config) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := Prune(cfg); err != nil {
-		return nil, err
-	}
-	if err := ensureSpace(cfg, size*2+size/100); err != nil {
+	if err := ensureSpace(cfg, size*2+size/100+extraBytes); err != nil {
 		return nil, err
 	}
 	dir, err := os.MkdirTemp(cfg.BackupDir, "snapshot-")
 	if err != nil {
 		return nil, err
 	}
-	return &Snapshot{cfg: cfg, dir: dir}, nil
+	return &Snapshot{cfg: cfg, dir: dir, ctx: context.Background()}, nil
 }
 
 // Path is the uncompressed recovery copy, retained if Finish fails.
@@ -261,7 +286,7 @@ func (s *Snapshot) Capture() error {
 	if err := ensureSpace(s.cfg, size*2+size/100); err != nil {
 		return err
 	}
-	if err := copyData(s.cfg, s.dir); err != nil {
+	if err := copyData(s.ctx, s.cfg, s.dir); err != nil {
 		return err
 	}
 	s.captured = true
@@ -269,17 +294,28 @@ func (s *Snapshot) Capture() error {
 }
 
 // Discard removes an incomplete snapshot; never call it on finalization failure.
-func (s *Snapshot) Discard() error { return os.RemoveAll(s.dir) }
+func (s *Snapshot) Discard() error {
+	if s.point != nil {
+		if s.point.Complete {
+			return fmt.Errorf("completed restore points can only be deleted through the UI")
+		}
+		return os.RemoveAll(s.point.Dir)
+	}
+	return os.RemoveAll(s.dir)
+}
 
 // Finish creates the ordinary archive/hash pair and applies normal retention.
 func (s *Snapshot) Finish() (string, error) {
 	if !s.captured {
 		return "", fmt.Errorf("snapshot has not been captured")
 	}
+	if s.point != nil {
+		return s.finishRestorePoint()
+	}
 	// The unique suffix also avoids overwriting two backups in the same second.
 	name := strings.TrimSuffix(ArchiveName(s.cfg.ServiceName, time.Now()), ".tar.gz")
 	archive := filepath.Join(s.cfg.BackupDir, name+"_"+filepath.Base(s.dir)+".tar.gz")
-	if err := writeArchiveGuarded(s.dir, archive, &s.cfg); err != nil {
+	if err := writeArchiveGuarded(s.ctx, s.dir, archive, &s.cfg); err != nil {
 		return "", fmt.Errorf("finish backup archive (snapshot retained at %s): %w", s.dir, err)
 	}
 	if err := s.Discard(); err != nil {
@@ -293,7 +329,7 @@ func (s *Snapshot) Finish() (string, error) {
 }
 
 // copyData copies the backup folders from the data directory into dst.
-func copyData(cfg config.Config, dst string) error {
+func copyData(ctx context.Context, cfg config.Config, dst string) error {
 	slog.Info("Copying node data…")
 	for _, folder := range Folders {
 		src := filepath.Join(cfg.ZnnDir, folder)
@@ -310,10 +346,10 @@ func copyData(cfg config.Config, dst string) error {
 		}
 		// Preserve ownership/modes without allowing cp to perform unbounded
 		// data writes. GNU cp is available on the supported Linux hosts.
-		if err := execx.Run("cp", "-a", "--attributes-only", src, dst+"/"); err != nil {
+		if err := execx.New("cp", "-a", "--attributes-only", src, dst+"/").Context(ctx).Run(); err != nil {
 			return fmt.Errorf("failed to copy %s: %w", folder, err)
 		}
-		if err := copyContents(cfg, src, filepath.Join(dst, folder)); err != nil {
+		if err := copyContents(ctx, cfg, src, filepath.Join(dst, folder)); err != nil {
 			return fmt.Errorf("failed to copy %s: %w", folder, err)
 		}
 	}
@@ -324,10 +360,10 @@ func copyData(cfg config.Config, dst string) error {
 // temporary name and its hash sidecar is created before the final rename, so
 // an interrupted run never leaves a complete-looking archive behind.
 func writeArchive(srcDir, archive string) error {
-	return writeArchiveGuarded(srcDir, archive, nil)
+	return writeArchiveGuarded(context.Background(), srcDir, archive, nil)
 }
 
-func writeArchiveGuarded(srcDir, archive string, cfg *config.Config) error {
+func writeArchiveGuarded(ctx context.Context, srcDir, archive string, cfg *config.Config) error {
 	if cfg != nil {
 		size, err := copyBudget(srcDir)
 		if err != nil {
@@ -345,9 +381,9 @@ func writeArchiveGuarded(srcDir, archive string, cfg *config.Config) error {
 	}
 	var dst io.Writer = f
 	if cfg != nil {
-		dst = spaceWriter{cfg: *cfg, dst: f}
+		dst = spaceWriter{ctx: ctx, cfg: *cfg, dst: f}
 	}
-	archiveErr := execx.New("tar", "-czf", "-", ".").Dir(srcDir).StreamOutput(dst)
+	archiveErr := execx.New("tar", "-czf", "-", ".").Dir(srcDir).Context(ctx).StreamOutput(dst)
 	closeErr := f.Close()
 	if err := errors.Join(archiveErr, closeErr); err != nil {
 		_ = os.Remove(partial)
