@@ -63,8 +63,9 @@ var backupScheduleCmd = &cobra.Command{
 
 var restoreCmd = &cobra.Command{
 	Use:   "restore",
-	Short: "Restore the node data directory from a backup archive",
-	Long: `Verifies the archive against its sha256 sidecar, stops the node, moves the
+	Short: "Restore chain data from a backup archive; keep the installed znnd unchanged",
+	Long: `Restores chain data only; the installed znnd and its version stay unchanged.
+Verifies the archive against its sha256 sidecar, stops the node, moves the
 current chain data into <backup dir>/restore as a safety snapshot, extracts
 the archive and starts the node again.
 

@@ -145,6 +145,15 @@ func stubService(t *testing.T) *[]string {
 
 func TestRunReplacesOnlyArchivedFolders(t *testing.T) {
 	cfg := testConfig(t)
+	cfg.InstallDir = t.TempDir()
+	cfg.BinaryName = config.DefaultBinaryName
+	if err := os.WriteFile(cfg.BinaryPath(), []byte("installed znnd"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	installedBefore, err := os.Stat(cfg.BinaryPath())
+	if err != nil {
+		t.Fatal(err)
+	}
 	calls := stubService(t)
 	a := tgz(t, good()...)
 	if err := Run(cfg, a); err != nil {
@@ -152,6 +161,13 @@ func TestRunReplacesOnlyArchivedFolders(t *testing.T) {
 	}
 	if strings.Join(*calls, ",") != "stop,start" {
 		t.Errorf("calls = %v", *calls)
+	}
+	installedAfter, err := os.Stat(cfg.BinaryPath())
+	if err != nil || !os.SameFile(installedBefore, installedAfter) {
+		t.Fatal("ordinary backup restore replaced znnd", err)
+	}
+	if binary, err := os.ReadFile(cfg.BinaryPath()); err != nil || string(binary) != "installed znnd" {
+		t.Fatal("ordinary backup restore modified znnd", err)
 	}
 	if got, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, "nom", "000001.log")); string(got) != "nom" {
 		t.Errorf("nom not restored: %q", got)

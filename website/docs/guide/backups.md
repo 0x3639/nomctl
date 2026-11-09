@@ -8,10 +8,10 @@ nomctl distinguishes automatically managed **backups** from protected **restore 
 | | Backups | Restore points |
 | --- | --- | --- |
 | Created by | Daily cron job, or the `nomctl backup` command | **Create restore point** in the menu, or either node-upgrade option |
-| Contents | Chain data | Chain data and the matching installed node binary |
+| Contents | Chain data | Chain data and the installed znnd, with its version and commit hash when available, plus its SHA-256 checksum |
 | Retention | 7 days by default, maximum 30; oldest backups may be pruned for space | Indefinite by default, or 1–30 days before eligible for **manual** pruning |
 | Deletion | Automatic age/count/disk pruning, or explicit UI cleanup | **Only explicit deletion or confirmed pruning in the UI** |
-| Restore menu | **Restore from backup** | **Restore from restore point** |
+| Restore menu | **Restore from backup**: data only; keeps installed znnd | **Restore from restore point**: choose data + saved znnd, or data only |
 
 Wallet and configuration backups remain a separate encrypted operation.
 
@@ -70,6 +70,8 @@ Cron does not catch up on runs missed while the machine is off. An overlapping n
 
 Choose **Create restore point** under **Backups & recovery**, give it an optional name, and choose **Indefinite** or **1–30 days**. A restore point preserves chain data and the node binary currently installed at the configured binary path. It uses the same 75% disk-use guard and checks the combined copy, archive, and saved-binary requirement before stopping the node. The service restarts before compression.
 
+The confirmation explicitly says it backs up **chain data and znnd**. nomctl records the saved znnd's version and commit hash when its `version` command or Go build metadata provides them, and always records its SHA-256 checksum. These details appear after creation, in the restore-point picker and management list, and before restoration. Missing version information, including in older restore points, is shown as **unavailable**; it does not prevent restoration. Version detection is bounded and happens before the service is stopped.
+
 Both **Upgrade a node from source** and **Upgrade a node from signed release** create a mandatory restore point before replacing the binary. Both ask for its retention choice. For unattended use:
 
 ```bash
@@ -82,14 +84,22 @@ Restore points live under `<backup dir>/restore-points/<id>/` with the chain arc
 
 ### Restoring a restore point
 
-Choose **Restore from restore point**, select a completed point, and confirm. nomctl verifies the archive and saved-binary checksums, stages the files, stops the service, and restores **both chain data and the matching node binary before restarting**. Chain-data folders created after the point are moved aside too, so they are not mixed with an older state. Wallet and `config.json` remain unchanged.
+Choose **Restore from restore point** and select a completed point. The UI shows its saved znnd version, commit hash and SHA-256 checksum, then asks whether to also revert znnd:
 
-The current chain data is retained under `<backup dir>/restore/`; the current binary is kept in a unique `.nomctl-before-restore-*` file beside the installed binary. If binary installation fails, the previous chain data is put back before restart. If startup fails after a completed restore, the restored pair remains together for inspection. The selected restore point is never consumed by restoration.
+- **Yes — restore chain data and saved znnd** (recommended): verifies both checksums and restores the matching pair before restarting.
+- **No — restore data only; keep installed znnd**: verifies and restores the chain archive without reading or replacing either node binary. The installed znnd must support the older data; incompatible versions may fail to start.
+
+Review the selected behavior and confirm. Chain-data folders created after the point are moved aside too, so they are not mixed with an older state. Wallet and `config.json` remain unchanged.
+
+The current chain data is retained under `<backup dir>/restore/`. When reverting znnd too, its current binary is kept in a unique `.nomctl-before-restore-*` file beside the installed binary. If binary installation fails, the previous chain data is put back before restart. If startup fails after a completed restore, the selected data/binary combination remains in place for inspection. The selected restore point is never consumed by restoration.
 
 ```bash
 sudo nomctl restore-points                 # management UI; lists points when non-interactive
-sudo nomctl restore point RESTORE_POINT_ID # restore a matching binary/data pair
+sudo nomctl restore point RESTORE_POINT_ID # asks about znnd in interactive use
+sudo nomctl restore point RESTORE_POINT_ID --data-only # keep installed znnd
 ```
+
+Non-interactive restoration defaults to the matching data/znnd pair. Pass `--data-only` explicitly to keep the installed znnd.
 
 Incomplete points are shown in management for inspection or individual deletion, but cannot be restored or bulk-pruned. A failed finalization retains the uncompressed data in the point's `data/` directory for recovery.
 

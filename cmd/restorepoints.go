@@ -10,9 +10,10 @@ import (
 )
 
 var flagPointKeep, flagPointLabel string
+var flagPointDataOnly bool
 
 var backupPointCmd = &cobra.Command{
-	Use: "point", Short: "Create a protected restore point with chain data and matching node binary",
+	Use: "point", Short: "Back up chain data and znnd with its version and hashes into a protected restore point",
 	Args: cobra.NoArgs, Annotations: rootOnly(),
 	RunE: func(command *cobra.Command, _ []string) error {
 		if ui.Interactive() && !command.Flags().Changed("keep") {
@@ -31,10 +32,16 @@ var backupPointCmd = &cobra.Command{
 }
 
 var restorePointCmd = &cobra.Command{
-	Use: "point ID", Short: "Restore matching chain data and node binary from a protected restore point",
+	Use: "point ID", Short: "Restore chain data and optionally the saved znnd from a restore point",
+	Long: "Restore a protected restore point. Interactive use asks whether to also restore\nthe saved znnd. Non-interactive use restores the matching data and znnd by default;\n--data-only keeps the installed znnd, which must support the saved chain data.",
 	Args: cobra.ExactArgs(1), Annotations: rootOnly(),
 	RunE: func(_ *cobra.Command, args []string) error {
-		return withLock("restore from restore point", func() error { return restore.RunRestorePoint(cfg, args[0]) })
+		if ui.Interactive() && !flagPointDataOnly {
+			return tui.RestorePointByID(cfg, args[0])
+		}
+		return withLock("restore from restore point", func() error {
+			return restore.RunRestorePointWithOptions(cfg, args[0], restore.RestorePointOptions{DataOnly: flagPointDataOnly})
+		})
 	},
 }
 
@@ -50,7 +57,7 @@ var restorePointsCmd = &cobra.Command{
 			return err
 		}
 		for _, p := range points {
-			fmt.Fprintf(command.OutOrStdout(), "%s\t%.1f MiB\tkeep-days=%d (0=indefinite)\tcomplete=%t\t%s\n", p.ID, float64(p.Size)/(1<<20), p.KeepDays, p.Complete, p.Label)
+			fmt.Fprintf(command.OutOrStdout(), "%s\t%.1f MiB\tkeep-days=%d (0=indefinite)\tcomplete=%t\t%s\n%s\n", p.ID, float64(p.Size)/(1<<20), p.KeepDays, p.Complete, p.Label, p.BinaryDescription())
 		}
 		return nil
 	},
@@ -82,6 +89,8 @@ func init() {
 	}
 	backupCmd.AddCommand(backupPointCmd)
 	backupCmd.AddCommand(manageBackupsCmd)
+
+	restorePointCmd.Flags().BoolVar(&flagPointDataOnly, "data-only", false, "restore chain data only; keep the installed znnd unchanged")
 	restoreCmd.AddCommand(restorePointCmd)
 	rootCmd.AddCommand(restorePointsCmd)
 }

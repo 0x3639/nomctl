@@ -61,9 +61,9 @@ var menus = map[Action]menuDefinition{
 		{ActionConfig, "Node configuration", "Show or edit settings in config.json."},
 	}},
 	menuBackups: {"Backups & recovery", []menuEntry{
-		{ActionRestore, "Restore from backup", "Choose a local chain backup and verify it before restoring."},
-		{ActionCreatePoint, "Create restore point", "Save chain data and the installed binary; protected from automatic deletion."},
-		{ActionRestorePoint, "Restore from restore point", "Restore the matching chain data and node binary together."},
+		{ActionRestore, "Restore from backup", "Restore chain data only; keep the installed znnd unchanged."},
+		{ActionCreatePoint, "Create restore point", "Back up chain data and znnd, recording its version and hashes; protected from automatic deletion."},
+		{ActionRestorePoint, "Restore from restore point", "Restore chain data and choose whether to revert to the saved znnd."},
 		{ActionManagePoints, "Manage restore points", "Inspect sizes, delete selected points or prune eligible points after confirmation."},
 		{ActionManageBackups, "Manage backups", "Delete selected backups or prune old backups after reviewing the files and space to free."},
 		{ActionWalletBackup, "Back up wallet & configuration", "Create an encrypted backup of wallet files and config.json."},

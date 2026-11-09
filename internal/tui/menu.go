@@ -628,6 +628,13 @@ func Restore(cfg config.Config) error {
 		if err != nil {
 			return err
 		}
+		ok, err := Confirm("Restore chain data from " + archive + "?\nThis restores data only; the installed znnd and its version stay unchanged.\nCurrent chain data is kept as a recovery copy.")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrCancelled
+		}
 		// The picker runs outside the lock, so a scheduled backup may have
 		// pruned the chosen archive meanwhile: check under the lock and
 		// offer the list again rather than failing.

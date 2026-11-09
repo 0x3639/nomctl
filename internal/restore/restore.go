@@ -131,10 +131,15 @@ var (
 // staged ones into place and start. A failure after the stop puts the
 // previous data back.
 func Run(cfg config.Config, archive string) error {
-	return run(cfg, archive, nil)
+	return run(cfg, archive, false, nil)
 }
 
-func run(cfg config.Config, archive string, binary *pointBinary) error {
+func run(cfg config.Config, archive string, point bool, binary *pointBinary) error {
+	if binary == nil {
+		slog.Info("Restoring chain data only; keeping the installed znnd unchanged.")
+	} else {
+		slog.Info("Restoring chain data and the saved znnd together.")
+	}
 	restoreDir := backup.RestoreDir(cfg)
 	if err := os.MkdirAll(restoreDir, 0o755); err != nil {
 		return err
@@ -149,7 +154,7 @@ func run(cfg config.Config, archive string, binary *pointBinary) error {
 	if err := os.MkdirAll(cfg.ZnnDir, 0o755); err != nil {
 		return err
 	}
-	if binary != nil {
+	if point {
 		if err := backup.CheckRestoreSpace(cfg, cfg.ZnnDir, manifest.Uncompressed+int64(manifest.Files)*64<<10); err != nil {
 			return err
 		}
@@ -168,7 +173,7 @@ func run(cfg config.Config, archive string, binary *pointBinary) error {
 		return err
 	}
 	folders := manifest.Folders
-	if binary != nil {
+	if point {
 		folders = backup.Folders
 	}
 	moved, err := MoveAside(cfg, now, folders)

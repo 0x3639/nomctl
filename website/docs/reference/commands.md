@@ -24,12 +24,12 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl logs [-f] [-n LINES]` | last 20 lines, or follow |
 | `nomctl resync` | wipe chain data, keep wallet and config |
 | `nomctl backup [--retention-days DAYS] [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | [Backups](/guide/backups) |
-| `nomctl backup point [--keep DAYS_OR_indefinite] [--label TEXT]` | Create a protected chain-data/binary restore point |
-| `nomctl restore point ID` | Restore the matching data and binary from a restore point |
+| `nomctl backup point [--keep DAYS_OR_indefinite] [--label TEXT]` | Back up chain data and znnd; record its version and hashes in a protected restore point |
+| `nomctl restore point ID [--data-only]` | Interactive use asks whether to revert znnd too; non-interactive use restores the matching pair unless `--data-only` keeps installed znnd |
 | `nomctl restore-points` | Manage protected points in the UI, or list them non-interactively |
 | `nomctl backup manage` | Review and prune ordinary backups in the UI |
 | `nomctl backup schedule [--retention-days DAYS] [--hour HOUR]` | Configure daily local backups with cron without taking a backup immediately |
-| `nomctl restore [--file FILE]` | picker when `--file` is omitted |
+| `nomctl restore [--file FILE]` | Restore chain data only, keeping installed znnd; picker when `--file` is omitted |
 | `nomctl backup wallet [--output DIR] [--no-encrypt]` | [wallet and config backup](/guide/backups#wallet-and-config-backup), age-encrypted; passphrase prompted or `NOMCTL_WALLET_PASSPHRASE` |
 | `nomctl restore wallet FILE [--restart]` | verifies the archived key against its config before replacing anything |
 | `nomctl bootstrap [URL] [--discard]` | [Bootstrap](/guide/bootstrap): verified snapshot instead of syncing from genesis |
