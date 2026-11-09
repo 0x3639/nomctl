@@ -1,19 +1,22 @@
 // Package backup ports backup.sh: snapshot the node data directory into a
 // tar.gz archive with a sha256 sidecar, prune old archives and schedule
-// recurring backups with a systemd timer.
+// daily local backups with cron.
 package backup
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/0x3639/nomctl/internal/config"
@@ -59,7 +62,7 @@ func List(cfg config.Config) ([]Info, error) {
 	}
 	var infos []Info
 	for _, m := range matches {
-		st, err := os.Stat(m)
+		st, err := os.Lstat(m)
 		if err != nil || !st.Mode().IsRegular() {
 			continue
 		}
@@ -93,20 +96,30 @@ func SelectForPruning(infos []Info, keep int) []Info {
 	return sorted[keep:]
 }
 
-// Prune deletes archives (and their hash files) beyond MaxBackups.
+// Prune enforces both maximum age and count, oldest first.
 func Prune(cfg config.Config) error {
 	infos, err := List(cfg)
 	if err != nil {
 		return err
 	}
-	for _, old := range SelectForPruning(infos, cfg.MaxBackups) {
-		slog.Info("Removing old backup " + filepath.Base(old.Path))
-		if err := os.Remove(old.Path); err != nil {
-			slog.Warn("Failed to remove " + old.Path + ": " + err.Error())
+	cutoff := time.Now().Add(-time.Duration(cfg.BackupRetentionDays) * 24 * time.Hour)
+	for i := len(infos) - 1; i >= 0; i-- {
+		if i >= cfg.MaxBackups || (cfg.BackupRetentionDays > 0 && !infos[i].ModTime.After(cutoff)) {
+			if err := removeArchive(infos[i]); err != nil {
+				return err
+			}
 		}
-		if err := os.Remove(HashPath(old.Path)); err != nil && !os.IsNotExist(err) {
-			slog.Warn("Failed to remove " + HashPath(old.Path) + ": " + err.Error())
-		}
+	}
+	return nil
+}
+
+func removeArchive(old Info) error {
+	slog.Info("Removing old backup " + filepath.Base(old.Path))
+	if err := os.Remove(old.Path); err != nil {
+		return fmt.Errorf("prune backup: %w", err)
+	}
+	if err := os.Remove(HashPath(old.Path)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("prune hash: %w", err)
 	}
 	return nil
 }
@@ -128,6 +141,13 @@ type Options struct {
 // Run creates a backup archive. It returns the archive path, or "" when the
 // run was skipped because of the cadence.
 func Run(cfg config.Config, opts Options) (string, error) {
+	if err := cfg.Validate(); err != nil {
+		return "", err
+	}
+	// Catch termination while the service is stopped so recovery can run.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
 	slog.Info(fmt.Sprintf("Using backup directory: %s (Keeping %d copies)", cfg.BackupDir, cfg.MaxBackups))
 	for _, d := range []string{cfg.BackupDir, RestoreDir(cfg)} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -135,6 +155,9 @@ func Run(cfg config.Config, opts Options) (string, error) {
 		}
 	}
 
+	if err := Prune(cfg); err != nil {
+		return "", err
+	}
 	if !opts.Interactive && cfg.BackupCadenceDays > 0 {
 		infos, err := List(cfg)
 		if err != nil {
@@ -163,20 +186,23 @@ func Run(cfg config.Config, opts Options) (string, error) {
 	wasActive := st.Running()
 	if err := service.Stop(cfg.ServiceName); err != nil {
 		_ = snapshot.Discard()
+		if wasActive {
+			err = errors.Join(err, service.Start(cfg.ServiceName))
+		}
 		return "", err
 	}
 	if err := snapshot.Capture(); err != nil {
 		_ = snapshot.Discard()
 		// Never leave the node down because the snapshot failed.
 		if wasActive {
-			if startErr := service.Start(cfg.ServiceName); startErr != nil {
-				slog.Error("Failed to restart " + cfg.ServiceName + " after copy failure: " + startErr.Error())
-			}
+			err = errors.Join(err, service.Start(cfg.ServiceName))
 		}
 		return "", err
 	}
-	if err := service.Start(cfg.ServiceName); err != nil {
-		return "", fmt.Errorf("restart failed; snapshot retained at %s: %w", snapshot.Path(), err)
+	if wasActive {
+		if err := service.Start(cfg.ServiceName); err != nil {
+			return "", fmt.Errorf("restart failed; snapshot retained at %s: %w", snapshot.Path(), err)
+		}
 	}
 
 	return snapshot.Finish()
@@ -202,7 +228,14 @@ func Prepare(cfg config.Config) (*Snapshot, error) {
 	if err := os.MkdirAll(cfg.BackupDir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := ensureFreeSpace(cfg); err != nil {
+	size, err := dataBudget(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := Prune(cfg); err != nil {
+		return nil, err
+	}
+	if err := ensureSpace(cfg, size*2+size/100); err != nil {
 		return nil, err
 	}
 	dir, err := os.MkdirTemp(cfg.BackupDir, "snapshot-")
@@ -219,6 +252,14 @@ func (s *Snapshot) Path() string { return s.dir }
 func (s *Snapshot) Capture() error {
 	if s.captured {
 		return fmt.Errorf("snapshot already captured")
+	}
+	// Recheck after stopping: data may have grown since Prepare.
+	size, err := dataBudget(s.cfg)
+	if err != nil {
+		return err
+	}
+	if err := ensureSpace(s.cfg, size*2+size/100); err != nil {
+		return err
 	}
 	if err := copyData(s.cfg, s.dir); err != nil {
 		return err
@@ -238,7 +279,7 @@ func (s *Snapshot) Finish() (string, error) {
 	// The unique suffix also avoids overwriting two backups in the same second.
 	name := strings.TrimSuffix(ArchiveName(s.cfg.ServiceName, time.Now()), ".tar.gz")
 	archive := filepath.Join(s.cfg.BackupDir, name+"_"+filepath.Base(s.dir)+".tar.gz")
-	if err := writeArchive(s.dir, archive); err != nil {
+	if err := writeArchiveGuarded(s.dir, archive, &s.cfg); err != nil {
 		return "", fmt.Errorf("finish backup archive (snapshot retained at %s): %w", s.dir, err)
 	}
 	if err := s.Discard(); err != nil {
@@ -260,7 +301,19 @@ func copyData(cfg config.Config, dst string) error {
 			slog.Info("Skipping missing " + folder)
 			continue
 		}
-		if err := execx.Run("cp", "-a", src, dst+"/"); err != nil {
+		size, err := copyBudget(src)
+		if err != nil {
+			return err
+		}
+		if err := ensureSpace(cfg, size); err != nil {
+			return err
+		}
+		// Preserve ownership/modes without allowing cp to perform unbounded
+		// data writes. GNU cp is available on the supported Linux hosts.
+		if err := execx.Run("cp", "-a", "--attributes-only", src, dst+"/"); err != nil {
+			return fmt.Errorf("failed to copy %s: %w", folder, err)
+		}
+		if err := copyContents(cfg, src, filepath.Join(dst, folder)); err != nil {
 			return fmt.Errorf("failed to copy %s: %w", folder, err)
 		}
 	}
@@ -271,9 +324,32 @@ func copyData(cfg config.Config, dst string) error {
 // temporary name and its hash sidecar is created before the final rename, so
 // an interrupted run never leaves a complete-looking archive behind.
 func writeArchive(srcDir, archive string) error {
+	return writeArchiveGuarded(srcDir, archive, nil)
+}
+
+func writeArchiveGuarded(srcDir, archive string, cfg *config.Config) error {
+	if cfg != nil {
+		size, err := copyBudget(srcDir)
+		if err != nil {
+			return err
+		}
+		if err := ensureSpace(*cfg, size+size/100); err != nil {
+			return err
+		}
+	}
 	slog.Info("Creating archive " + filepath.Base(archive) + "…")
 	partial := archive + ".partial"
-	if err := execx.New("tar", "-czf", partial, ".").Dir(srcDir).Run(); err != nil {
+	f, err := os.OpenFile(partial, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	var dst io.Writer = f
+	if cfg != nil {
+		dst = spaceWriter{cfg: *cfg, dst: f}
+	}
+	archiveErr := execx.New("tar", "-czf", "-", ".").Dir(srcDir).StreamOutput(dst)
+	closeErr := f.Close()
+	if err := errors.Join(archiveErr, closeErr); err != nil {
 		_ = os.Remove(partial)
 		return err
 	}
@@ -281,6 +357,12 @@ func writeArchive(srcDir, archive string) error {
 	if err != nil {
 		_ = os.Remove(partial)
 		return err
+	}
+	if cfg != nil {
+		if err := ensureSpace(*cfg, 4096); err != nil {
+			_ = os.Remove(partial)
+			return err
+		}
 	}
 	if err := os.WriteFile(HashPath(archive), []byte(sum+"\n"), 0o644); err != nil {
 		_ = os.Remove(partial)
@@ -290,29 +372,6 @@ func writeArchive(srcDir, archive string) error {
 		_ = os.Remove(partial)
 		_ = os.Remove(HashPath(archive))
 		return err
-	}
-	return nil
-}
-
-func ensureFreeSpace(cfg config.Config) error {
-	avail, usedPct, err := fsx.DiskFree(cfg.BackupDir)
-	if err != nil {
-		return fmt.Errorf("check disk space: %w", err)
-	}
-	slog.Info(fmt.Sprintf("Disk space: %d MB available (%d%% used)", avail/1024, usedPct))
-	if avail >= cfg.MinFreeSpaceKB {
-		return nil
-	}
-	slog.Warn("Low disk space detected. Attempting cleanup...")
-	if err := Prune(cfg); err != nil {
-		return err
-	}
-	avail, _, err = fsx.DiskFree(cfg.BackupDir)
-	if err != nil {
-		return fmt.Errorf("check disk space: %w", err)
-	}
-	if avail < cfg.MinFreeSpaceKB {
-		return fmt.Errorf("insufficient disk space even after cleanup: %d MB available", avail/1024)
 	}
 	return nil
 }
@@ -354,44 +413,6 @@ func ScheduleTime(hostname, serviceName string, hourOverride int) (hour, minute 
 	return hour, minute
 }
 
-// TimerUnit renders the systemd timer.
-func TimerUnit(hour, minute int) string {
-	return fmt.Sprintf(`[Unit]
-Description=Scheduled %s backup
-
-[Timer]
-OnCalendar=*-*-* %02d:%02d:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-`, TimerName, hour, minute)
-}
-
-// ServiceUnit renders the oneshot service triggered by the timer.
-func ServiceUnit(cfg config.Config, execPath string) string {
-	return fmt.Sprintf(`[Unit]
-Description=%s backup job
-
-[Service]
-Type=oneshot
-Environment="NOMCTL_BACKUP_DIR=%s"
-Environment="NOMCTL_ZNN_DIR=%s"
-Environment="NOMCTL_SERVICE_NAME=%s"
-Environment="NOMCTL_LOG_FILE=%s"
-Environment="NOMCTL_MIN_FREE_SPACE_KB=%d"
-ExecStart=%s backup --skip-preflight --max-backups %d --cadence %d
-`, TimerName, unitQuote(cfg.BackupDir), unitQuote(cfg.ZnnDir), unitQuote(cfg.ServiceName), unitQuote(cfg.LogFile),
-		cfg.MinFreeSpaceKB, unitQuote(execPath), cfg.MaxBackups, cfg.BackupCadenceDays)
-}
-
-// unitQuote escapes a value for use inside a double-quoted systemd unit
-// setting (Environment="K=V") or an ExecStart argument.
-func unitQuote(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	return strings.ReplaceAll(s, `"`, `\"`)
-}
-
 // InstalledCadence reads the cadence baked into the installed timer's
 // service unit, so other components see the scheduled value rather than
 // the environment default. ok is false when no timer unit is installed.
@@ -418,37 +439,4 @@ func ParseCadence(unit string) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-// Schedule installs and enables the backup timer using this executable.
-func Schedule(cfg config.Config) error {
-	execPath, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if resolved, err := filepath.EvalSymlinks(execPath); err == nil {
-		execPath = resolved
-	}
-	host, _ := os.Hostname()
-	hour, minute := ScheduleTime(host, cfg.ServiceName, cfg.BackupHour)
-
-	svcPath := "/etc/systemd/system/" + TimerName + ".service"
-	timerPath := "/etc/systemd/system/" + TimerName + ".timer"
-	if strings.ContainsAny(execPath, " \t") {
-		execPath = `"` + unitQuote(execPath) + `"`
-	}
-	if err := service.WriteUnit(svcPath, ServiceUnit(cfg, execPath)); err != nil {
-		return err
-	}
-	if err := service.WriteUnit(timerPath, TimerUnit(hour, minute)); err != nil {
-		return err
-	}
-	if err := service.DaemonReload(); err != nil {
-		return err
-	}
-	if err := service.EnableNow(TimerName + ".timer"); err != nil {
-		return err
-	}
-	logx.Success(fmt.Sprintf("Recurring backups scheduled for %d:%02d via systemd timer (unit: %s)", hour, minute, timerPath))
-	return nil
 }

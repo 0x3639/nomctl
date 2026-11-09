@@ -138,32 +138,8 @@ func TestScheduleTime(t *testing.T) {
 	}
 }
 
-func TestUnits(t *testing.T) {
-	cfg := config.Default()
-	cfg.MaxBackups = 5
-	cfg.BackupCadenceDays = 7
-	svc := ServiceUnit(cfg, "/usr/local/bin/nomctl")
-	if !strings.Contains(svc, "ExecStart=/usr/local/bin/nomctl backup --skip-preflight --max-backups 5 --cadence 7") {
-		t.Errorf("service unit:\n%s", svc)
-	}
-	if !strings.Contains(svc, `Environment="NOMCTL_BACKUP_DIR=/backup"`) || !strings.Contains(svc, `Environment="NOMCTL_MIN_FREE_SPACE_KB=15728640"`) {
-		t.Errorf("service unit should carry backup dir and min free space:\n%s", svc)
-	}
-	cfg.BackupDir = `/mnt/my "backups"`
-	svc = ServiceUnit(cfg, "/usr/local/bin/nomctl")
-	if !strings.Contains(svc, `Environment="NOMCTL_BACKUP_DIR=/mnt/my \"backups\""`) {
-		t.Errorf("quotes should be escaped:\n%s", svc)
-	}
-	timer := TimerUnit(3, 7)
-	if !strings.Contains(timer, "OnCalendar=*-*-* 03:07:00") || !strings.Contains(timer, "Persistent=true") {
-		t.Errorf("timer unit:\n%s", timer)
-	}
-}
-
 func TestParseCadence(t *testing.T) {
-	cfg := config.Default()
-	cfg.BackupCadenceDays = 7
-	if n, ok := ParseCadence(ServiceUnit(cfg, "/usr/local/bin/nomctl")); !ok || n != 7 {
+	if n, ok := ParseCadence("[Service]\nExecStart=/usr/local/bin/nomctl backup --cadence 7\n"); !ok || n != 7 {
 		t.Errorf("cadence = %d %v", n, ok)
 	}
 	if _, ok := ParseCadence("[Service]\nExecStart=/bin/true\n"); ok {

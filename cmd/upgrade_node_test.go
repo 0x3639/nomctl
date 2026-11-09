@@ -83,7 +83,7 @@ func TestBackupScheduleCommand(t *testing.T) {
 	if err != nil || command != backupScheduleCmd || command.Annotations[annotationRoot] != "true" {
 		t.Fatal("schedule command missing or unprivileged", err)
 	}
-	for _, flag := range []string{"max-backups", "cadence", "hour"} {
+	for _, flag := range []string{"retention-days", "hour"} {
 		if command.Flags().Lookup(flag) == nil {
 			t.Errorf("missing %s", flag)
 		}

@@ -1,46 +1,56 @@
 ---
 title: Backups and restore
-description: "Chain-data backups with checksums and retention, a systemd timer for scheduled backups, and restoring from an archive."
+description: "Chain-data backups with checksums and retention, daily cron scheduling with a 75% disk-use limit, and restoring from an archive."
 ---
 
 ## Taking a backup
 
 ```bash
-sudo nomctl backup [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]
+sudo nomctl backup [--retention-days DAYS] [--max-backups N] [--cadence DAYS]
 ```
 
-A backup stops the node, copies `nom`, `network`, `consensus` and `cache` from the data directory into a staging area, restarts the node, and only then compresses the copy into `<backup dir>/go-zenon_backup_<MM-DD-YY_HHMMSS>_snapshot-<id>.tar.gz` with a sha256 sidecar (`.hash`). The backup directory is `/backup` by default and `NOMCTL_BACKUP_DIR` changes it. Archives beyond `--max-backups` (default 7, maximum 30) are pruned, oldest first.
+A backup stops the node, copies `nom`, `network`, `consensus` and `cache` into a private staging directory, and restarts a previously running node **before compression**. The resulting `<backup dir>/go-zenon_backup_<MM-DD-YY_HHMMSS>_snapshot-<id>.tar.gz` has a SHA-256 sidecar (`.hash`). The backup directory is `/backup` by default; set `NOMCTL_BACKUP_DIR` to change it. Wallet files and `config.json` are excluded; back them up separately using the encrypted wallet backup below.
 
-The backup directory must have at least 15 GB free (`NOMCTL_MIN_FREE_SPACE_KB`). If it does not, old archives are pruned first; if that is not enough the backup fails before touching the node.
+Retention defaults to **7 days**, with a supported range of **1–30 days**. Completed chain backups older than the chosen age are removed, oldest first. Manual backups also apply `--max-backups` (default 7, maximum 30). A manual `--cadence N` skips a backup when the newest archive is younger than N days; scheduled daily jobs always run without that skip.
 
-Archives are written under a temporary name and renamed only after the checksum sidecar exists, so an interrupted run never leaves a complete-looking archive behind. Archives without a sidecar are ignored for retention and cadence.
+### Disk-space protection
 
-If copying fails and the node was running before the backup, it is restarted before the error is reported; a node that was already stopped stays stopped.
+Backups keep total usage of the **filesystem containing the backup directory at or below 75%**, counting all files on that filesystem. Before stopping the node, nomctl estimates space for both the uncompressed copy and the compressed archive, assuming no compression savings. It also preserves `NOMCTL_MIN_FREE_SPACE_KB` (15 GiB by default) and a small safety margin.
 
-## Scheduling
+When space is tight, completed chain backups for the selected service are removed oldest first, even if they are within the retention period. If pruning cannot make enough room, the backup fails before stopping the node. Disk capacity is checked again after stopping and before each data-write chunk during copying and compression. If space becomes insufficient mid-copy, the incomplete copy is removed and the previously running node is restarted. Compression failures remove the partial archive and retain the snapshot for recovery.
+
+Wallet backups, restore safety copies, incomplete archives and recovery snapshots are never automatically pruned. They count toward disk usage and may need manual attention. Other processes can independently fill the disk between checks; this limit governs backup writes, not other applications.
+
+Archives use a temporary filename and are published only after the checksum sidecar exists. Archives without a sidecar are ignored for retention and cadence. A node that was already stopped stays stopped.
+
+## Schedule local backups
+
+From **Backups & recovery**, choose **Schedule local backups**. The prompts ask how many days to keep backups (default 7, maximum 30) and which hour to run them (default 02:00 hour, in the server's local time). Setup does not take a backup immediately.
+
+The equivalent command is:
 
 ```bash
-sudo nomctl backup --schedule --cadence 7 --max-backups 5 [--hour 3]
+sudo nomctl backup schedule --retention-days 7 --hour 2
 ```
 
-This writes `nomctl-backup.service` and `nomctl-backup.timer` under `/etc/systemd/system` and enables the timer. It fires daily at `--hour`, or when omitted at a minute and hour between 02:00 and 04:59 derived from the hostname, so many nodes do not back up at the same instant. On each run the cadence decides whether a backup actually happens: with `--cadence 7` a run is skipped when the newest archive is younger than seven days.
+This writes one root cron job to `/etc/cron.d/nomctl-backup` and enables the installed `cron` or `crond` service. Install your distribution's `cron` or `cronie` package first if neither is available. The job runs daily, using a minute derived from the hostname and service name to spread load between nodes. Without `--hour`, the hour is also derived, between 02:00 and 04:59.
 
-The service unit carries the backup, data and service settings and the free-space minimum in effect when it was created. Inspect the timer with:
+The cron job preserves the backup directory, node data directory, service name, log path, retention and free-space minimum selected during setup. It keeps backups for the requested number of days, with an additional maximum of 30 archives; disk pressure can shorten retention. Rerunning setup replaces the existing job. An existing `nomctl-backup.timer` is disabled automatically, so both schedulers do not run together. Older timers keep working until you run the new setup.
+
+Inspect or remove the schedule with:
 
 ```bash
-systemctl list-timers nomctl-backup.timer
+sudo cat /etc/cron.d/nomctl-backup
+sudo rm /etc/cron.d/nomctl-backup   # stop future scheduled backups
 ```
 
-From **Backups & recovery**, choose **Backup chain data locally** to take a backup,
-or **Configure scheduled backups** to set retention, cadence and time without
-running a backup immediately. The equivalent schedule-only command is:
+To take a backup now and then install the daily schedule, use:
 
 ```bash
-sudo nomctl backup schedule --max-backups 7 --cadence 7 --hour 3
+sudo nomctl backup --schedule --retention-days 7 --hour 2
 ```
 
-The existing `nomctl backup --schedule` option still takes a backup and then
-configures the timer.
+Cron does not catch up on runs missed while the machine is off. An overlapping nomctl operation causes the backup to fail safely under the shared operation lock; the next attempt is the following day. Backup failures are recorded in the configured nomctl log (normally `/var/log/nomctl.log`), and the `backup_stale` alert recognizes both cron schedules and older timers.
 
 ## Restoring
 

@@ -35,7 +35,7 @@ Opening the menu does not run hardware, NTP or Internet pre-flight checks. Those
 | Restore local chain data | Choose and restore a local chain-data archive |
 | Back up wallet & configuration | Encrypted wallet and `config.json` backup |
 | Restore wallet & configuration | Choose a wallet backup, enter its passphrase and restore |
-| Configure scheduled backups | Choose retention, cadence and time; does not run a backup immediately |
+| Schedule local backups | Daily cron backups; asks for retention (1–30 days, default 7) and hour, with automatic pruning at the 75% disk limit; does not run a backup immediately |
 | Restore from "trusted" bootstrap snapshot | [Bootstrap](/guide/bootstrap): URL prompt, keep/discard choice and confirmation |
 | Resync from scratch | Wipe chain data and resync, after confirmation |
 

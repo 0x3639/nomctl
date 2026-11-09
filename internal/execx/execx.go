@@ -122,6 +122,36 @@ func (c *Cmd) Run() error {
 	return nil
 }
 
+// StreamOutput streams stdout to dst. A writer error closes the process's output
+// pipe, so bounded writers can stop an archive before it exhausts disk space.
+func (c *Cmd) StreamOutput(dst io.Writer) error {
+	cmd := c.build()
+	tail := &tailBuffer{max: 4096}
+	output := &outputWriter{dst: dst}
+	cmd.Stdout = output
+	cmd.Stderr = io.MultiWriter(c.r.Sink, tail)
+	// A broken pipe may make the child fail too. Preserve the original disk
+	// limit/write error instead of reporting only the child's exit status.
+	runErr := cmd.Run()
+	if err := errors.Join(runErr, output.err); err != nil {
+		return &Error{Cmd: c.String(), Err: err, Output: tail.String()}
+	}
+	return nil
+}
+
+type outputWriter struct {
+	dst io.Writer
+	err error
+}
+
+func (w *outputWriter) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	if err != nil {
+		w.err = err
+	}
+	return n, err
+}
+
 // Output runs the command and returns its trimmed standard output. Standard
 // error goes to the sink (terminal in debug mode).
 func (c *Cmd) Output() (string, error) {

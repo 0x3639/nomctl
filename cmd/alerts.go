@@ -253,15 +253,17 @@ func updateChecker() alerts.UpdateInfo {
 	return info
 }
 
-// backupChecker feeds the backup_stale rule from the timer state and archives.
-// The cadence comes from the installed timer unit, not this process's env.
+// backupChecker feeds backup_stale from daily cron or legacy timer settings.
 func backupChecker() alerts.BackupInfo {
 	info := alerts.BackupInfo{TimerEnabled: service.IsEnabled(backup.TimerName + ".timer"), CadenceDays: cfg.BackupCadenceDays}
+	if backup.LocalScheduleInstalled() {
+		info.TimerEnabled = true
+		info.CadenceDays = 1
+	} else if days, ok := backup.InstalledCadence(); ok {
+		info.CadenceDays = days
+	}
 	if !info.TimerEnabled {
 		return info
-	}
-	if days, ok := backup.InstalledCadence(); ok {
-		info.CadenceDays = days
 	}
 	if archives, err := backup.List(cfg); err == nil && len(archives) > 0 {
 		info.Newest = archives[0].ModTime

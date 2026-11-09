@@ -61,7 +61,7 @@ var menus = map[Action]menuDefinition{
 		{ActionRestore, "Restore local chain data", "Choose a local archive and verify it before restoring."},
 		{ActionWalletBackup, "Back up wallet & configuration", "Create an encrypted backup of wallet files and config.json."},
 		{ActionWalletRestore, "Restore wallet & configuration", "Restore an encrypted wallet backup; keep current files aside."},
-		{ActionBackupSchedule, "Configure scheduled backups", "Choose retention, cadence and time without running a backup now."},
+		{ActionBackupSchedule, "Schedule local backups", "Daily cron backups; keep 1–30 days (default 7), with a 75% disk limit."},
 		{ActionBootstrap, `Restore from "trusted" bootstrap snapshot`, "Choose a publisher you trust; the snapshot hash checks integrity."},
 		{ActionResync, "Resync from scratch", "Delete chain data and sync again; keep wallet and configuration."},
 	}},

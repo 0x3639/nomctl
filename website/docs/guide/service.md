@@ -37,4 +37,4 @@ Stops the node and verifies it has stopped, deletes `network`, `nom`, `consensus
 
 ## Locking
 
-`start`, `stop`, `restart`, `backup`, `restore`, `bootstrap`, `resync` and `deploy` hold an exclusive lock on `/run/nomctl.lock` for their duration, whether started from the menu, the command line or the backup timer. A second operation that would overlap fails immediately with a message naming the running one.
+`start`, `stop`, `restart`, `backup`, `restore`, `bootstrap`, `resync` and `deploy` hold an exclusive lock on `/run/nomctl.lock` for their duration, whether started from the menu, the command line or scheduled backups. A second operation that would overlap fails immediately with a message naming the running one.

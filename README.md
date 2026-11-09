@@ -15,7 +15,7 @@ sudo nomctl upgrade-node --signed  # choose a signed node release
 sudo nomctl            # Manage node, Backups & recovery, Install & upgrade, and more
 ```
 
-Then, optionally, `sudo nomctl alerts setup` for Telegram alerts (send `/start` to the bot first) and `sudo nomctl backup --schedule --cadence 7` for a backup timer.
+Then, optionally, `sudo nomctl alerts setup` for Telegram alerts (send `/start` to the bot first) and `sudo nomctl backup schedule --retention-days 7` for daily local backups.
 
 Requirements: Debian or Ubuntu with systemd and apt (Ubuntu 24.04 is the tested target), `amd64` or `arm64`, root, 4 cores and 4 GiB RAM.
 
