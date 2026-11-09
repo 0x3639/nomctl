@@ -30,10 +30,11 @@ const (
 	DefaultWorkDir    = "/opt/nomctl"
 	DefaultLogFile    = "/var/log/nomctl.log"
 
-	DefaultBackupDir         = "/backup"
-	DefaultMaxBackups        = 7
-	DefaultBackupCadenceDays = 0
-	DefaultMinFreeSpaceKB    = 15728640 // 15 GB
+	DefaultBackupDir           = "/backup"
+	DefaultMaxBackups          = 7
+	DefaultBackupRetentionDays = 7
+	DefaultBackupCadenceDays   = 0
+	DefaultMinFreeSpaceKB      = 15728640 // 15 GB
 
 	DefaultNodeExporterVersion   = "1.6.1"
 	DefaultPrometheusVersion     = "2.47.0"
@@ -103,10 +104,13 @@ type Config struct {
 	OrchestratorDir     string
 
 	// Backup settings. Env: NOMCTL_BACKUP_DIR, NOMCTL_MAX_BACKUPS,
-	// NOMCTL_BACKUP_CADENCE_DAYS, NOMCTL_BACKUP_HOUR, NOMCTL_MIN_FREE_SPACE_KB.
-	BackupDir         string
-	MaxBackups        int
-	BackupCadenceDays int
+	// NOMCTL_BACKUP_RETENTION_DAYS, NOMCTL_BACKUP_CADENCE_DAYS,
+	// NOMCTL_BACKUP_HOUR, NOMCTL_MIN_FREE_SPACE_KB.
+	BackupDir            string
+	MaxBackups           int
+	BackupRetentionDays  int
+	RestorePointKeepDays int // 0 = indefinite; otherwise eligible for UI pruning after 1-30 days
+	BackupCadenceDays    int
 	// BackupHour is the hour (0-23) for scheduled backups. -1 means "unset",
 	// in which case a deterministic hour between 02:00 and 04:59 is derived
 	// from the hostname.
@@ -141,6 +145,7 @@ func Default() Config {
 		GoVersion:             DefaultGoVersion,
 		BackupDir:             DefaultBackupDir,
 		MaxBackups:            DefaultMaxBackups,
+		BackupRetentionDays:   DefaultBackupRetentionDays,
 		BackupCadenceDays:     DefaultBackupCadenceDays,
 		BackupHour:            -1,
 		MinFreeSpaceKB:        DefaultMinFreeSpaceKB,
@@ -244,6 +249,8 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	str("ORCHESTRATOR_DIR", &c.OrchestratorDir)
 	str("BACKUP_DIR", &c.BackupDir)
 	integer("MAX_BACKUPS", &c.MaxBackups)
+	integer("BACKUP_RETENTION_DAYS", &c.BackupRetentionDays)
+	integer("RESTORE_POINT_KEEP_DAYS", &c.RestorePointKeepDays)
 	integer("BACKUP_CADENCE_DAYS", &c.BackupCadenceDays)
 	integer("BACKUP_HOUR", &c.BackupHour)
 	integer64("MIN_FREE_SPACE_KB", &c.MinFreeSpaceKB)
@@ -275,8 +282,14 @@ func (c Config) Redacted() string {
 // override an invalid environment value; commands call it once flags are
 // applied.
 func (c Config) Validate() error {
-	if c.MaxBackups < 1 {
-		return fmt.Errorf("max backups must be at least 1 (got %d)", c.MaxBackups)
+	if c.MaxBackups < 1 || c.MaxBackups > 30 {
+		return fmt.Errorf("max backups must be between 1 and 30 (got %d)", c.MaxBackups)
+	}
+	if c.BackupRetentionDays < 1 || c.BackupRetentionDays > 30 {
+		return fmt.Errorf("backup retention must be between 1 and 30 days (got %d)", c.BackupRetentionDays)
+	}
+	if c.RestorePointKeepDays < 0 || c.RestorePointKeepDays > 30 {
+		return fmt.Errorf("restore point retention must be 0 (indefinite) or 1-30 days (got %d)", c.RestorePointKeepDays)
 	}
 	if c.BackupCadenceDays < 0 {
 		return fmt.Errorf("backup cadence must not be negative (got %d)", c.BackupCadenceDays)
@@ -357,9 +370,11 @@ func Vars() []Var {
 		{"NOMCTL_ORCHESTRATOR_DIR", DefaultOrchestratorDir, "Orchestrator state directory; hard-reset deletes queues/ and events/ under it"},
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},
 		{"NOMCTL_MAX_BACKUPS", strconv.Itoa(DefaultMaxBackups), "Number of backups to retain"},
-		{"NOMCTL_BACKUP_CADENCE_DAYS", strconv.Itoa(DefaultBackupCadenceDays), "Days between scheduled backups (0 = every run)"},
+		{"NOMCTL_BACKUP_RETENTION_DAYS", strconv.Itoa(DefaultBackupRetentionDays), "Maximum age of local backups in days (1-30)"},
+		{"NOMCTL_RESTORE_POINT_KEEP_DAYS", "0", "Restore points: 0 = indefinite; 1-30 = days before eligible for manual UI pruning; never automatically deleted"},
+		{"NOMCTL_BACKUP_CADENCE_DAYS", strconv.Itoa(DefaultBackupCadenceDays), "Minimum age of newest backup before a manual run (0 = every run); cron jobs use 0"},
 		{"NOMCTL_BACKUP_HOUR", "(unset)", "Hour (0-23) for scheduled backups; unset = derived, between 02:00 and 04:59"},
-		{"NOMCTL_MIN_FREE_SPACE_KB", strconv.Itoa(DefaultMinFreeSpaceKB), "Minimum free space in the backup directory (15 GB)"},
+		{"NOMCTL_MIN_FREE_SPACE_KB", strconv.Itoa(DefaultMinFreeSpaceKB), "Minimum free space left after backup writes (15 GiB); the 75% disk limit also applies"},
 		{"NOMCTL_NODE_EXPORTER_VERSION", DefaultNodeExporterVersion, "Prometheus node_exporter version"},
 		{"NOMCTL_PROMETHEUS_VERSION", DefaultPrometheusVersion, "Prometheus version"},
 		{"NOMCTL_INFINITY_PLUGIN_VERSION", DefaultInfinityPluginVersion, "Grafana Infinity datasource plugin version"},

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/0x3639/nomctl/internal/backup"
+	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/restore"
 	"github.com/0x3639/nomctl/internal/resync"
 	"github.com/0x3639/nomctl/internal/tui"
@@ -14,11 +15,12 @@ import (
 )
 
 var (
-	flagBackupMax      int
-	flagBackupCadence  int
-	flagBackupHour     int
-	flagBackupSchedule bool
-	flagRestoreFile    string
+	flagBackupMax       int
+	flagBackupRetention int
+	flagBackupCadence   int
+	flagBackupHour      int
+	flagBackupSchedule  bool
+	flagRestoreFile     string
 )
 
 var backupCmd = &cobra.Command{
@@ -26,12 +28,14 @@ var backupCmd = &cobra.Command{
 	Short: "Snapshot the node data directory into the backup directory",
 	Long: `Stops the node, copies the chain data, restarts the node, then archives the
 copy as <service>_backup_<timestamp>.tar.gz with a sha256 sidecar and prunes
-archives beyond --max-backups.
+archives older than --retention-days (default 7, maximum 30) or beyond
+--max-backups. Old chain backups are pruned when necessary to keep total
+filesystem usage at or below 75%, including staging and archive space.
 
-With --cadence N, the backup is skipped when the newest archive is younger
-than N days (useful from the scheduled timer). With --schedule, a systemd
-timer is installed that runs "nomctl backup" daily at --hour (or a
-deterministic time between 02:00 and 04:59).`,
+With --cadence N, a manual backup is skipped when the newest archive is
+younger than N days. With --schedule, a daily cron job is installed after
+this backup. Use "nomctl backup schedule" to install the job without
+running a backup now. Daily cron runs do not use the manual cadence.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
@@ -40,7 +44,7 @@ deterministic time between 02:00 and 04:59).`,
 				return err
 			}
 			if flagBackupSchedule {
-				return backup.Schedule(cfg)
+				return backup.LocalSchedule(cfg)
 			}
 			return nil
 		})
@@ -49,11 +53,11 @@ deterministic time between 02:00 and 04:59).`,
 
 var backupScheduleCmd = &cobra.Command{
 	Use:         "schedule",
-	Short:       "Configure scheduled backups without running a backup now",
+	Short:       "Schedule daily local backups with cron (no backup runs now)",
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
-		return withLock("schedule backups", func() error { return backup.Schedule(cfg) })
+		return withLock("schedule local backups", func() error { return backup.LocalSchedule(cfg) })
 	},
 }
 
@@ -103,6 +107,9 @@ This command does not ask for confirmation; the interactive menu does.`,
 
 // applyBackupFlags copies backup flags over the environment and validates.
 func applyBackupFlags(cmd *cobra.Command) error {
+	if cmd.Flags().Changed("retention-days") {
+		cfg.BackupRetentionDays = flagBackupRetention
+	}
 	if cmd.Flags().Changed("max-backups") {
 		cfg.MaxBackups = flagBackupMax
 	}
@@ -124,12 +131,13 @@ func applyBackupFlags(cmd *cobra.Command) error {
 func init() {
 	for _, command := range []*cobra.Command{backupCmd, backupScheduleCmd} {
 		applyFlags[command] = applyBackupFlags
-		command.Flags().IntVar(&flagBackupMax, "max-backups", 0, "backups to keep, 1-30 (NOMCTL_MAX_BACKUPS)")
-		command.Flags().IntVar(&flagBackupCadence, "cadence", 0, "days between scheduled backups, 0-365 (NOMCTL_BACKUP_CADENCE_DAYS)")
+		command.Flags().IntVar(&flagBackupRetention, "retention-days", config.DefaultBackupRetentionDays, "days to keep local backups, 1-30 (NOMCTL_BACKUP_RETENTION_DAYS)")
 		command.Flags().IntVar(&flagBackupHour, "hour", -1, "hour of day 0-23 for the scheduled backup (NOMCTL_BACKUP_HOUR)")
 	}
+	backupCmd.Flags().IntVar(&flagBackupMax, "max-backups", 0, "backups to keep, 1-30 (NOMCTL_MAX_BACKUPS)")
+	backupCmd.Flags().IntVar(&flagBackupCadence, "cadence", 0, "minimum age of newest backup before running, 0-365 days (NOMCTL_BACKUP_CADENCE_DAYS)")
 	backupCmd.AddCommand(backupScheduleCmd)
-	backupCmd.Flags().BoolVar(&flagBackupSchedule, "schedule", false, "install a systemd timer that runs the backup daily")
+	backupCmd.Flags().BoolVar(&flagBackupSchedule, "schedule", false, "install a daily local-backup cron job after this backup")
 	restoreCmd.Flags().StringVar(&flagRestoreFile, "file", "", "archive to restore (path or name in the backup directory)")
 	rootCmd.AddCommand(backupCmd, restoreCmd, resyncCmd)
 }

@@ -166,7 +166,7 @@ func setup(cmd *cobra.Command) error {
 var operationLockPath = lock.DefaultPath
 
 // withLock runs fn while holding the operation lock, so service control and
-// node-data operations never overlap each other or the scheduled backup timer.
+// node-data operations never overlap each other or the scheduled backup job.
 func withLock(operation string, fn func() error) error {
 	l, err := lock.Acquire(operationLockPath, operation)
 	if err != nil {

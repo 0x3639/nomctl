@@ -23,6 +23,10 @@ const (
 	ActionWalletBackup   Action = "backup-wallet"
 	ActionWalletRestore  Action = "restore-wallet"
 	ActionBackupSchedule Action = "backup-schedule"
+	ActionCreatePoint    Action = "create-restore-point"
+	ActionRestorePoint   Action = "restore-point"
+	ActionManagePoints   Action = "manage-restore-points"
+	ActionManageBackups  Action = "manage-backups"
 	ActionPillarStatus   Action = "pillar-status"
 	ActionPillarSetup    Action = "pillar-setup"
 	ActionOrchStatus     Action = "orchestrator-status"
@@ -58,10 +62,14 @@ var menus = map[Action]menuDefinition{
 	}},
 	menuBackups: {"Backups & recovery", []menuEntry{
 		{ActionBackup, "Backup chain data locally", "Copy chain data and create an archive in the local backup directory."},
-		{ActionRestore, "Restore local chain data", "Choose a local archive and verify it before restoring."},
+		{ActionRestore, "Restore from backup", "Choose a local chain backup and verify it before restoring."},
+		{ActionCreatePoint, "Create restore point", "Save chain data and the installed binary; protected from automatic deletion."},
+		{ActionRestorePoint, "Restore from restore point", "Restore the matching chain data and node binary together."},
+		{ActionManagePoints, "Manage restore points", "Inspect sizes, delete selected points or prune eligible points after confirmation."},
+		{ActionManageBackups, "Manage backups", "Delete selected backups or prune old backups after reviewing the files and space to free."},
 		{ActionWalletBackup, "Back up wallet & configuration", "Create an encrypted backup of wallet files and config.json."},
 		{ActionWalletRestore, "Restore wallet & configuration", "Restore an encrypted wallet backup; keep current files aside."},
-		{ActionBackupSchedule, "Configure scheduled backups", "Choose retention, cadence and time without running a backup now."},
+		{ActionBackupSchedule, "Schedule local backups", "Daily cron backups; keep 1–30 days (default 7), with a 75% disk limit."},
 		{ActionBootstrap, `Restore from "trusted" bootstrap snapshot`, "Choose a publisher you trust; the snapshot hash checks integrity."},
 		{ActionResync, "Resync from scratch", "Delete chain data and sync again; keep wallet and configuration."},
 	}},

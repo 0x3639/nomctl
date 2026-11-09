@@ -1,10 +1,30 @@
 package cmd
 
 import (
+	"github.com/spf13/cobra"
 	"testing"
 
 	"github.com/0x3639/nomctl/internal/config"
 )
+
+func TestBackupRetentionFlagOverridesEnvironment(t *testing.T) {
+	previous, previousFlag := cfg, flagBackupRetention
+	t.Cleanup(func() { cfg, flagBackupRetention = previous, previousFlag })
+	command := &cobra.Command{}
+	command.Flags().IntVar(&flagBackupRetention, "retention-days", 7, "retention")
+	for _, value := range []string{"1", "7", "30", "0", "31", "-1"} {
+		cfg = config.Default()
+		cfg.BackupRetentionDays = 99
+		if err := command.Flags().Set("retention-days", value); err != nil {
+			t.Fatal(err)
+		}
+		err := applyBackupFlags(command)
+		valid := value == "1" || value == "7" || value == "30"
+		if (err == nil) != valid {
+			t.Fatalf("retention %s: %v", value, err)
+		}
+	}
+}
 
 func TestApplyBackupFlagsPrecedence(t *testing.T) {
 	cfg = config.Default()

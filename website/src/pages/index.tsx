@@ -21,7 +21,7 @@ const features: {title: string; body: string; to: string}[] = [
   },
   {
     title: 'Backups on a timer',
-    body: 'Chain-data snapshots with checksums, retention and a systemd timer. Restore from any of them.',
+    body: 'Chain-data snapshots with checksums, daily scheduling, retention and disk-space protection. Restore from any of them.',
     to: '/guide/backups',
   },
   {

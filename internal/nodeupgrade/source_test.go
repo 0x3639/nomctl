@@ -2,6 +2,7 @@ package nodeupgrade
 
 import (
 	"context"
+	"github.com/0x3639/nomctl/internal/backup"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ func TestSourceUpgradeBuildsBeforeDowntime(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			cfg, _, events := fixture(t)
+			cfg.RestorePointKeepDays = 7
 			cfg.WorkDir = filepath.Join(filepath.Dir(cfg.ZnnDir), "work")
 			put(t, filepath.Join(cfg.SourceDir(), "local-changes"), "keep checkout")
 			cfg.RepoURL = "https://example.invalid/default.git"
@@ -66,6 +68,21 @@ esac
 			}
 			if string(calls) != want {
 				t.Fatalf("calls=%q error=%v", calls, err)
+			}
+			points, err := backup.ListRestorePoints(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failure == "" {
+				if len(points) != 1 || !points[0].Complete || points[0].KeepDays != 7 {
+					t.Fatalf("source upgrade restore point missing: %+v", points)
+				}
+				binary, err := os.ReadFile(points[0].BinaryPath())
+				if err != nil || string(binary) != "old" {
+					t.Fatal("source upgrade lost original binary", err)
+				}
+			} else if len(points) != 0 {
+				t.Fatal("failed build created a restore point")
 			}
 			installed, _ := os.ReadFile(cfg.BinaryPath())
 			expected := "new"

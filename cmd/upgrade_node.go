@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/nodeupgrade"
 	"github.com/0x3639/nomctl/internal/tui"
 	"github.com/0x3639/nomctl/internal/ui"
@@ -12,6 +13,7 @@ import (
 )
 
 var (
+	flagNodeUpgradeKeep    string
 	flagNodeUpgradeVersion string
 	flagNodeUpgradeYes     bool
 	flagNodeUpgradeSigned  bool
@@ -23,15 +25,20 @@ var upgradeNodeCmd = &cobra.Command{
 	Use:   "upgrade-node",
 	Short: "Upgrade a node from source, or use --signed for a release",
 	Long: `By default, build the configured repository and branch while the node runs,
-then stop, back up, install, start, and finish the backup archive. --repo and
+then create a protected restore point, install, start, and finish its archive. --repo and
 --branch override NOMCTL_REPO_URL and NOMCTL_BRANCH_NAME. Requires an existing
 node installation and preserves its service unit.
 
 Use --signed to select a published release from zenon-network/go-zenon-releases
 (newest first). Its GPG signature and SHA-256 are verified before stopping the
-node. The same backup, installation, restart and archive sequence follows.
+node. The same restore-point, installation, restart and archive sequence follows.
 --version requires --signed and selects an exact published release tag.
 --repo and --branch cannot be combined with --signed.
+
+Both paths check space before downtime and preserve chain data plus the old node
+binary in a restore point. --restore-point-keep accepts 1-30 days or indefinite
+(default). Days only determine eligibility for manual UI pruning; restore points
+are never automatically deleted.
 
 Signed releases require GnuPG (gpg) and NOMCTL_GITHUB_TOKEN with Contents read
 access while the repository is private. --yes skips prompts, using the configured
@@ -42,6 +49,11 @@ source repository/branch by default or the newest published release with --signe
 		interactive := ui.Interactive()
 		if !interactive && !flagNodeUpgradeYes {
 			return fmt.Errorf("non-interactive node upgrades require --yes")
+		}
+		if interactive && !flagNodeUpgradeYes && !cmd.Flags().Changed("restore-point-keep") {
+			if err := tui.ChooseRestorePointKeep(&cfg); err != nil {
+				return err
+			}
 		}
 		if !flagNodeUpgradeSigned {
 			if !flagNodeUpgradeYes {
@@ -85,6 +97,7 @@ source repository/branch by default or the newest published release with --signe
 }
 
 func init() {
+	upgradeNodeCmd.Flags().StringVar(&flagNodeUpgradeKeep, "restore-point-keep", "indefinite", "restore point retention: 1-30 days or indefinite; deletion is always manual in the UI")
 	upgradeNodeCmd.Flags().StringVar(&flagNodeUpgradeVersion, "version", "", "install this published release tag (requires --signed)")
 	upgradeNodeCmd.Flags().BoolVarP(&flagNodeUpgradeYes, "yes", "y", false, "skip prompts; use configured source, or newest release with --signed")
 	upgradeNodeCmd.Flags().BoolVar(&flagNodeUpgradeSigned, "signed", false, "upgrade from a signed release instead of source")
@@ -95,6 +108,13 @@ func init() {
 }
 
 func applyNodeUpgradeFlags(cmd *cobra.Command) error {
+	if cmd.Flags().Changed("restore-point-keep") {
+		days, err := backup.ParseRestorePointKeep(flagNodeUpgradeKeep)
+		if err != nil {
+			return err
+		}
+		cfg.RestorePointKeepDays = days
+	}
 	if !flagNodeUpgradeSigned && cmd.Flags().Changed("version") {
 		return fmt.Errorf("--version requires --signed")
 	}

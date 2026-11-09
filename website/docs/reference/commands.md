@@ -18,13 +18,17 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | Command | Notes |
 |---|---|
 | `nomctl deploy [--repo URL] [--branch NAME]` | [Deploy](/guide/deploy) |
-| `nomctl upgrade-node [--repo URL] [--branch NAME] [--yes]` | [Source upgrades](/guide/upgrading#source-upgrades) (default); builds before downtime, then backs up and installs |
-| `nomctl upgrade-node --signed [--version TAG] [--yes]` | [Signed node releases](/guide/upgrading#signed-node-releases); `--version` requires `--signed`, which cannot be combined with `--repo` or `--branch` |
+| `nomctl upgrade-node [--repo URL] [--branch NAME] [--restore-point-keep DAYS_OR_indefinite] [--yes]` | [Source upgrades](/guide/upgrading#source-upgrades) (default); builds before downtime, then creates a protected restore point and installs |
+| `nomctl upgrade-node --signed [--version TAG] [--restore-point-keep DAYS_OR_indefinite] [--yes]` | [Signed node releases](/guide/upgrading#signed-node-releases); `--version` requires `--signed`, which cannot be combined with `--repo` or `--branch` |
 | `nomctl start` / `stop` / `restart` | [Service control](/guide/service) |
 | `nomctl logs [-f] [-n LINES]` | last 20 lines, or follow |
 | `nomctl resync` | wipe chain data, keep wallet and config |
-| `nomctl backup [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | [Backups](/guide/backups) |
-| `nomctl backup schedule [--max-backups N] [--cadence DAYS] [--hour HOUR]` | Configure the backup timer without taking a backup immediately |
+| `nomctl backup [--retention-days DAYS] [--max-backups N] [--cadence DAYS] [--hour HOUR] [--schedule]` | [Backups](/guide/backups) |
+| `nomctl backup point [--keep DAYS_OR_indefinite] [--label TEXT]` | Create a protected chain-data/binary restore point |
+| `nomctl restore point ID` | Restore the matching data and binary from a restore point |
+| `nomctl restore-points` | Manage protected points in the UI, or list them non-interactively |
+| `nomctl backup manage` | Review and prune ordinary backups in the UI |
+| `nomctl backup schedule [--retention-days DAYS] [--hour HOUR]` | Configure daily local backups with cron without taking a backup immediately |
 | `nomctl restore [--file FILE]` | picker when `--file` is omitted |
 | `nomctl backup wallet [--output DIR] [--no-encrypt]` | [wallet and config backup](/guide/backups#wallet-and-config-backup), age-encrypted; passphrase prompted or `NOMCTL_WALLET_PASSPHRASE` |
 | `nomctl restore wallet FILE [--restart]` | verifies the archived key against its config before replacing anything |

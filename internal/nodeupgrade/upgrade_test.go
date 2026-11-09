@@ -36,6 +36,12 @@ func fixture(t *testing.T) (config.Config, string, string) {
 	cfg.InstallDir = filepath.Join(root, "bin")
 	cfg.MinFreeSpaceKB = 0
 	cfg.BackupCadenceDays = 365
+	// These integration tests exercise the real backup filesystem. Skip when
+	// its capacity cannot support even this tiny fixture; low-space cases set
+	// their constrained reserve separately after setup.
+	if err := backup.CheckRestoreSpace(cfg, root, 1<<20); err != nil {
+		t.Skipf("integration test needs backup capacity: %v", err)
+	}
 	put(t, cfg.BinaryPath(), "old")
 	put(t, filepath.Join(cfg.ZnnDir, "nom", "state"), "before-upgrade")
 	put(t, filepath.Join(cfg.ZnnDir, "wallet", "secret"), "wallet-secret")
@@ -87,7 +93,7 @@ exec /usr/bin/tar "$@"
 	return cfg, binary, events
 }
 
-func TestUpgradeSequenceAndPreUpgradeBackup(t *testing.T) {
+func TestUpgradeSequenceAndProtectedRestorePoint(t *testing.T) {
 	cfg, binary, events := fixture(t)
 	// A recent backup must not suppress the mandatory upgrade backup.
 	oldArchive := filepath.Join(cfg.BackupDir, "go-zenon_backup_old.tar.gz")
@@ -110,18 +116,27 @@ func TestUpgradeSequenceAndPreUpgradeBackup(t *testing.T) {
 		t.Fatal("installed binary not executable", err)
 	}
 	archives, err := backup.List(cfg)
-	if err != nil || len(archives) != 1 || archives[0].Path == oldArchive {
-		t.Fatalf("backup/retention: %+v %v", archives, err)
+	if err != nil || len(archives) != 1 || archives[0].Path != oldArchive {
+		t.Fatalf("ordinary backup changed: %+v %v", archives, err)
 	}
-	sum, err := backup.SHA256File(archives[0].Path)
+	points, err := backup.ListRestorePoints(cfg)
+	if err != nil || len(points) != 1 || !points[0].Complete {
+		t.Fatalf("restore point: %+v %v", points, err)
+	}
+	archive := points[0].ArchivePath()
+	savedBinary, err := os.ReadFile(points[0].BinaryPath())
+	if err != nil || string(savedBinary) != "old" {
+		t.Fatal("matching binary not preserved", err)
+	}
+	sum, err := backup.SHA256File(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, _ := os.ReadFile(backup.HashPath(archives[0].Path))
+	stored, _ := os.ReadFile(backup.HashPath(archive))
 	if strings.TrimSpace(string(stored)) != sum {
 		t.Fatal("bad sidecar")
 	}
-	f, err := os.Open(archives[0].Path)
+	f, err := os.Open(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +170,7 @@ func TestUpgradeSequenceAndPreUpgradeBackup(t *testing.T) {
 	if !found {
 		t.Fatal("missing pre-upgrade state")
 	}
-	snapshots, _ := filepath.Glob(filepath.Join(cfg.BackupDir, "snapshot-*"))
+	snapshots, _ := filepath.Glob(filepath.Join(backup.RestorePointsDir(cfg), "*", "data"))
 	if len(snapshots) != 0 {
 		t.Fatal("finished snapshot not cleaned")
 	}
@@ -248,7 +263,7 @@ func TestUpgradeSignalHelper(t *testing.T) {
 	if string(installed) != want {
 		t.Fatalf("installed %q, want %q", installed, want)
 	}
-	snapshots, _ := filepath.Glob(filepath.Join(cfg.BackupDir, "snapshot-*"))
+	snapshots, _ := filepath.Glob(filepath.Join(backup.RestorePointsDir(cfg), "*", "data"))
 	if len(snapshots) != 0 {
 		t.Fatal("incomplete snapshot retained after signal recovery")
 	}
@@ -290,11 +305,20 @@ func TestUpgradeFailures(t *testing.T) {
 			if string(installed) != tc.wantBinary {
 				t.Fatalf("binary: %s", installed)
 			}
-			archives, err := backup.List(cfg)
-			if err != nil || (len(archives) > 0) != tc.archive {
-				t.Fatalf("archives: %+v %v", archives, err)
+			points, err := backup.ListRestorePoints(cfg)
+			if err != nil {
+				t.Fatal(err)
 			}
-			snapshots, _ := filepath.Glob(filepath.Join(cfg.BackupDir, "snapshot-*"))
+			complete := 0
+			for _, p := range points {
+				if p.Complete {
+					complete++
+				}
+			}
+			if (complete > 0) != tc.archive {
+				t.Fatalf("restore points: %+v", points)
+			}
+			snapshots, _ := filepath.Glob(filepath.Join(backup.RestorePointsDir(cfg), "*", "data"))
 			if (len(snapshots) > 0) != tc.snapshot {
 				t.Fatalf("snapshots: %v", snapshots)
 			}

@@ -97,6 +97,14 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return WalletBackup(*cfg)
 	case ActionWalletRestore:
 		return WalletRestore(*cfg)
+	case ActionCreatePoint:
+		return CreateRestorePoint(*cfg)
+	case ActionRestorePoint:
+		return RestorePoint(*cfg)
+	case ActionManagePoints:
+		return ManageRestorePoints(*cfg)
+	case ActionManageBackups:
+		return ManageBackups(*cfg)
 	case ActionBackupSchedule:
 		return BackupSchedule(cfg)
 	case ActionPillarSetup:
@@ -480,7 +488,7 @@ func SupportBundle(cfg config.Config) error {
 var operationLockPath = lock.DefaultPath
 
 // withLock serialises service control and node-data operations with the CLI
-// commands and the scheduled backup timer.
+// commands and the scheduled backup job.
 func withLock(operation string, fn func() error) error {
 	l, err := lock.Acquire(operationLockPath, operation)
 	if err != nil {
@@ -660,54 +668,48 @@ func BackupSchedule(current *config.Config) error {
 	next := *current
 	cfg := &next
 
-	maxIn, err := Input("Max backups to keep (1-30) ➜", strconv.Itoa(cfg.MaxBackups))
-	if err != nil {
-		return err
-	}
-	if n, valid := ParseMaxBackups(maxIn); valid {
-		cfg.MaxBackups = n
-	}
-
-	cadence, err := Select("SELECT BACKUP CADENCE:", []huh.Option[string]{
-		huh.NewOption("Daily → Backup every 24h", "daily"),
-		huh.NewOption("Weekly → Backup every 7 days", "weekly"),
-		huh.NewOption("Custom → Backup every N days", "custom"),
-	})
-	if err != nil {
-		slog.Warn("No cadence selected, cancelling scheduled backup setup.")
-		return nil
-	}
-	switch cadence {
-	case "daily":
-		cfg.BackupCadenceDays = 1
-	case "weekly":
-		cfg.BackupCadenceDays = 7
-	case "custom":
-		daysIn, err := Input("Number of days between backups (1-365) ➜", "3")
+	fmt.Fprintln(os.Stderr, "Daily local backups keep 7 days by default (maximum 30). Old chain backups may be pruned sooner to keep disk usage at or below 75%.")
+	for {
+		days, err := Input("How many days should local backups be kept? (1-30) ➜", strconv.Itoa(cfg.BackupRetentionDays))
 		if err != nil {
 			return err
 		}
-		if n, valid := ParseCadenceDays(daysIn); valid {
-			cfg.BackupCadenceDays = n
-		} else {
-			slog.Error("Invalid days input; defaulting to 1 day cadence.")
-			cfg.BackupCadenceDays = 1
+		if strings.TrimSpace(days) == "" {
+			break
 		}
+		n, valid := ParseMaxBackups(days)
+		if !valid {
+			slog.Warn("Enter a number from 1 to 30.")
+			continue
+		}
+		cfg.BackupRetentionDays = n
+		break
 	}
-
-	hourIn, err := Input("Hour of day (0-23) to run backup ➜", "2")
-	if err != nil {
-		return err
+	defaultHour := cfg.BackupHour
+	if defaultHour < 0 {
+		defaultHour = 2
 	}
-	if h, valid := ParseHour(hourIn); valid {
+	for {
+		hour, err := Input("Daily backup hour (0-23, server time) ➜", strconv.Itoa(defaultHour))
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(hour) == "" {
+			hour = strconv.Itoa(defaultHour)
+		}
+		h, valid := ParseHour(hour)
+		if !valid {
+			slog.Warn("Enter an hour from 0 to 23.")
+			continue
+		}
 		cfg.BackupHour = h
-	} else {
-		cfg.BackupHour = -1
-		slog.Error("Invalid hour input. Backup will run at a deterministic time between 2–4 AM.")
+		break
 	}
-	if err := withLock("schedule backups", func() error { return backup.Schedule(*cfg) }); err != nil {
+	if err := withLock("schedule backups", func() error { return backup.LocalSchedule(*cfg) }); err != nil {
 		return err
 	}
+	next.MaxBackups = 30
+	next.BackupCadenceDays = 0
 	*current = next
 	return nil
 }

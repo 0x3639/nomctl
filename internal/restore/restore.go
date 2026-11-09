@@ -131,6 +131,10 @@ var (
 // staged ones into place and start. A failure after the stop puts the
 // previous data back.
 func Run(cfg config.Config, archive string) error {
+	return run(cfg, archive, nil)
+}
+
+func run(cfg config.Config, archive string, binary *pointBinary) error {
 	restoreDir := backup.RestoreDir(cfg)
 	if err := os.MkdirAll(restoreDir, 0o755); err != nil {
 		return err
@@ -145,6 +149,11 @@ func Run(cfg config.Config, archive string) error {
 	if err := os.MkdirAll(cfg.ZnnDir, 0o755); err != nil {
 		return err
 	}
+	if binary != nil {
+		if err := backup.CheckRestoreSpace(cfg, cfg.ZnnDir, manifest.Uncompressed+int64(manifest.Files)*64<<10); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
 	staging, err := os.MkdirTemp(cfg.ZnnDir, ".restore-")
 	if err != nil {
@@ -158,7 +167,11 @@ func Run(cfg config.Config, archive string) error {
 	if err := stopService(cfg.ServiceName); err != nil {
 		return err
 	}
-	moved, err := MoveAside(cfg, now, manifest.Folders)
+	folders := manifest.Folders
+	if binary != nil {
+		folders = backup.Folders
+	}
+	moved, err := MoveAside(cfg, now, folders)
 	if err == nil {
 		for _, folder := range manifest.Folders {
 			if err = installDir(filepath.Join(staging, folder), filepath.Join(cfg.ZnnDir, folder)); err != nil {
@@ -166,6 +179,9 @@ func Run(cfg config.Config, archive string) error {
 				break
 			}
 		}
+	}
+	if err == nil && binary != nil {
+		err = binary.install()
 	}
 	if err != nil {
 		if backErr := MoveBack(cfg, moved); backErr != nil {
@@ -177,5 +193,8 @@ func Run(cfg config.Config, archive string) error {
 		return fmt.Errorf("%w; previous data put back and the node restarted", err)
 	}
 	logx.Success(cfg.ServiceName + " data restored successfully.")
+	if binary != nil {
+		slog.Info("Previous node binary retained at " + binary.previous)
+	}
 	return startService(cfg.ServiceName)
 }

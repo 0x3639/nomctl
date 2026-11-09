@@ -15,7 +15,7 @@ nomctl reproduces the behaviour of [hypercore-one/deployment](https://github.com
 - `arm64` is supported in addition to `amd64`; Go, node_exporter and Prometheus downloads are chosen per architecture.
 - Environment variables use the `NOMCTL_` prefix instead of `ZNNSH_`.
 - The Go toolchain and source checkout live under `NOMCTL_WORK_DIR` (`/opt/nomctl`) instead of the script directory; the log file is `/var/log/nomctl.log`.
-- Scheduled backups use a systemd timer instead of cron, can be installed non-interactively with `backup --schedule`, and the unit carries the settings in effect when created.
+- Daily local backups use cron, with 1–30 days of retention (default 7) and a 75% disk-usage ceiling including temporary storage. Use `backup schedule` to configure them without an immediate backup; setup preserves the selected settings and disables any older backup timer.
 - `logs` prints the last 20 lines by default; `-f` follows.
 - Downloads, checksums and Grafana API calls are done in Go, so `curl`, `wget`, `jq` and `gpg` are not installed. The Grafana apt key is stored as `/etc/apt/keyrings/grafana.asc`.
 - `deploy` installs `git`, `make` and `gcc` and refreshes the apt index before installing anything.

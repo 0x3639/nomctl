@@ -27,10 +27,12 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_ORCHESTRATOR_SERVICE` | `orchestrator` | systemd unit for [`nomctl orchestrator`](/guide/orchestrator) |
 | `NOMCTL_ORCHESTRATOR_DIR` | `/root/.orchestrator` | Orchestrator state directory; `hard-reset` deletes `queues/` and `events/` under it |
 | `NOMCTL_BACKUP_DIR` | `/backup` | Directory that stores backup archives |
-| `NOMCTL_MAX_BACKUPS` | `7` | Number of backups to retain |
-| `NOMCTL_BACKUP_CADENCE_DAYS` | `0` | Days between scheduled backups (0 = every run) |
+| `NOMCTL_MAX_BACKUPS` | `7` | Maximum number of ordinary chain archives retained by a manual backup run (1–30), including archives created by cron; cron jobs use 30 |
+| `NOMCTL_BACKUP_RETENTION_DAYS` | `7` | Maximum age of ordinary chain backups (1–30 days); applies to both manual and scheduled archives |
+| `NOMCTL_RESTORE_POINT_KEEP_DAYS` | `0` | Restore points: `0` = indefinite; 1–30 = days before eligible for manual UI pruning; never automatic deletion |
+| `NOMCTL_BACKUP_CADENCE_DAYS` | `0` | Minimum age of newest backup before a manual run (0 = every run); daily cron jobs always run |
 | `NOMCTL_BACKUP_HOUR` | unset | Hour (0-23) for scheduled backups; unset = derived, between 02:00 and 04:59 |
-| `NOMCTL_MIN_FREE_SPACE_KB` | `15728640` | Minimum free space in the backup directory (15 GB) |
+| `NOMCTL_MIN_FREE_SPACE_KB` | `15728640` | Minimum free space left after backup writes (15 GiB); the 75% disk limit also applies |
 | `NOMCTL_NODE_EXPORTER_VERSION` | `1.6.1` | Prometheus node_exporter version |
 | `NOMCTL_PROMETHEUS_VERSION` | `2.47.0` | Prometheus version |
 | `NOMCTL_INFINITY_PLUGIN_VERSION` | `2.10.0` | Grafana Infinity datasource plugin version |
@@ -44,7 +46,7 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | Path | Written by |
 |---|---|
 | `/etc/systemd/system/go-zenon.service` | `deploy` |
-| `/etc/systemd/system/nomctl-backup.service`, `.timer` | `backup --schedule` |
+| `/etc/cron.d/nomctl-backup` | `backup schedule` (or `backup --schedule` after a backup) |
 | `/etc/systemd/system/nomctl-alerts.service` | `alerts setup` |
 | `/etc/nomctl/alerts.json` (0600) | `alerts setup`, `alerts set`, `enable`, `disable` |
 | `/run/nomctl/alerts-state.json` | the alerts daemon, read by `alerts status` |
