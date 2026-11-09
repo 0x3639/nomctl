@@ -665,6 +665,7 @@ func BackupSchedule(current *config.Config) error {
 	cfg := &next
 
 	fmt.Fprintln(os.Stderr, "Daily local backups keep 7 days by default (maximum 30). Old chain backups may be pruned sooner to keep disk usage at or below 75%.")
+	fmt.Fprintln(os.Stderr, "Setup installs cron if missing on Debian/Ubuntu, then enables and checks the scheduler.")
 	for {
 		days, err := Input("How many days should local backups be kept? (1-30) ➜", strconv.Itoa(cfg.BackupRetentionDays))
 		if err != nil {

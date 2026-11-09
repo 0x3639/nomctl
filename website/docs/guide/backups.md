@@ -47,7 +47,9 @@ The equivalent command is:
 sudo nomctl backup schedule --retention-days 7 --hour 2
 ```
 
-This writes one root cron job to `/etc/cron.d/nomctl-backup` and enables the installed `cron` or `crond` service. Install your distribution's `cron` or `cronie` package first if neither is available. The job runs daily, using a minute derived from the hostname and service name to spread load between nodes. Without `--hour`, the hour is also derived, between 02:00 and 04:59.
+This writes one root cron job to `/etc/cron.d/nomctl-backup`. Setup reuses an installed `cron` or `crond` service. If neither is installed on Debian/Ubuntu, it automatically refreshes the apt package lists and installs `cron`, then enables it at boot and checks that it is running before saving the schedule. Package-manager or service errors leave the previous schedule in place and explain what to fix before retrying. On systems without apt, install your distribution's `cron` or `cronie` package manually first. Scheduling does not stop or restart znnd.
+
+The job runs daily, using a minute derived from the hostname and service name to spread load between nodes. Without `--hour`, the hour is also derived, between 02:00 and 04:59.
 
 The cron job preserves the backup directory, node data directory, service name, log path, retention and free-space minimum selected during setup. It keeps backups for the requested number of days, with an additional maximum of 30 archives; disk pressure can shorten retention. Rerunning setup replaces the existing job. An existing `nomctl-backup.timer` is disabled automatically, so both schedulers do not run together. Older timers keep working until you run the new setup.
 
