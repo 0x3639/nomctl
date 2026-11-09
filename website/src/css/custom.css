@@ -205,18 +205,26 @@ h1 {
 }
 
 .install-line {
-  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
   margin: 0 auto 2rem;
-  padding: 0.75rem 1rem;
-  background: var(--ifm-pre-background);
   border: 1px solid var(--ifm-color-emphasis-300);
   border-radius: var(--radius);
-  font-family: var(--font-mono);
-  font-size: 0.875rem;
   text-align: left;
-  max-width: 100%;
-  overflow-x: auto;
-  white-space: nowrap;
+}
+
+.install-line pre {
+  font-size: 0.875rem;
+}
+
+.install-line pre code {
+  /* Leave room for the copy and overflow word-wrap controls. */
+  padding-right: 5.5rem;
+}
+
+.install-line button {
+  /* Keep the install action discoverable without hovering, including on touch. */
+  opacity: 1 !important;
 }
 
 .features {
