@@ -36,6 +36,12 @@ func fixture(t *testing.T) (config.Config, string, string) {
 	cfg.InstallDir = filepath.Join(root, "bin")
 	cfg.MinFreeSpaceKB = 0
 	cfg.BackupCadenceDays = 365
+	// These integration tests exercise the real backup filesystem. Skip when
+	// its capacity cannot support even this tiny fixture; low-space cases set
+	// their constrained reserve separately after setup.
+	if err := backup.CheckRestoreSpace(cfg, root, 1<<20); err != nil {
+		t.Skipf("integration test needs backup capacity: %v", err)
+	}
 	put(t, cfg.BinaryPath(), "old")
 	put(t, filepath.Join(cfg.ZnnDir, "nom", "state"), "before-upgrade")
 	put(t, filepath.Join(cfg.ZnnDir, "wallet", "secret"), "wallet-secret")

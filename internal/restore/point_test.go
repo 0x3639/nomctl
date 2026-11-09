@@ -18,6 +18,11 @@ func TestRestorePointRestoresMatchingPairOrRollsBack(t *testing.T) {
 			cfg.BackupDir = t.TempDir()
 			cfg.InstallDir = t.TempDir()
 			cfg.MinFreeSpaceKB = 0
+			// Keep the real-filesystem integration path, but do not fail its
+			// setup because unrelated host files exhaust the backup allowance.
+			if err := backup.CheckRestoreSpace(cfg, cfg.BackupDir, 1<<20); err != nil {
+				t.Skipf("integration test needs backup capacity: %v", err)
+			}
 			put := func(path, text string) {
 				t.Helper()
 				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

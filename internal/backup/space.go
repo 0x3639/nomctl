@@ -166,7 +166,7 @@ func copyContents(ctx context.Context, cfg config.Config, src, dst string) error
 		if err != nil {
 			return err
 		}
-		defer in.Close()
+		defer in.Close() // Runs when this per-file callback returns, before the next entry.
 		out, err := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 		if err != nil {
 			return err

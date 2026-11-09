@@ -18,7 +18,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | Command | Notes |
 |---|---|
 | `nomctl deploy [--repo URL] [--branch NAME]` | [Deploy](/guide/deploy) |
-| `nomctl upgrade-node [--repo URL] [--branch NAME] [--yes]` | [Source upgrades](/guide/upgrading#source-upgrades) (default); builds before downtime, then backs up and installs |
+| `nomctl upgrade-node [--repo URL] [--branch NAME] [--restore-point-keep DAYS_OR_indefinite] [--yes]` | [Source upgrades](/guide/upgrading#source-upgrades) (default); builds before downtime, then creates a protected restore point and installs |
 | `nomctl upgrade-node --signed [--version TAG] [--restore-point-keep DAYS_OR_indefinite] [--yes]` | [Signed node releases](/guide/upgrading#signed-node-releases); `--version` requires `--signed`, which cannot be combined with `--repo` or `--branch` |
 | `nomctl start` / `stop` / `restart` | [Service control](/guide/service) |
 | `nomctl logs [-f] [-n LINES]` | last 20 lines, or follow |

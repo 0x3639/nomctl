@@ -185,17 +185,38 @@ func ManageRestorePoints(cfg config.Config) error {
 			continue
 		}
 		err = withLock("delete selected restore points", func() error {
-			// Delete precisely the previewed IDs, never a newly expanded list.
-			for _, p := range selected {
-				if err := backup.DeleteRestorePoint(cfg, p.ID); err != nil {
-					return err
-				}
-			}
-			return nil
+			return deleteSelectedRestorePoints(cfg, selected, action == "prune", time.Now())
 		})
 		if err != nil {
 			return err
 		}
 		ui.Success("Selected restore points deleted")
 	}
+}
+
+// deleteSelectedRestorePoints runs under the operation lock after confirmation.
+// Validate the entire preview before deleting anything: an upgrade may have
+// completed an incomplete point while the confirmation was on screen.
+func deleteSelectedRestorePoints(cfg config.Config, selected []backup.RestorePoint, prune bool, now time.Time) error {
+	points, err := backup.ListRestorePoints(cfg)
+	if err != nil {
+		return err
+	}
+	current := make(map[string]backup.RestorePoint, len(points))
+	for _, p := range points {
+		current[p.ID] = p
+	}
+	for _, preview := range selected {
+		p, exists := current[preview.ID]
+		if !exists || p != preview || (prune && !p.Eligible(now)) {
+			return fmt.Errorf("restore point %s changed or is no longer eligible; nothing deleted — review the list again", preview.ID)
+		}
+	}
+	// Delete precisely the previewed IDs, never a newly expanded list.
+	for _, p := range selected {
+		if err := backup.DeleteRestorePoint(cfg, p.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

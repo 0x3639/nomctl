@@ -12,6 +12,7 @@ import (
 
 func pointFixture(t *testing.T, days int) (config.Config, RestorePoint) {
 	t.Helper()
+	mockCapacity(t, func(string) (int64, int64, error) { return 1 << 40, 0, nil })
 	cfg := testConfig(t)
 	cfg.InstallDir = t.TempDir()
 	cfg.RestorePointKeepDays = days
