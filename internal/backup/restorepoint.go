@@ -22,16 +22,18 @@ import (
 // disk-pressure deletion pool. KeepDays is a UI suggestion, never an automatic
 // deletion policy. The matching node binary survives subsequent upgrades.
 type RestorePoint struct {
-	ID           string    `json:"id"`
-	Service      string    `json:"service"`
-	CreatedAt    time.Time `json:"created_at"`
-	KeepDays     int       `json:"keep_days"`
-	Label        string    `json:"label"`
-	Complete     bool      `json:"complete"`
-	BinarySHA256 string    `json:"binary_sha256"`
-	Dir          string    `json:"-"`
-	Size         int64     `json:"-"`
-	Problem      string    `json:"-"`
+	ID            string    `json:"id"`
+	Service       string    `json:"service"`
+	CreatedAt     time.Time `json:"created_at"`
+	KeepDays      int       `json:"keep_days"`
+	Label         string    `json:"label"`
+	Complete      bool      `json:"complete"`
+	BinarySHA256  string    `json:"binary_sha256"`
+	BinaryVersion string    `json:"binary_version,omitempty"`
+	BinaryCommit  string    `json:"binary_commit,omitempty"`
+	Dir           string    `json:"-"`
+	Size          int64     `json:"-"`
+	Problem       string    `json:"-"`
 }
 
 func RestorePointsDir(cfg config.Config) string {
@@ -99,6 +101,7 @@ func PrepareRestorePoint(cfg config.Config, label string) (*Snapshot, error) {
 	if err != nil {
 		return fail(err)
 	}
+	point.BinaryVersion, point.BinaryCommit = savedBinaryInfo(point.BinaryPath())
 	if err := point.save(); err != nil {
 		return fail(err)
 	}
@@ -149,7 +152,20 @@ func (s *Snapshot) finishRestorePoint() (string, error) {
 		return archive, err
 	}
 	logx.Success("Restore point created: " + p.ID + " (deleted only through the restore-point menu)")
+	slog.Info("Saved chain data and znnd. " + p.BinaryDescription())
 	return archive, nil
+}
+
+// BinaryDescription identifies the saved executable, including legacy points
+// without version metadata. Missing information is never inferred from labels.
+func (p RestorePoint) BinaryDescription() string {
+	available := func(value string) string {
+		if value == "" {
+			return "unavailable"
+		}
+		return value
+	}
+	return fmt.Sprintf("znnd version: %s\nCommit hash: %s\nSHA-256: %s", available(p.BinaryVersion), available(p.BinaryCommit), available(p.BinarySHA256))
 }
 
 func RunRestorePoint(cfg config.Config, label string) (string, error) {

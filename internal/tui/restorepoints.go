@@ -64,7 +64,7 @@ func CreateRestorePoint(cfg config.Config) error {
 	if err := ChooseRestorePointKeep(&cfg); err != nil {
 		return err
 	}
-	ok, err := Confirm("Create a protected restore point?\nChecks disk space, stops the node to copy chain data, then restarts it before compression.\nIncludes the matching node binary. Wallet and config use their separate encrypted backup.")
+	ok, err := Confirm("Back up chain data AND the installed znnd into a protected restore point?\nRecords the znnd version and commit hash when available, plus its SHA-256 checksum.\nChecks disk space, stops the node to copy data, then restarts it before compression.\nWallet and config use their separate encrypted backup.")
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,11 @@ func pointLabel(p backup.RestorePoint, now time.Time) string {
 	if !p.Complete || p.Problem != "" {
 		keep = "incomplete / needs inspection"
 	}
-	return fmt.Sprintf("%s · %s · %.1f MiB · %s", p.ID, p.Label, float64(p.Size)/(1<<20), keep)
+	version := p.BinaryVersion
+	if version == "" {
+		version = "version unavailable"
+	}
+	return fmt.Sprintf("%s · %s · znnd %s · %.1f MiB · %s", p.ID, p.Label, version, float64(p.Size)/(1<<20), keep)
 }
 
 func pickRestorePoint(cfg config.Config, completeOnly bool) (backup.RestorePoint, error) {
@@ -104,6 +108,14 @@ func pickRestorePoint(cfg config.Config, completeOnly bool) (backup.RestorePoint
 	}
 	var id string
 	sel := huh.NewSelect[string]().Title("SELECT RESTORE POINT:").Options(opts...).Value(&id).Height(12)
+	sel.DescriptionFunc(func() string {
+		for _, p := range points {
+			if p.ID == id {
+				return p.BinaryDescription()
+			}
+		}
+		return "Contains chain data and the saved znnd."
+	}, &id)
 	if err := runForm(sel); err != nil {
 		return backup.RestorePoint{}, err
 	}
@@ -120,14 +132,44 @@ func RestorePoint(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	ok, err := Confirm(fmt.Sprintf("Restore %s?\n\nReplace chain data AND the node binary with this matching restore point.\nCurrent data and binary are kept as recovery copies; wallet and config stay unchanged.", p.ID))
+	return confirmRestorePoint(cfg, p)
+}
+
+// RestorePointByID gives interactive CLI restores the same binary choice and
+// confirmation as the menu picker.
+func RestorePointByID(cfg config.Config, id string) error {
+	p, err := backup.ReadRestorePoint(cfg, id)
+	if err != nil {
+		return err
+	}
+	return confirmRestorePoint(cfg, p)
+}
+
+func confirmRestorePoint(cfg config.Config, p backup.RestorePoint) error {
+	if !p.Complete {
+		return fmt.Errorf("restore point is incomplete")
+	}
+	withBinary := true
+	sel := huh.NewSelect[bool]().Title("Also revert znnd to the version saved in this restore point?").
+		Description(p.BinaryDescription()).
+		Options(huh.NewOption("Yes — restore chain data and saved znnd (recommended)", true), huh.NewOption("No — restore data only; keep installed znnd", false)).Value(&withBinary)
+	if err := runForm(sel); err != nil {
+		return err
+	}
+	change := "Restore chain data AND the saved znnd. Current data and znnd are kept as recovery copies."
+	if !withBinary {
+		change = "Restore chain data only. Keep the installed znnd unchanged.\nThe installed znnd must support this older data; incompatible versions may fail to start. Current data is kept as a recovery copy."
+	}
+	ok, err := Confirm(fmt.Sprintf("Restore %s?\n\n%s\n\n%s\nWallet and configuration stay unchanged.", p.ID, p.BinaryDescription(), change))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return ErrCancelled
 	}
-	return withLock("restore from restore point", func() error { return restore.RunRestorePoint(cfg, p.ID) })
+	return withLock("restore from restore point", func() error {
+		return restore.RunRestorePointWithOptions(cfg, p.ID, restore.RestorePointOptions{DataOnly: !withBinary})
+	})
 }
 
 func ManageRestorePoints(cfg config.Config) error {
@@ -143,6 +185,7 @@ func ManageRestorePoints(cfg config.Config) error {
 		var total int64
 		for _, p := range points {
 			fmt.Fprintln(os.Stderr, pointLabel(p, time.Now()))
+			fmt.Fprintln(os.Stderr, p.BinaryDescription())
 			total += p.Size
 		}
 		fmt.Fprintf(os.Stderr, "Total restore-point storage: %.1f MiB\n", float64(total)/(1<<20))

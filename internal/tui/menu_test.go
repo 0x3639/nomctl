@@ -21,7 +21,7 @@ func TestMenuOptions(t *testing.T) {
 
 func TestRequestedLabelsAndReachableActions(t *testing.T) {
 	labels := map[Action]string{
-		ActionBackup: "Backup chain data locally", ActionRestore: "Restore from backup",
+		ActionRestore:        "Restore from backup",
 		ActionBackupSchedule: "Schedule local backups", ActionManageBackups: "Manage backups",
 		ActionCreatePoint: "Create restore point", ActionRestorePoint: "Restore from restore point", ActionManagePoints: "Manage restore points",
 		ActionBootstrap: `Restore from "trusted" bootstrap snapshot`,
@@ -60,8 +60,8 @@ func TestSubmenuNavigation(t *testing.T) {
 		err                    error
 	}{
 		{"", "", menuBackups, nil},
-		{menuBackups, "", ActionBackup, nil},
-		{menuBackups, ActionBackup, ActionRestore, nil},
+		{menuBackups, "", ActionCreatePoint, nil},
+		{menuBackups, ActionCreatePoint, ActionRestore, nil},
 		{menuBackups, ActionRestore, ActionBack, nil},
 		{"", menuBackups, menuInstall, nil},
 		{menuInstall, "", "", ErrCancelled},
@@ -85,7 +85,7 @@ func TestSubmenuNavigation(t *testing.T) {
 	if err := runMenus(&cfg, choose, dispatch); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 2 || calls[0] != ActionBackup || calls[1] != ActionRestore {
+	if len(calls) != 2 || calls[0] != ActionCreatePoint || calls[1] != ActionRestore {
 		t.Fatal(calls)
 	}
 }

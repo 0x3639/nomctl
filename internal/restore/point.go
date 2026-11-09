@@ -17,22 +17,40 @@ import (
 // data back before the previous binary is restarted. A start failure retains
 // the restored pair together plus the previous data/binary recovery copies.
 func RunRestorePoint(cfg config.Config, id string) error {
+	return RunRestorePointWithOptions(cfg, id, RestorePointOptions{})
+}
+
+// RestorePointOptions defaults to the matching data/binary pair. DataOnly is an
+// explicit choice to retain the installed znnd, which must support the old data.
+type RestorePointOptions struct {
+	DataOnly bool
+}
+
+// RunRestorePointWithOptions restores a complete point using the selected
+// binary policy. Data-only restores never read, stage or replace a node binary.
+func RunRestorePointWithOptions(cfg config.Config, id string, opts RestorePointOptions) error {
 	p, err := backup.ReadRestorePoint(cfg, id)
 	if err != nil {
 		return err
 	}
-	if err := backup.VerifyRestorePointBinary(p); err != nil {
-		return err
+	if !p.Complete {
+		return fmt.Errorf("restore point is incomplete")
 	}
-	b, err := preparePointBinary(cfg, p.BinaryPath())
-	if err != nil {
-		return err
+	var b *pointBinary
+	if !opts.DataOnly {
+		if err := backup.VerifyRestorePointBinary(p); err != nil {
+			return err
+		}
+		b, err = preparePointBinary(cfg, p.BinaryPath())
+		if err != nil {
+			return err
+		}
+		defer b.cleanup()
 	}
-	defer b.cleanup()
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
-	return run(cfg, p.ArchivePath(), b)
+	return run(cfg, p.ArchivePath(), true, b)
 }
 
 type pointBinary struct {

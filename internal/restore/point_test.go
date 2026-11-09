@@ -1,9 +1,11 @@
 package restore
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/0x3639/nomctl/internal/backup"
@@ -11,8 +13,10 @@ import (
 )
 
 func TestRestorePointRestoresMatchingPairOrRollsBack(t *testing.T) {
-	for _, mode := range []string{"success", "binary-install-failure", "start-failure", "bad-binary", "bad-archive", "no-space"} {
+	for _, mode := range []string{"success", "binary-install-failure", "start-failure", "bad-binary", "bad-archive", "no-space", "data-only", "data-only-missing-binary", "data-only-bad-archive", "data-only-no-space", "data-only-incomplete"} {
 		t.Run(mode, func(t *testing.T) {
+			dataOnly := strings.HasPrefix(mode, "data-only")
+			success := mode == "success" || mode == "data-only" || mode == "data-only-missing-binary"
 			cfg := config.Default()
 			cfg.ZnnDir = t.TempDir()
 			cfg.BackupDir = t.TempDir()
@@ -52,6 +56,10 @@ func TestRestorePointRestoresMatchingPairOrRollsBack(t *testing.T) {
 			}
 			p := points[0]
 			put(cfg.BinaryPath(), "current binary")
+			installedBefore, err := os.Stat(cfg.BinaryPath())
+			if err != nil {
+				t.Fatal(err)
+			}
 			put(filepath.Join(cfg.ZnnDir, "nom", "state"), "current chain")
 			put(filepath.Join(cfg.ZnnDir, "network", "new"), "new network")
 			oldStop, oldStart, oldInstall := stopService, startService, installPointBinary
@@ -63,6 +71,9 @@ func TestRestorePointRestoresMatchingPairOrRollsBack(t *testing.T) {
 				binary, _ := os.ReadFile(cfg.BinaryPath())
 				data, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, "nom", "state"))
 				wantBinary, wantData := "point binary", "point chain"
+				if dataOnly {
+					wantBinary = "current binary"
+				}
 				if mode == "binary-install-failure" {
 					wantBinary, wantData = "current binary", "current chain"
 				}
@@ -79,16 +90,32 @@ func TestRestorePointRestoresMatchingPairOrRollsBack(t *testing.T) {
 				installPointBinary = func(string, string) error { return errors.New("install failed") }
 			case "bad-binary":
 				put(p.BinaryPath(), "tampered")
-			case "bad-archive":
+			case "bad-archive", "data-only-bad-archive":
 				put(p.ArchivePath(), "tampered")
-			case "no-space":
+			case "no-space", "data-only-no-space":
 				cfg.MinFreeSpaceKB = 1 << 62
+			case "data-only-missing-binary":
+				if err := os.Remove(p.BinaryPath()); err != nil {
+					t.Fatal(err)
+				}
+			case "data-only-incomplete":
+				p.Complete = false
+				metadata, err := json.Marshal(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(filepath.Join(p.Dir, "point.json"), string(metadata))
 			}
-			err = RunRestorePoint(cfg, p.ID)
-			if (err == nil) != (mode == "success") {
+			if dataOnly {
+				installPointBinary = func(string, string) error { t.Fatal("data-only restore attempted to install znnd"); return nil }
+				err = RunRestorePointWithOptions(cfg, p.ID, RestorePointOptions{DataOnly: true})
+			} else {
+				err = RunRestorePoint(cfg, p.ID)
+			}
+			if (err == nil) != success {
 				t.Fatalf("result: %v", err)
 			}
-			beforeStop := mode == "bad-binary" || mode == "bad-archive" || mode == "no-space"
+			beforeStop := mode == "bad-binary" || strings.Contains(mode, "bad-archive") || strings.Contains(mode, "no-space") || strings.Contains(mode, "incomplete")
 			if beforeStop && (stops != 0 || starts != 0) {
 				t.Fatal("node touched before verification/space check")
 			}
@@ -99,15 +126,20 @@ func TestRestorePointRestoresMatchingPairOrRollsBack(t *testing.T) {
 			if mode == "success" || mode == "start-failure" {
 				wantBinary, wantData = "point binary", "point chain"
 			}
+			if dataOnly && success {
+				wantData = "point chain"
+			}
 			binary, _ := os.ReadFile(cfg.BinaryPath())
 			data, _ := os.ReadFile(filepath.Join(cfg.ZnnDir, "nom", "state"))
 			if string(binary) != wantBinary || string(data) != wantData {
 				t.Fatal("wrong pair left on disk")
 			}
-			if mode == "success" || mode == "start-failure" {
+			if success || mode == "start-failure" {
 				if _, err := os.Stat(filepath.Join(cfg.ZnnDir, "network")); !os.IsNotExist(err) {
 					t.Fatal("post-point folder retained")
 				}
+			}
+			if mode == "success" || mode == "start-failure" {
 				previous, _ := filepath.Glob(filepath.Join(cfg.InstallDir, ".nomctl-before-restore-*"))
 				if len(previous) != 1 {
 					t.Fatal("previous binary not retained")
@@ -115,6 +147,16 @@ func TestRestorePointRestoresMatchingPairOrRollsBack(t *testing.T) {
 				saved, _ := os.ReadFile(previous[0])
 				if string(saved) != "current binary" {
 					t.Fatal("wrong previous binary")
+				}
+			}
+			if dataOnly {
+				installedAfter, err := os.Stat(cfg.BinaryPath())
+				if err != nil || !os.SameFile(installedBefore, installedAfter) {
+					t.Fatal("installed znnd replaced during data-only restore", err)
+				}
+				copies, err := filepath.Glob(filepath.Join(cfg.InstallDir, ".nomctl-*"))
+				if err != nil || len(copies) != 0 {
+					t.Fatal("data-only restore staged a binary", copies, err)
 				}
 			}
 			for path, want := range map[string]string{filepath.Join(cfg.ZnnDir, "config.json"): "keep config", filepath.Join(cfg.ZnnDir, "wallet", "key"): "keep wallet"} {

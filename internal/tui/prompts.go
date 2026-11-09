@@ -43,6 +43,7 @@ func PickBackup(cfg config.Config) (string, error) {
 	var chosen string
 	sel := huh.NewSelect[string]().
 		Title(ui.StyleHeader.Render("SELECT BACKUP TO RESTORE:")).
+		Description("Restores chain data only. The installed znnd and its version stay unchanged.").
 		Options(opts...).
 		Value(&chosen)
 	if err := runForm(sel); err != nil {

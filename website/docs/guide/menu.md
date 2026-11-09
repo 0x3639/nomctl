@@ -29,15 +29,16 @@ Opening the menu does not run hardware, NTP or Internet pre-flight checks. Those
 
 ## Backups & recovery
 
+Use **Schedule local backups** for automatic daily backups and **Create restore point** to save a protected recovery point manually. Both backup and restore-point restoration are available below.
+
 | Entry | Runs |
 |---|---|
-| Backup chain data locally | [Backup](/guide/backups) into the configured local backup directory |
-| Restore from backup | Choose and restore a local chain-data archive |
+| Restore from backup | Restore chain data only; keep the installed znnd and its version unchanged |
 | Back up wallet & configuration | Encrypted wallet and `config.json` backup |
 | Restore wallet & configuration | Choose a wallet backup, enter its passphrase and restore |
-| Create restore point | Save chain data and matching node binary; choose days or indefinite |
-| Restore from restore point | Verify and restore the matching chain-data/binary pair |
-| Manage restore points | Show sizes; delete one point or preview manual pruning of eligible points; confirmation required |
+| Create restore point | Back up chain data and znnd; record its version, commit hash when available, and SHA-256 checksum; choose days or indefinite |
+| Restore from restore point | Show the saved znnd details and ask whether to restore it too or keep the installed znnd |
+| Manage restore points | Show sizes and saved znnd details; delete one point or preview manual pruning of eligible points; confirmation required |
 | Manage backups | Delete a selected ordinary backup or preview old backups to prune |
 | Schedule local backups | Daily cron backups; asks for retention (1–30 days, default 7) and hour, with automatic pruning at the 75% disk limit; does not run a backup immediately |
 | Restore from "trusted" bootstrap snapshot | [Bootstrap](/guide/bootstrap): URL prompt, keep/discard choice and confirmation |
