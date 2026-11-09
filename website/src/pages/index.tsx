@@ -1,5 +1,6 @@
 import type {ReactNode} from 'react';
 import Link from '@docusaurus/Link';
+import CodeBlock from '@theme/CodeBlock';
 import Layout from '@theme/Layout';
 
 const features: {title: string; body: string; to: string}[] = [
@@ -46,9 +47,9 @@ export default function Home(): ReactNode {
             A single static binary that deploys, backs up, monitors and alerts on a Zenon node. A Go port of the
             hypercore-one deployment scripts, with a TUI for humans and subcommands for scripts.
           </p>
-          <div className="install-line">
-            curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
-          </div>
+          <CodeBlock language="bash" className="install-line">
+            {'curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash'}
+          </CodeBlock>
           <div>
             <Link className="button button--plasma button--lg margin-right--sm" to="/getting-started">
               Get started
