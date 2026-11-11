@@ -51,7 +51,7 @@ func ChooseNodeRelease(ctx context.Context, client *nodeupgrade.Client, tag stri
 }
 
 func ConfirmNodeUpgrade(cfg config.Config, release nodeupgrade.Release) (bool, error) {
-	return Confirm(fmt.Sprintf("Upgrade %s to %s from go-zenon-releases?\n\nVerify download, stop %s, create a protected restore point, install at %s,\nstart service, then finish the restore point.\nWallet and config are not included in chain-data backups.", cfg.BinaryName, release.Tag, cfg.ServiceName, cfg.BinaryPath()))
+	return Confirm(fmt.Sprintf("Upgrade %s to %s from go-zenon-releases?\n\n%s\n\nVerify download, stop %s, save the restore-point data, install at %s,\nstart service, then finish the restore-point archive.", cfg.BinaryName, release.Tag, upgradeRestorePointSummary(cfg), cfg.ServiceName, cfg.BinaryPath()))
 }
 
 func UpgradeNode(cfg config.Config) error {
@@ -61,7 +61,7 @@ func UpgradeNode(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	if err := ChooseRestorePointKeep(&cfg); err != nil {
+	if err := ChooseUpgradeRestorePointKeep(&cfg); err != nil {
 		return err
 	}
 	ok, err := ConfirmNodeUpgrade(cfg, release)
@@ -76,7 +76,16 @@ func UpgradeNode(cfg config.Config) error {
 
 // ConfirmSourceUpgrade describes downtime and the mandatory safety backup.
 func ConfirmSourceUpgrade(cfg config.Config) (bool, error) {
-	return Confirm(fmt.Sprintf("Upgrade a node from source?\n\nRepository: %s\nBranch: %s\n\nBuild while the node runs, then stop %s, create a protected restore point,\ninstall at %s, start, and finish the restore point.", cfg.RepoURL, cfg.BranchName, cfg.ServiceName, cfg.BinaryPath()))
+	return Confirm(fmt.Sprintf("Upgrade a node from source?\n\nRepository: %s\nBranch: %s\n\n%s\n\nBuild while the node runs, then stop %s, save the restore-point data,\ninstall at %s, start, and finish the restore-point archive.", cfg.RepoURL, cfg.BranchName, upgradeRestorePointSummary(cfg), cfg.ServiceName, cfg.BinaryPath()))
+}
+
+func upgradeRestorePointSummary(cfg config.Config) string {
+	keep := "Keep indefinitely; delete individually in Manage restore points."
+	if cfg.RestorePointKeepDays > 0 {
+		keep = fmt.Sprintf("Eligible for manual pruning after %d day(s) in Manage restore points; never auto-deleted.", cfg.RestorePointKeepDays)
+	}
+	return "A restore point is required: nomctl backs up current chain data and znnd before installing.\n" +
+		keep + "\nWallet and config use a separate encrypted backup."
 }
 
 func UpgradeSource(cfg config.Config) error {
@@ -88,7 +97,7 @@ func UpgradeSource(cfg config.Config) error {
 		return err
 	}
 	cfg.RepoURL, cfg.BranchName = repo, branch
-	if err := ChooseRestorePointKeep(&cfg); err != nil {
+	if err := ChooseUpgradeRestorePointKeep(&cfg); err != nil {
 		return err
 	}
 	ok, err := ConfirmSourceUpgrade(cfg)
