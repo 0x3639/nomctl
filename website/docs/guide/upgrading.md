@@ -19,8 +19,25 @@ The installer one-liner does the same thing and remains a fine way to upgrade; `
 ## The node
 
 Use **Install & upgrade** in the interactive menu to choose a source build or
-a signed release. Both upgrade an existing node with a mandatory chain-data
-backup and preserve its service configuration.
+a signed release. **Before upgrading your node software, a restore point is
+required.** nomctl creates it automatically during either upgrade; you do not
+need to create it separately first.
+
+The restore point backs up your current chain data and installed znnd so you can
+recover if the upgrade causes problems. It records the znnd version and commit
+when available, plus its SHA-256 checksum. Wallet and config use a separate
+encrypted backup.
+
+The restore-point question asks how to keep this required backup:
+
+- **Indefinite** (the default): keep it until you select and delete it individually
+  in **Manage restore points**. It is excluded from bulk pruning.
+- **Choose days (1–30)**: after the chosen number of days, it becomes eligible for
+  **manual pruning** in **Manage restore points**. It remains until you confirm
+  deletion there.
+
+**Neither option deletes restore points automatically.** The upgrade confirmation
+shows your choice. `--yes` skips prompts, but still creates the required restore point.
 
 ### Source upgrades
 

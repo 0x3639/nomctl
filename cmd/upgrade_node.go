@@ -35,14 +35,20 @@ node. The same restore-point, installation, restart and archive sequence follows
 --version requires --signed and selects an exact published release tag.
 --repo and --branch cannot be combined with --signed.
 
-Both paths check space before downtime and preserve chain data plus the old node
-binary in a restore point. --restore-point-keep accepts 1-30 days or indefinite
-(default). Days only determine eligibility for manual UI pruning; restore points
-are never automatically deleted.
+Before either upgrade, a restore point is required. nomctl creates it automatically
+to back up the current chain data and installed znnd so you can recover if needed.
+It records the znnd version and commit when available, plus its SHA-256 checksum.
+Both paths check space before downtime. Wallet and config use a separate encrypted
+backup.
+
+Choose --restore-point-keep indefinite (default) to keep the point until you
+delete it individually, or 1-30 days to make it eligible for manual pruning after
+that time. Both actions are in Manage restore points; nothing is auto-deleted.
 
 Signed releases require GnuPG (gpg) and NOMCTL_GITHUB_TOKEN with Contents read
 access while the repository is private. --yes skips prompts, using the configured
-source repository/branch by default or the newest published release with --signed.`,
+source repository/branch by default or the newest published release with --signed.
+--yes does not skip the required restore point.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(cmd *cobra.Command, _ []string) error {
@@ -51,7 +57,7 @@ source repository/branch by default or the newest published release with --signe
 			return fmt.Errorf("non-interactive node upgrades require --yes")
 		}
 		if interactive && !flagNodeUpgradeYes && !cmd.Flags().Changed("restore-point-keep") {
-			if err := tui.ChooseRestorePointKeep(&cfg); err != nil {
+			if err := tui.ChooseUpgradeRestorePointKeep(&cfg); err != nil {
 				return err
 			}
 		}

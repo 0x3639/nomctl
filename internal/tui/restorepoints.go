@@ -16,13 +16,30 @@ import (
 )
 
 func ChooseRestorePointKeep(cfg *config.Config) error {
+	return chooseRestorePointKeep(cfg, "How long should this restore point be kept?", "")
+}
+
+// ChooseUpgradeRestorePointKeep explains the mandatory recovery copy before
+// asking for retention, for both signed-release and source-build upgrades.
+func ChooseUpgradeRestorePointKeep(cfg *config.Config) error {
+	return chooseRestorePointKeep(cfg, "A restore point is required before upgrading your node software.",
+		"nomctl creates it automatically during the upgrade. It backs up your current\n"+
+			"chain data and installed znnd so you can restore them if something goes wrong.\n"+
+			"It records the znnd version and commit when available, plus its SHA-256 checksum.\n"+
+			"Wallet and config use a separate encrypted backup.\n\n"+
+			"Choose how to keep this required restore point:\n")
+}
+
+func chooseRestorePointKeep(cfg *config.Config, title, introduction string) error {
 	keep := "indefinite"
 	if cfg.RestorePointKeepDays > 0 {
 		keep = "days"
 	}
-	sel := huh.NewSelect[string]().Title("How long should this restore point be kept?").
-		Description("Restore points are deleted only through this menu. Days mark eligibility for manual pruning.").
-		Options(huh.NewOption("Indefinite — delete individually when no longer needed", "indefinite"), huh.NewOption("Choose days — eligible for manual pruning afterward", "days")).Value(&keep)
+	sel := huh.NewSelect[string]().Title(title).
+		Description(introduction+"Indefinite: keep until you select and delete it individually.\n"+
+			"Choose days (1–30): after that time, you can remove it using manual pruning.\n"+
+			"Neither option deletes it automatically. Delete or prune in Manage restore points.").
+		Options(huh.NewOption("Indefinite — keep until I delete it", "indefinite"), huh.NewOption("Choose days (1–30) — allow manual pruning afterward", "days")).Value(&keep)
 	if err := runForm(sel); err != nil {
 		return err
 	}
