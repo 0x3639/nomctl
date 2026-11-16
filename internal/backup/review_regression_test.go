@@ -157,7 +157,29 @@ func TestMenuFormRejectsConcurrentScheduleChanges(t *testing.T) {
 }
 
 func TestServerTimezoneSources(t *testing.T) {
-	zoneinfo := "/usr/share/zoneinfo"
+	zoneinfo := t.TempDir()
+	// Canonical zones are available on supported hosts, but backward-compatible
+	// aliases such as US/Central may be packaged separately. Build the alias in
+	// our fixture so this test does not depend on optional system timezone data.
+	for name, canonical := range map[string]string{
+		"Europe/Berlin":   "Europe/Berlin",
+		"Europe/London":   "Europe/London",
+		"America/Chicago": "America/Chicago",
+		"US/Central":      "America/Chicago",
+		"Etc/UTC":         "Etc/UTC",
+	} {
+		data, err := os.ReadFile(filepath.Join("/usr/share/zoneinfo", canonical))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(zoneinfo, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, tc := range []struct {
 		name, named, local, want string
 		badName, badLocal        bool
