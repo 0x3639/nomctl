@@ -68,7 +68,7 @@ var menus = map[Action]menuDefinition{
 		{ActionManageBackups, "Manage backups", "Delete selected backups or prune old backups after reviewing the files and space to free."},
 		{ActionWalletBackup, "Back up wallet & configuration", "Create an encrypted backup of wallet files and config.json."},
 		{ActionWalletRestore, "Restore wallet & configuration", "Restore an encrypted wallet backup; keep current files aside."},
-		{ActionBackupSchedule, "Schedule local backups", "Daily cron backups; keep 1–30 days (default 7), with a 75% disk limit."},
+		{ActionBackupSchedule, "Backup status & schedule", "View results; edit, pause or resume daily backups."},
 		{ActionBootstrap, `Restore from "trusted" bootstrap snapshot`, "Choose a publisher you trust; the snapshot hash checks integrity."},
 		{ActionResync, "Resync from scratch", "Delete chain data and sync again; keep wallet and configuration."},
 	}},

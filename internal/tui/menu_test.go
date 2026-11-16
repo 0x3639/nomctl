@@ -22,7 +22,7 @@ func TestMenuOptions(t *testing.T) {
 func TestRequestedLabelsAndReachableActions(t *testing.T) {
 	labels := map[Action]string{
 		ActionRestore:        "Restore from backup",
-		ActionBackupSchedule: "Schedule local backups", ActionManageBackups: "Manage backups",
+		ActionBackupSchedule: "Backup status & schedule", ActionManageBackups: "Manage backups",
 		ActionCreatePoint: "Create restore point", ActionRestorePoint: "Restore from restore point", ActionManagePoints: "Manage restore points",
 		ActionBootstrap: `Restore from "trusted" bootstrap snapshot`,
 		ActionDeploy:    "Deploy a node from source", ActionUpgradeSource: "Upgrade a node from source",

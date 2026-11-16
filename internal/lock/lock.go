@@ -13,6 +13,9 @@ import (
 	"syscall"
 )
 
+// ErrBusy identifies lock contention separately from filesystem failures.
+var ErrBusy = errors.New("another nomctl operation is in progress")
+
 // DefaultPath is where the lock file lives. /run is tmpfs on systemd hosts,
 // so a stale file never survives a reboot.
 const DefaultPath = "/run/nomctl.lock"
@@ -37,7 +40,7 @@ func Acquire(path, operation string) (*Lock, error) {
 		holder := describeHolder(f)
 		_ = f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("another nomctl operation is in progress%s; try again later", holder)
+			return nil, fmt.Errorf("%w%s; try again later", ErrBusy, holder)
 		}
 		return nil, fmt.Errorf("lock %s: %w", path, err)
 	}

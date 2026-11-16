@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/execx"
@@ -19,10 +20,10 @@ const CronPath = "/etc/cron.d/nomctl-backup"
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
-// CronEntry preserves the selected configuration without inheriting the login
+// cronCommand preserves the selected configuration without inheriting the login
 // environment. --cadence 0 prevents completion time drifting past tomorrow's
 // cron firing and inadvertently skipping every second day.
-func CronEntry(cfg config.Config, execPath, hostname string) (string, error) {
+func cronCommand(cfg config.Config, execPath string, tracked bool) (string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", err
 	}
@@ -32,15 +33,24 @@ func CronEntry(cfg config.Config, execPath, hostname string) (string, error) {
 		"NOMCTL_MIN_FREE_SPACE_KB=" + strconv.FormatInt(cfg.MinFreeSpaceKB, 10),
 		execPath, "backup", "--skip-preflight", "--cadence", "0", "--max-backups", "30",
 		"--retention-days", strconv.Itoa(cfg.BackupRetentionDays)}
+	if tracked {
+		args = append(args, "--scheduled")
+	}
 	for i, arg := range args {
 		if strings.ContainsAny(arg, "\r\n\x00") {
 			return "", fmt.Errorf("cron settings cannot contain newlines or NUL bytes")
 		}
 		args[i] = shellQuote(arg)
 	}
-	command := strings.ReplaceAll(strings.Join(args, " "), "%", `\%`)
-	hour, minute := ScheduleTime(hostname, cfg.ServiceName, cfg.BackupHour)
-	return fmt.Sprintf("# Managed by nomctl: daily local chain backups; retention %d days.\nSHELL=/bin/sh\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n%d %d * * * root %s\n", cfg.BackupRetentionDays, minute, hour, command), nil
+	return strings.ReplaceAll(strings.Join(args, " "), "%", `\%`), nil
+}
+
+// CronEntry creates the complete managed schedule, including its saved settings.
+func CronEntry(cfg config.Config, execPath, hostname string) (string, error) {
+	if err := cfg.Validate(); err != nil {
+		return "", err
+	}
+	return renderSchedule(newSchedule(cfg, execPath, hostname, time.Now()))
 }
 
 // LocalSchedule installs one daily cron job without taking a backup now. The
@@ -58,9 +68,20 @@ func LocalSchedule(cfg config.Config) error {
 }
 
 func installLocalSchedule(cfg config.Config, execPath, hostname, path string) error {
-	content, err := CronEntry(cfg, execPath, hostname)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	return publishSchedule(newSchedule(cfg, execPath, hostname, time.Now()), path)
+}
+
+func publishSchedule(s Schedule, path string) error {
+	content, err := renderSchedule(s)
 	if err != nil {
 		return err
+	}
+	// Pausing or editing a paused job does not need a running cron daemon.
+	if !s.Enabled {
+		return atomicWrite(path, []byte(content), 0o644)
 	}
 	cronUnit, err := ensureCronInstalled()
 	if err != nil {
@@ -74,7 +95,7 @@ func installLocalSchedule(cfg config.Config, execPath, hostname, path string) er
 	}
 	defer func() { _ = os.Remove(f.Name()) }()
 	_, writeErr := f.WriteString(content)
-	err = errors.Join(writeErr, f.Chmod(0o644), f.Close())
+	err = errors.Join(writeErr, f.Chmod(0o644), f.Sync(), f.Close())
 	if err != nil {
 		return err
 	}
@@ -104,8 +125,7 @@ func installLocalSchedule(cfg config.Config, execPath, hostname, path string) er
 		}
 		return err
 	}
-	hour, minute := ScheduleTime(hostname, cfg.ServiceName, cfg.BackupHour)
-	logx.Success(fmt.Sprintf("Local backups scheduled daily at %02d:%02d (server time), keeping up to %d days; disk limit %d%%. Cron job: %s", hour, minute, cfg.BackupRetentionDays, MaxDiskUsedPercent, path))
+	logx.Success(fmt.Sprintf("Local backups scheduled daily at %02d:%02d (server time), keeping up to %d days; disk limit %d%%. Cron job: %s", s.Hour, s.Minute, s.RetentionDays, MaxDiskUsedPercent, path))
 	return nil
 }
 
@@ -157,6 +177,6 @@ func installedCronUnit() (string, error) {
 
 // LocalScheduleInstalled also lets backup-stale alerts recognize cron jobs.
 func LocalScheduleInstalled() bool {
-	data, err := os.ReadFile(CronPath)
-	return err == nil && strings.HasPrefix(string(data), "# Managed by nomctl: daily local chain backups;")
+	s, err := ReadSchedule()
+	return err == nil && s != nil && s.Enabled
 }

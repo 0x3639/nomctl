@@ -256,16 +256,18 @@ func updateChecker() alerts.UpdateInfo {
 // backupChecker feeds backup_stale from daily cron or legacy timer settings.
 func backupChecker() alerts.BackupInfo {
 	info := alerts.BackupInfo{TimerEnabled: service.IsEnabled(backup.TimerName + ".timer"), CadenceDays: cfg.BackupCadenceDays}
-	if backup.LocalScheduleInstalled() {
-		info.TimerEnabled = true
+	backupConfig := cfg
+	if schedule, err := backup.ReadSchedule(); err == nil && schedule != nil {
+		info.TimerEnabled = schedule.Enabled
 		info.CadenceDays = 1
+		backupConfig = schedule.Config()
 	} else if days, ok := backup.InstalledCadence(); ok {
 		info.CadenceDays = days
 	}
 	if !info.TimerEnabled {
 		return info
 	}
-	if archives, err := backup.List(cfg); err == nil && len(archives) > 0 {
+	if archives, err := backup.List(backupConfig); err == nil && len(archives) > 0 {
 		info.Newest = archives[0].ModTime
 	}
 	return info
