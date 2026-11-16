@@ -44,7 +44,7 @@ func TestLegacyScheduleAdoptionAndStrictParsing(t *testing.T) {
 	// Pausing a legacy entry adopts every saved setting without running a tool.
 	t.Setenv("PATH", t.TempDir())
 	now := time.Now().UTC()
-	if err := setScheduleEnabled(path, false, now); err != nil {
+	if err := setScheduleEnabled(path, false, func() time.Time { return now }); err != nil {
 		t.Fatal(err)
 	}
 	s, err = readSchedule(path)
@@ -87,13 +87,13 @@ esac
 	t.Setenv("PATH", commands)
 	now := time.Now()
 	for range 2 {
-		if err := setScheduleEnabled(path, false, now); err != nil {
+		if err := setScheduleEnabled(path, false, func() time.Time { return now }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	paused, _ := os.ReadFile(path)
 	hour, retention, destination := 23, 30, filepath.Join(root, "new backups")
-	if err := editSchedule(path, ScheduleChanges{Hour: &hour, RetentionDays: &retention, Directory: &destination}, now); err != nil {
+	if err := editSchedule(path, ScheduleChanges{Hour: &hour, RetentionDays: &retention, Directory: &destination}, func() time.Time { return now }); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(events); !errors.Is(err, os.ErrNotExist) {
@@ -105,7 +105,7 @@ esac
 	}
 	before, _ := os.ReadFile(path)
 	bad := 31
-	if err := editSchedule(path, ScheduleChanges{RetentionDays: &bad}, now); err == nil {
+	if err := editSchedule(path, ScheduleChanges{RetentionDays: &bad}, func() time.Time { return now }); err == nil {
 		t.Fatal("invalid edit accepted")
 	}
 	after, _ := os.ReadFile(path)
@@ -113,7 +113,7 @@ esac
 		t.Fatal("failed edit changed schedule")
 	}
 	for range 2 {
-		if err := setScheduleEnabled(path, true, now); err != nil {
+		if err := setScheduleEnabled(path, true, func() time.Time { return now }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -134,7 +134,7 @@ esac
 		t.Fatal(err)
 	}
 	stubCommand(t, commands, "systemctl", "exit 1\n")
-	if err := setScheduleEnabled(path, true, now); err == nil {
+	if err := setScheduleEnabled(path, true, func() time.Time { return now }); err == nil {
 		t.Fatal("resume succeeded despite scheduler error")
 	}
 	after, _ = os.ReadFile(path)

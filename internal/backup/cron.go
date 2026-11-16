@@ -71,31 +71,35 @@ func installLocalSchedule(cfg config.Config, execPath, hostname, path string) er
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	return publishSchedule(newSchedule(cfg, execPath, hostname, time.Now()), path)
+	return publishSchedule(newSchedule(cfg, execPath, hostname, time.Now()), path, true, time.Now)
 }
 
-func publishSchedule(s Schedule, path string) error {
-	content, err := renderSchedule(s)
-	if err != nil {
+// publishSchedule validates before touching services. New epochs take effect
+// only after scheduler readiness and timer migration, immediately before the
+// atomic publication. Idempotent controls retain the original epoch.
+func publishSchedule(s Schedule, path string, newEpoch bool, now func() time.Time) error {
+	validation := s
+	if newEpoch {
+		validation.Since = time.Unix(1, 0).UTC()
+	}
+	if _, err := renderSchedule(validation); err != nil {
 		return err
+	}
+	publish := func() error {
+		if newEpoch {
+			s.Since = now().UTC()
+		}
+		content, err := renderSchedule(s)
+		if err != nil {
+			return err
+		}
+		return atomicWrite(path, []byte(content), 0o644)
 	}
 	// Pausing or editing a paused job does not need a running cron daemon.
 	if !s.Enabled {
-		return atomicWrite(path, []byte(content), 0o644)
+		return publish()
 	}
 	cronUnit, err := ensureCronInstalled()
-	if err != nil {
-		return err
-	}
-	// Stage the complete file before changing the existing schedule. Dotfiles
-	// are ignored by cron; the final rename publishes a single complete job.
-	f, err := os.CreateTemp(filepath.Dir(path), ".nomctl-backup-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	_, writeErr := f.WriteString(content)
-	err = errors.Join(writeErr, f.Chmod(0o644), f.Sync(), f.Close())
 	if err != nil {
 		return err
 	}
@@ -119,7 +123,7 @@ func publishSchedule(s Schedule, path string) error {
 			return err
 		}
 	}
-	if err := os.Rename(f.Name(), path); err != nil {
+	if err := publish(); err != nil {
 		if wasEnabled {
 			err = errors.Join(err, service.EnableNow(TimerName+".timer"))
 		}

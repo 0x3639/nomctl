@@ -47,8 +47,17 @@ func runScheduled(schedulePath, historyDir, lockPath string, run func(config.Con
 	if !s.Enabled {
 		return nil
 	}
+	return runScheduledAttempt(*s, schedulePath, historyDir, lockPath, run)
+}
+
+// observed is the immutable schedule seen when this invocation began. A pause,
+// resume or edit before lock acquisition supersedes that invocation even if the
+// new schedule is enabled again.
+func runScheduledAttempt(observed Schedule, schedulePath, historyDir, lockPath string, run func(config.Config, Options) (string, error)) error {
+	s := &observed
 	r := ScheduledRun{Started: time.Now().UTC(), Outcome: "running", PID: os.Getpid()}
-	r.ProcessIdentity, err = processIdentity(r.PID)
+	identity, err := processIdentity(r.PID)
+	r.ProcessIdentity = identity
 	if err != nil {
 		return fmt.Errorf("identify scheduled backup process: %w", err)
 	}
@@ -59,7 +68,7 @@ func runScheduled(schedulePath, historyDir, lockPath string, run func(config.Con
 		if err != nil {
 			return err
 		}
-		if !s.Enabled {
+		if !s.Enabled || !s.Since.Equal(observed.Since) {
 			return nil
 		}
 	}

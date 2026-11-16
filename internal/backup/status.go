@@ -3,9 +3,6 @@ package backup
 import (
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/0x3639/nomctl/internal/service"
@@ -15,6 +12,7 @@ type ScheduleStatus struct {
 	State          string        `json:"state"`
 	Schedule       *Schedule     `json:"schedule,omitempty"`
 	Timezone       string        `json:"timezone"`
+	TimezoneError  string        `json:"timezone_error,omitempty"`
 	Scheduler      string        `json:"scheduler"`
 	SchedulerError string        `json:"scheduler_error,omitempty"`
 	NextRun        *time.Time    `json:"next_run,omitempty"`
@@ -25,11 +23,12 @@ type ScheduleStatus struct {
 }
 
 func BackupStatus() (ScheduleStatus, error) {
-	loc, err := serverLocation()
-	if err != nil {
-		return ScheduleStatus{}, err
+	loc, timezoneErr := serverLocation()
+	now := time.Now().UTC()
+	if timezoneErr == nil {
+		now = now.In(loc)
 	}
-	s, err := scheduleStatus(CronPath, HistoryDir, time.Now().In(loc))
+	s, err := scheduleStatusWithTimezone(CronPath, HistoryDir, now, timezoneErr)
 	if err != nil {
 		return s, err
 	}
@@ -59,40 +58,28 @@ func BackupStatus() (ScheduleStatus, error) {
 	return s, nil
 }
 
-// Read the server's timezone file rather than a login shell's TZ override.
-func serverLocation() (*time.Location, error) {
-	if data, err := os.ReadFile("/etc/timezone"); err == nil {
-		zone := strings.TrimSpace(string(data))
-		if loc, err := time.LoadLocation(zone); err == nil && zone != "" && zone != "Local" {
-			return loc, nil
-		}
-	}
-	data, err := os.ReadFile("/etc/localtime")
-	if err != nil {
-		return nil, fmt.Errorf("read server timezone: %w", err)
-	}
-	name := "server local"
-	if path, err := filepath.EvalSymlinks("/etc/localtime"); err == nil {
-		if _, zone, ok := strings.Cut(path, "/zoneinfo/"); ok {
-			name = zone
-		}
-	}
-	return time.LoadLocationFromTZData(name, data)
+func scheduleStatus(path, historyDir string, now time.Time) (ScheduleStatus, error) {
+	return scheduleStatusWithTimezone(path, historyDir, now, nil)
 }
 
-func scheduleStatus(path, historyDir string, now time.Time) (ScheduleStatus, error) {
+func scheduleStatusWithTimezone(path, historyDir string, now time.Time, timezoneErr error) (ScheduleStatus, error) {
 	s, err := readSchedule(path)
 	if err != nil {
 		return ScheduleStatus{}, err
 	}
 	zone, offset := now.Zone()
 	result := ScheduleStatus{State: "not configured", Schedule: s, Timezone: fmt.Sprintf("%s (%s, UTC%+03d:%02d)", now.Location(), zone, offset/3600, abs(offset/60)%60), Scheduler: "not configured"}
+	if timezoneErr != nil {
+		result.Timezone, result.TimezoneError = "unknown", timezoneErr.Error()
+	}
 	if s != nil {
 		result.State = "paused"
 		if s.Enabled {
 			result.State = "enabled"
-			next := dailySlot(*s, now, true)
-			result.NextRun = &next
+			if timezoneErr == nil {
+				next := dailySlot(*s, now, true)
+				result.NextRun = &next
+			}
 		}
 		if s.Version == 0 {
 			result.HistoryNote = "Legacy cron schedule: edit or pause/resume to enable outcome tracking; earlier outcomes are unknown."
@@ -115,7 +102,7 @@ func scheduleStatus(path, historyDir string, now time.Time) (ScheduleStatus, err
 			result.LastSuccess = &copy
 		}
 	}
-	if s != nil && s.Enabled && s.Version == 1 {
+	if s != nil && s.Enabled && s.Version == 1 && timezoneErr == nil {
 		// A five-minute grace avoids declaring a run missed while cron starts it.
 		expected := dailySlot(*s, now.Add(-5*time.Minute), false)
 		if !expected.Before(s.Since) {
@@ -176,15 +163,21 @@ func abs(v int) int {
 
 func WriteScheduleStatus(w io.Writer, s ScheduleStatus) {
 	fmt.Fprintf(w, "Local backup schedule: %s\nServer timezone: %s\nScheduler: %s\n", s.State, s.Timezone, s.Scheduler)
+	if s.TimezoneError != "" {
+		fmt.Fprintln(w, "Timezone warning:", s.TimezoneError)
+	}
 	if s.SchedulerError != "" {
 		fmt.Fprintln(w, "Scheduler warning:", s.SchedulerError)
 	}
 	if s.Schedule != nil {
 		fmt.Fprintf(w, "Daily time: %02d:%02d (server time)\nRetention: %d days (maximum 30 archives; 75%% disk limit)\nDestination: %s\n", s.Schedule.Hour, s.Schedule.Minute, s.Schedule.RetentionDays, s.Schedule.Directory)
 	}
-	if s.NextRun != nil {
+	switch {
+	case s.NextRun != nil:
 		fmt.Fprintln(w, "Next scheduled slot:", s.NextRun.Format(time.RFC3339))
-	} else {
+	case s.TimezoneError != "" && s.Schedule != nil && s.Schedule.Enabled:
+		fmt.Fprintln(w, "Next scheduled slot: unknown (fix timezone configuration)")
+	default:
 		fmt.Fprintln(w, "Next scheduled slot: none")
 	}
 	if s.LastAttempt == nil {

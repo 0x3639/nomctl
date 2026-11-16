@@ -719,6 +719,9 @@ func BackupSchedule(current *config.Config) error {
 		cfg.BackupDir = directory
 	}
 	if err := withLock("schedule backups", func() error {
+		if err := backup.CheckScheduleUnchanged(saved); err != nil {
+			return err
+		}
 		if saved == nil {
 			return backup.LocalSchedule(*cfg)
 		}

@@ -21,6 +21,8 @@ Status: implemented, pending release. This extends the daily cron scheduler.
 
 Keep `/etc/cron.d/nomctl-backup` as the single authoritative schedule. Embed
 versioned JSON settings in a comment and comment out the job when paused.
+Stamp each new schedule epoch immediately before publication, after scheduler
+readiness and timer migration; repeated pause/resume preserves the epoch.
 Atomically replace the complete file; validate the generated job against its
 metadata before reading or editing it. Reject unexpected/manual changes rather
 than silently claiming they are managed. Read the previous nomctl-generated
@@ -36,7 +38,9 @@ Changing the daily hour, retention or destination never prunes files immediately
 ## Outcomes, concurrency and recovery
 
 New cron entries invoke a tracked scheduled run. Re-read the schedule under the
-operation lock so a queued invocation cannot bypass pause or use stale settings.
+operation lock and compare its epoch with the initial read so a queued invocation
+cannot bypass a completed pause/resume or use stale settings. Menu forms recheck
+the entire saved schedule under that lock and reject concurrent changes.
 Persist start and completion records atomically under `/var/lib/nomctl/backups`,
 independent of the archive filesystem. Report success, failure (with reason),
 skipped-because-busy, and interrupted runs. Retain a bounded recent history and
@@ -51,7 +55,11 @@ installed/resumed/edited is missed. Paused periods are not missed. History from
 older installations is unknown, not fabricated from an archive's modification
 time. The slot prediction follows Debian/Ubuntu cron’s fixed-time DST policy (run
 soon after a skipped time, do not repeat after a backward jump). The daemon
-controls actual dispatch; displayed times include the offset and timezone. There is no catch-up or
+controls actual dispatch; displayed times include the offset and timezone.
+Because cron versions use different timezone sources, conflicting timezone files
+produce an explicit warning with no next/missed predictions; status, history and
+controls remain available. Missing both timezone files defaults to UTC, while
+other read failures remain visible. There is no catch-up or
 automatic retry after downtime, failure or lock contention; wait for the next
 daily slot. Resume likewise never starts a backup immediately.
 

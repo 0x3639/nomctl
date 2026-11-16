@@ -196,10 +196,10 @@ type ScheduleChanges struct {
 
 // EditLocalSchedule requires the caller to hold the shared operation lock.
 func EditLocalSchedule(changes ScheduleChanges) error {
-	return editSchedule(CronPath, changes, time.Now())
+	return editSchedule(CronPath, changes, time.Now)
 }
 
-func editSchedule(path string, changes ScheduleChanges, now time.Time) error {
+func editSchedule(path string, changes ScheduleChanges, now func() time.Time) error {
 	s, err := requiredSchedule(path)
 	if err != nil {
 		return err
@@ -213,23 +213,39 @@ func editSchedule(path string, changes ScheduleChanges, now time.Time) error {
 	if changes.Directory != nil {
 		s.Directory = *changes.Directory
 	}
-	s.Version, s.Since = 1, now.UTC()
-	return publishSchedule(*s, path)
+	s.Version = 1
+	return publishSchedule(*s, path, true, now)
 }
 
 // SetScheduleEnabled requires the caller to hold the shared operation lock.
-func SetScheduleEnabled(enabled bool) error { return setScheduleEnabled(CronPath, enabled, time.Now()) }
+func SetScheduleEnabled(enabled bool) error { return setScheduleEnabled(CronPath, enabled, time.Now) }
 
-func setScheduleEnabled(path string, enabled bool, now time.Time) error {
+func setScheduleEnabled(path string, enabled bool, now func() time.Time) error {
 	s, err := requiredSchedule(path)
 	if err != nil {
 		return err
 	}
-	if s.Enabled != enabled || s.Version == 0 {
-		s.Since = now.UTC()
-	}
+	newEpoch := s.Enabled != enabled || s.Version == 0
 	s.Enabled, s.Version = enabled, 1
-	return publishSchedule(*s, path)
+	return publishSchedule(*s, path, newEpoch, now)
+}
+
+// CheckScheduleUnchanged rejects a stale menu form, including a new setup form
+// opened before another operator installed or paused a schedule. The caller
+// must hold the operation lock through this check and the subsequent write.
+func CheckScheduleUnchanged(expected *Schedule) error {
+	return checkScheduleUnchanged(CronPath, expected)
+}
+
+func checkScheduleUnchanged(path string, expected *Schedule) error {
+	current, err := readSchedule(path)
+	if err != nil {
+		return err
+	}
+	if (current == nil) != (expected == nil) || (current != nil && *current != *expected) {
+		return errors.New("backup schedule changed while this form was open; reopen it to review the saved settings")
+	}
+	return nil
 }
 
 func requiredSchedule(path string) (*Schedule, error) {
