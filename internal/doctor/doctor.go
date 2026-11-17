@@ -85,16 +85,6 @@ func Run(ctx context.Context, cfg config.Config, opts Options) (Report, error) {
 	after := take()
 	r.Checks = observationChecks(before, after, settings, settingsErr)
 	r.Identity = collectIdentity(ctx, cfg.BinaryPath(), "/proc", after.Service, after.Node)
-	// ProcessInfo can succeed even when another stats method fails. Retain
-	// version/commit evidence without declaring the entire RPC healthy.
-	if settings.rpcURL != "" && after.continuity == "" && r.Identity.Version == "" {
-		infoCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-		p, err := sampler.Node.ProcessInfo(infoCtx)
-		stop()
-		if err == nil {
-			r.Identity.Version, r.Identity.Commit = clean(p.Version), clean(p.Commit)
-		}
-	}
 	r.Checks = append(r.Checks, identityCheck(r.Identity))
 	r.Checks = append(r.Checks, diskCheck("data_disk", cfg.ZnnDir, cfg.MinFreeSpaceKB, fsx.DiskFree))
 	if schedule, err := backup.ReadSchedule(); err != nil {

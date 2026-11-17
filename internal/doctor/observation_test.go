@@ -73,3 +73,26 @@ func TestStableObservationKeepsProgressAndIdentity(t *testing.T) {
 		t.Fatal(o, checks)
 	}
 }
+
+func TestKnownRestartIncreaseSurvivesUncertainContinuity(t *testing.T) {
+	for _, reason := range []string{"missing timestamp", "failed post-RPC query"} {
+		t.Run(reason, func(t *testing.T) {
+			a, b := healthySamples()
+			a.Service.NRestarts = 2
+			b.Service.NRestarts = 3
+			var queryErr error
+			if reason == "missing timestamp" {
+				a.Service.Since = time.Time{}
+			} else {
+				queryErr = errors.New("systemd unavailable")
+			}
+			first := observe(context.Background(), func(context.Context) metrics.Sample { return a }, func(context.Context, string) (metrics.ServiceProps, error) {
+				return metrics.ServiceProps{ActiveState: a.Service.ActiveState, MainPID: a.Service.MainPID, NRestarts: a.Service.NRestarts, ExecMainStart: a.Service.Since}, queryErr
+			})
+			checks := observationChecks(first, observation{Sample: b}, settings{rpcEnabled: true, minPeers: 8}, nil)
+			if first.continuity != "unknown" || findCheck(t, checks, "chain").Severity != "unknown" || findCheck(t, checks, "restarts").Severity != "warning" {
+				t.Fatal(first, checks)
+			}
+		})
+	}
+}

@@ -21,7 +21,6 @@ func observe(ctx context.Context, take func(context.Context) metrics.Sample, rer
 	after, err := reread(ctx, before.Unit)
 	if err != nil || after.ActiveState == "" {
 		o.continuity = "unknown"
-		o.Service.Error = "service identity could not be rechecked after RPC collection"
 	} else {
 		switch {
 		case before.Error != "" && before.ActiveState == "", before.MainPID > 0 && (before.Since.IsZero() || after.ExecMainStart.IsZero()):
@@ -54,7 +53,7 @@ func observationChecks(a, b observation, s settings, configErr error) []Check {
 	}
 	for i, c := range checks {
 		switch {
-		case c.ID == "restarts":
+		case c.ID == "restarts" && c.Severity != "warning":
 			checks[i] = continuity
 		case c.ID == "chain":
 			checks[i] = check("chain", "unknown", "Chain progress comparison is incomplete", "Process continuity was not established around both RPC observations; their heights are not compared.", "Repeat after the service is continuously running and systemd can confirm its identity.")

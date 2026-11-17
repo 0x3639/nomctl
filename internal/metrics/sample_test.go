@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -80,6 +81,33 @@ func testSampler(t *testing.T, url string) *Sampler {
 	}
 	s.diskFree = func(string) (uint64, uint64, error) { return 210 << 30, 500 << 30, nil }
 	return s
+}
+
+func TestPartialStatsPreserveOnlyCurrentSnapshotIdentity(t *testing.T) {
+	var failIdentity atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Method string }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			return
+		}
+		if req.Method == "stats.processInfo" && !failIdentity.Load() {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"version":"v0.0.10","commit":"feedbeef"}}`))
+		} else {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"unavailable"}}`))
+		}
+	}))
+	defer srv.Close()
+	s := testSampler(t, srv.URL)
+	n := s.Take(context.Background()).Node
+	if n.Reachable || n.Error == "" || n.Version != "v0.0.10" || n.Commit != "feedbeef" {
+		t.Fatal(n)
+	}
+	failIdentity.Store(true)
+	n = s.Take(context.Background()).Node
+	if n.Version != "" || n.Commit != "" {
+		t.Fatal("retained identity from a previous snapshot", n)
+	}
 }
 
 func TestTakeAndCPU(t *testing.T) {

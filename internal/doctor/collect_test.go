@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,6 +71,7 @@ func TestCollectIdentityRechecksProcess(t *testing.T) {
 
 func TestRunPreservesVersionWhenAnotherRPCMethodFails(t *testing.T) {
 	fakeTools(t, "ActiveState=active\nSubState=running\nMainPID=0\nNRestarts=0")
+	var identityCalls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Method string `json:"method"`
@@ -79,6 +81,7 @@ func TestRunPreservesVersionWhenAnotherRPCMethodFails(t *testing.T) {
 			return
 		}
 		if req.Method == "stats.processInfo" {
+			identityCalls.Add(1)
 			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"version":"v0.0.10","commit":"feedbeef"}}`)
 			return
 		}
@@ -99,6 +102,9 @@ func TestRunPreservesVersionWhenAnotherRPCMethodFails(t *testing.T) {
 	}
 	if r.Identity.Version != "v0.0.10" || r.Identity.Commit != "feedbeef" {
 		t.Fatal(r.Identity)
+	}
+	if identityCalls.Load() != 2 {
+		t.Fatalf("identity must come from the two bracketed samples, got %d calls", identityCalls.Load())
 	}
 	want := sha256.Sum256([]byte("installed executable fixture"))
 	if r.Identity.Installed.SHA256 != hex.EncodeToString(want[:]) {
