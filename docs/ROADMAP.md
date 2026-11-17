@@ -91,12 +91,13 @@ unchecked), the whole Producer section reserved for pillar setup,
 backup of every previous file, atomic 0600 writes, `--restart` on the CLI
 and a prompt in the menu. `edit` works on a copy like visudo.
 
-### 6. Network check — planned
+### 6. Network check — integrated into R1 (v0.16.0)
 
-`nomctl net check`: confirm port 35995/TCP is reachable from outside (via a
-self-connect through the public IP, with a helper endpoint if one becomes
-available), count inbound vs outbound peers, and print firewall guidance.
-The number one cause of `not enough peers`.
+`nomctl doctor` checks the configured P2P port's local listeners and ownership,
+reports peer counts, and suggests firewall/NAT checks. Outside reachability is
+unknown unless the operator selects a compatible external probe and supplies
+the node's public IP. A self-connect is not treated as an outside test.
+Inbound/outbound peer classification remains a possible follow-up.
 
 MyTonCtrl equivalent: `checkAdnl`, `adnl_connection_failed` alert.
 
@@ -119,11 +120,14 @@ deploy.
 
 MyTonCtrl equivalent: `benchmark`.
 
-### 9. Doctor — planned
+### 9. Doctor — done (v0.16.0)
 
-`nomctl doctor`: run the sampler and the crash-marker grep, match against
-the README "common signatures" table and print the diagnosis and suggested
-fix. Turns the troubleshooting section into a command.
+`nomctl doctor [--json] [--wait 10s]` and **Manage node → Check my node**
+combine sampled health, network/disk/clock evidence, and recent journal
+signatures with suggested next steps. Includes znnd's reported version/commit
+and installed/running executable SHA-256. Missing evidence stays unknown;
+the diagnostic does not change services or settings. Design:
+`docs/superpowers/specs/2026-11-17-node-diagnostics-design.md`.
 
 ### 10. Bootstrap sync — done (v0.6.0)
 
