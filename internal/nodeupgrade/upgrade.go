@@ -14,9 +14,13 @@ import (
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/fsx"
+	"github.com/0x3639/nomctl/internal/health"
 	"github.com/0x3639/nomctl/internal/logx"
 	"github.com/0x3639/nomctl/internal/service"
 )
+
+var observeHealth = health.Observe
+var checkHealth = health.Check
 
 // Run downloads and verifies before stopping the service. The caller must hold
 // the same lock used by backup/restore/deploy until this operation returns.
@@ -66,6 +70,11 @@ func checkInstalled(cfg config.Config) error {
 func installPrepared(cfg config.Config, binary, tag string) error {
 	finishSignals := protectTransaction()
 	defer finishSignals()
+	before := observeHealth(context.Background(), cfg)
+	expected, err := backup.SHA256File(binary)
+	if err != nil {
+		return err
+	}
 	slog.Info("Preparing the pre-upgrade restore point (protected from backup pruning)...")
 	snapshot, err := backup.PrepareRestorePoint(cfg, "Before upgrade to "+tag)
 	if err != nil {
@@ -117,6 +126,7 @@ func installPrepared(cfg config.Config, binary, tag string) error {
 		}
 		return errors.Join(operationErr, backupErr)
 	}
+	recoveryID := filepath.Base(filepath.Dir(snapshot.Path()))
 	slog.Info("Installing the prepared node binary at " + cfg.BinaryPath() + " (keeping .previous)...")
 	if err := os.Rename(previous, cfg.BinaryPath()+".previous"); err != nil {
 		return finish(recoverOriginal(fmt.Errorf("save previous binary: %w", err)))
@@ -141,16 +151,21 @@ func installPrepared(cfg config.Config, binary, tag string) error {
 		if startErr == nil {
 			return fmt.Errorf("node %s is running, but backup finalization failed: %w", tag, err)
 		}
-		return err
+		return &health.Failure{RecoveryID: recoveryID, Cause: err, Report: health.Report{Outcome: "failed", Before: before}}
 	}
 	st, err := service.Status(cfg.ServiceName)
 	if err != nil {
-		return fmt.Errorf("backup complete, but cannot confirm the upgraded service state: %w", err)
+		return &health.Failure{RecoveryID: recoveryID, Cause: err, Report: health.Report{Outcome: "unknown", Before: before, Reasons: []string{"cannot confirm the upgraded service state"}}}
 	}
 	if st != service.Active {
-		return fmt.Errorf("backup complete, but %s is %s; previous binary: %s.previous", cfg.ServiceName, st, cfg.BinaryPath())
+		return &health.Failure{RecoveryID: recoveryID, Report: health.Report{Outcome: "failed", Before: before, Reasons: []string{fmt.Sprintf("upgraded service is %s", st)}}}
 	}
-	logx.Success(fmt.Sprintf("Node upgraded to %s; service is active and restore point is complete", tag))
+	report, err := checkHealth(context.Background(), cfg, before, expected, health.DefaultWindow)
+	health.Write(os.Stderr, report)
+	if err != nil {
+		return &health.Failure{Report: report, RecoveryID: recoveryID, Cause: err}
+	}
+	logx.Success(fmt.Sprintf("Node upgraded to %s; health is %s and restore point is complete", tag, report.Outcome))
 	return nil
 }
 

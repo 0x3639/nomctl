@@ -33,12 +33,29 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl backup schedule edit [--hour HOUR] [--retention-days DAYS] [--directory PATH]` | Change only supplied settings; preserve a paused schedule |
 | `nomctl backup schedule pause` | Pause future daily backups; keep all stored files |
 | `nomctl backup schedule resume` | Resume at the next daily slot after checking cron |
+| `nomctl verify [--all \| --file FILE \| --point ID] [--directory PATH] [--json] [--rehearse]` | [Verify recovery files](/guide/backups#verify-recovery-files) without stopping znnd; defaults to all files; rehearsal checks temporary space first |
+| `nomctl verify status [--all \| --file FILE \| --point ID] [--directory PATH] [--json]` | View saved verification results; recheck content identities and mark changed files stale |
+| `nomctl verify schedule [--hour HOUR] [--directory PATH]` | Set up or edit daily verification without running it now; preserves a paused schedule |
+| `nomctl verify schedule pause` / `nomctl verify schedule resume` | Control future verification; retain recovery files and saved results |
 | `nomctl restore [--file FILE]` | Restore chain data only, keeping installed znnd; picker when `--file` is omitted |
 | `nomctl backup wallet [--output DIR] [--no-encrypt]` | [wallet and config backup](/guide/backups#wallet-and-config-backup), age-encrypted; passphrase prompted or `NOMCTL_WALLET_PASSPHRASE` |
 | `nomctl restore wallet FILE [--restart]` | verifies the archived key against its config before replacing anything |
 | `nomctl bootstrap [URL] [--discard]` | [Bootstrap](/guide/bootstrap): verified snapshot instead of syncing from genesis |
 | `nomctl analytics install` | [Analytics stack](/guide/analytics) |
 | `nomctl upgrade [--check] [--version TAG] [--rollback]` | [Upgrading](/guide/upgrading) |
+
+## Health and device migration
+
+| Command | Notes |
+|---|---|
+| `nomctl health [--wait 30s] [--json]` | [Observe health](/guide/health) and intended znnd identity; no mutations |
+| `nomctl migrate` | Open the [migration menu](/guide/migration) |
+| `nomctl migrate plan --to HOST [--port 22] [--sudo] [--remote-nomctl PATH] [--destination-data PATH] [--destination-binary PATH] [--destination-service NAME]` | Save a checked preview; default target `/root/.znn`, `/usr/local/bin/znnd`, `go-zenon` |
+| `nomctl migrate transfer [--yes]` / `nomctl migrate resume [--yes]` | Preserve recovery files, stop/block both nodes, then copy and verify; initial run requires a wallet-backup passphrase |
+| `nomctl migrate status [--json]` | Saved phases plus current stopped/start-block evidence from both hosts |
+| `nomctl migrate handoff [--yes]` | Explicitly allow the replacement to start and check health; keep the original blocked |
+| `nomctl migrate return [--yes]` | Stop/block replacement before restarting and checking original |
+| `nomctl migrate cancel [--yes]` | Discard only an untouched preview |
 
 ## config.json
 

@@ -3,6 +3,7 @@
 package restore
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -48,8 +49,19 @@ func Verify(archive string) error {
 	if err != nil {
 		return err
 	}
-	if calculated != strings.TrimSpace(string(stored)) {
-		return fmt.Errorf("integrity check failed for %s", archive)
+	return ChecksumMatches(calculated, string(stored))
+}
+
+// ChecksumMatches accepts the plain SHA-256 sidecars written by nomctl and
+// legacy backup.sh. Malformed or missing checksums never count as verification.
+func ChecksumMatches(calculated, stored string) error {
+	stored = strings.TrimSpace(stored)
+	decoded, err := hex.DecodeString(stored)
+	if err != nil || len(decoded) != 32 {
+		return errors.New("missing or invalid SHA-256 checksum")
+	}
+	if !strings.EqualFold(calculated, stored) {
+		return errors.New("SHA-256 checksum does not match")
 	}
 	return nil
 }

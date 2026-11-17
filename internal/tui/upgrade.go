@@ -71,7 +71,7 @@ func UpgradeNode(cfg config.Config) error {
 	if !ok {
 		return ErrCancelled
 	}
-	return withLock("upgrade node", func() error { return nodeupgrade.Run(ctx, cfg, client, release) })
+	return RecoverChange(cfg, withLock("upgrade node", func() error { return nodeupgrade.Run(ctx, cfg, client, release) }))
 }
 
 // ConfirmSourceUpgrade describes downtime and the mandatory safety backup.
@@ -107,5 +107,5 @@ func UpgradeSource(cfg config.Config) error {
 	if !ok {
 		return ErrCancelled
 	}
-	return withLock("upgrade node from source", func() error { return nodeupgrade.FromSource(context.Background(), cfg, repo, branch) })
+	return RecoverChange(cfg, withLock("upgrade node from source", func() error { return nodeupgrade.FromSource(context.Background(), cfg, repo, branch) }))
 }

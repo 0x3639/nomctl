@@ -108,6 +108,10 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return ManageBackups(*cfg)
 	case ActionBackupSchedule:
 		return BackupScheduleMenu(cfg)
+	case ActionMigration:
+		return MigrationMenu(*cfg)
+	case ActionVerifyRecovery:
+		return VerifyRecoveryFiles(*cfg)
 	case ActionPillarSetup:
 		return PillarSetup(*cfg)
 	case ActionPillarStatus:
@@ -660,10 +664,10 @@ func Restore(cfg config.Config) error {
 				gone = true
 				return nil
 			}
-			return restore.Run(cfg, archive)
+			return restore.WithHealth(cfg, archive)
 		})
 		if err != nil || !gone {
-			return err
+			return RecoverChange(cfg, err)
 		}
 		slog.Warn(archive + " was removed by a backup run in the meantime; pick another")
 	}

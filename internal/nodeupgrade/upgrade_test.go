@@ -15,7 +15,9 @@ import (
 
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/doctor"
 	"github.com/0x3639/nomctl/internal/execx"
+	"github.com/0x3639/nomctl/internal/health"
 )
 
 func stub(t *testing.T, dir, name, script string) {
@@ -29,6 +31,12 @@ func stub(t *testing.T, dir, name, script string) {
 
 func fixture(t *testing.T) (config.Config, string, string) {
 	t.Helper()
+	oldObserve, oldCheck := observeHealth, checkHealth
+	t.Cleanup(func() { observeHealth, checkHealth = oldObserve, oldCheck })
+	observeHealth = func(context.Context, config.Config) doctor.NodeObservation { return doctor.NodeObservation{} }
+	checkHealth = func(context.Context, config.Config, doctor.NodeObservation, string, time.Duration) (health.Report, error) {
+		return health.Report{Outcome: "healthy"}, nil
+	}
 	root := t.TempDir()
 	cfg := config.Default()
 	cfg.ZnnDir = filepath.Join(root, "data")
@@ -346,5 +354,29 @@ func TestPreflightFailureDoesNotStopNode(t *testing.T) {
 	}
 	if _, err := os.Stat(events); !os.IsNotExist(err) {
 		t.Fatal("service touched before backup preflight")
+	}
+}
+
+func TestPostUpgradeHealthFailureKeepsMatchingRecovery(t *testing.T) {
+	cfg, binary, _ := fixture(t)
+	checkHealth = func(_ context.Context, _ config.Config, _ doctor.NodeObservation, expected string, _ time.Duration) (health.Report, error) {
+		sum, err := backup.SHA256File(binary)
+		if err != nil || sum != expected {
+			t.Fatalf("wrong intended binary: %s %v", expected, err)
+		}
+		return health.Report{Outcome: "stalled"}, errors.New("no progress")
+	}
+	err := installPrepared(cfg, binary, "v1")
+	var failure *health.Failure
+	if !errors.As(err, &failure) || failure.RecoveryID == "" {
+		t.Fatalf("missing recovery pair: %v", err)
+	}
+	point, err := backup.ReadRestorePoint(cfg, failure.RecoveryID)
+	if err != nil || !point.Complete {
+		t.Fatalf("recovery incomplete: %+v %v", point, err)
+	}
+	data, _ := os.ReadFile(cfg.BinaryPath())
+	if string(data) != "new" {
+		t.Fatalf("unexpected automatic downgrade: %q", data)
 	}
 }

@@ -9,6 +9,9 @@ import (
 	"github.com/0x3639/nomctl/internal/execx"
 )
 
+// BinaryInfo reads version/build identity from a selected local executable.
+func BinaryInfo(path string) (version, commit string) { return savedBinaryInfo(path) }
+
 // savedBinaryInfo reads identity from the exact saved znnd, never from a live
 // RPC endpoint that may refer to another node. Failure is informational only.
 func savedBinaryInfo(path string) (version, commit string) {

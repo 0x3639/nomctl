@@ -3,12 +3,15 @@
 The [phased roadmap](../website/docs/roadmap.md) is the current delivery plan.
 **R1: Check my node** and **R2: backup status and schedule controls** are
 implemented for **v0.16.0**. R1 includes znnd version/commit and installed/running
-executable SHA-256. Next are R3 recovery-file verification and R4 health checks
-after changes. **R11: device migration** will transfer the entire configured `.znn`
-folder to a new device using rsync over SSH, including wallet/config and hidden
-files, with stopped-node copying, transfer verification, and an explicit
-producer handoff. The original data stays intact until the operator chooses
-to remove it. R11 depends on R3/R4, not R8's off-machine archive uploads.
+executable SHA-256. **R3: recovery-file verification** is implemented locally
+(not released): `nomctl verify`, saved results, optional extraction rehearsal,
+and daily verification with pause/resume. **R4: health checks after changes** and
+**R11: device migration** are also implemented locally (not released). R4 checks
+observed progress and intended znnd identity after upgrades/restores and offers
+confirmed recovery. R11 copies the entire configured `.znn` using rsync over
+SSH, with persistent start blocks, verification, resume, and explicit handoff or
+return. The original data is retained. Container rehearsals cover failure paths;
+real-server deployment/reboot acceptance remains a release check.
 
 The list below retains the earlier feature history and backlog beyond v0.2.0;
 use the phased roadmap for current priority order. Each feature gets a design

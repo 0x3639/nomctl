@@ -39,9 +39,9 @@ var restorePointCmd = &cobra.Command{
 		if ui.Interactive() && !flagPointDataOnly {
 			return tui.RestorePointByID(cfg, args[0])
 		}
-		return withLock("restore from restore point", func() error {
-			return restore.RunRestorePointWithOptions(cfg, args[0], restore.RestorePointOptions{DataOnly: flagPointDataOnly})
-		})
+		return finishInteractiveChange(withLock("restore from restore point", func() error {
+			return restore.PointWithHealth(cfg, args[0], restore.RestorePointOptions{DataOnly: flagPointDataOnly})
+		}), recoveryInteractive() && !flagPointDataOnly)
 	},
 }
 

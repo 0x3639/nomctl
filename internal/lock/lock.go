@@ -20,15 +20,30 @@ var ErrBusy = errors.New("another nomctl operation is in progress")
 // so a stale file never survives a reboot.
 const DefaultPath = "/run/nomctl.lock"
 
+// MigrationGuard persists across reboot while producer ownership is in transit.
+const MigrationGuard = "/var/lib/nomctl/migration/blocked"
+
 // Lock is a held lock.
 type Lock struct {
 	f *os.File
 }
 
+// File lets a supervised child inherit the held flock through exec.ExtraFiles.
+// The child then keeps a transfer lock alive if its supervising process dies.
+func (l *Lock) File() *os.File { return l.f }
+
 // Acquire takes the exclusive lock at path without waiting. operation names
 // what the caller is doing and is recorded in the file for the error message
 // shown to whoever collides with it.
 func Acquire(path, operation string) (*Lock, error) {
+	return acquire(path, operation, MigrationGuard)
+}
+
+// AcquireMigration permits only the migration coordinator to resolve a durable
+// handoff guard. Ordinary backup/restore/service operations always use Acquire.
+func AcquireMigration(path, operation string) (*Lock, error) { return acquire(path, operation, "") }
+
+func acquire(path, operation, guard string) (*Lock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -47,7 +62,17 @@ func Acquire(path, operation string) (*Lock, error) {
 	// Record who holds it, for the message above.
 	_ = f.Truncate(0)
 	_, _ = f.WriteAt([]byte(fmt.Sprintf("%s pid %d\n", operation, os.Getpid())), 0)
-	return &Lock{f: f}, nil
+	l := &Lock{f: f}
+	if guard != "" {
+		if _, err := os.Lstat(guard); !errors.Is(err, os.ErrNotExist) {
+			l.Release()
+			if err != nil {
+				return nil, fmt.Errorf("check migration handoff guard %s: %w", guard, err)
+			}
+			return nil, fmt.Errorf("node operations are blocked by a persistent migration handoff; use 'nomctl migrate status', resume, or return before changing this node")
+		}
+	}
+	return l, nil
 }
 
 // Release drops the lock.

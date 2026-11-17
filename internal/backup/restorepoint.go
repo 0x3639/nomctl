@@ -212,11 +212,18 @@ func ReadRestorePoint(cfg config.Config, id string) (RestorePoint, error) {
 	if err != nil {
 		return p, err
 	}
+	return DecodeRestorePoint(data, dir, cfg.ServiceName)
+}
+
+// DecodeRestorePoint validates metadata already read from a stable file.
+// Version and commit fields are optional for older restore points.
+func DecodeRestorePoint(data []byte, dir, service string) (RestorePoint, error) {
+	var p RestorePoint
 	if err := json.Unmarshal(data, &p); err != nil {
 		return p, err
 	}
-	if p.ID != id || p.Service != cfg.ServiceName || p.CreatedAt.IsZero() || p.KeepDays < 0 || p.KeepDays > 30 {
-		return p, fmt.Errorf("invalid restore point metadata: %s", id)
+	if p.ID != filepath.Base(dir) || p.Service != service || p.CreatedAt.IsZero() || p.KeepDays < 0 || p.KeepDays > 30 {
+		return p, fmt.Errorf("invalid restore point metadata: %s", filepath.Base(dir))
 	}
 	p.Dir = dir
 	return p, nil

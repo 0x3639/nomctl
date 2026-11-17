@@ -32,3 +32,21 @@ use the configured repository/branch unless flags override them. The lock spans
 build and installation. Tests stub git/Go/systemctl to prove build-before-stop and
 no downtime on failures. Update all menu navigation docs, CLI references, source
 upgrade guidance and update-available suggestions.
+
+## Reopen the menu after a nomctl upgrade
+
+After **Upgrade nomctl** installs a new executable, replace the menu process
+with that exact installed path. Return from the updater first so its staging
+directory and request context are cleaned up. The confirmation form has already
+restored the terminal before the updater runs. Preserve the original menu
+arguments, environment, and terminal streams; open the new version's main menu
+without a second prompt or leaving an older menu behind it.
+
+The updater returns the installed path only after replacement succeeds. A
+cancelled, failed, check-only, or already-current operation does not relaunch.
+Command-line upgrades continue returning to the shell. If installation succeeds
+but alerts-daemon maintenance fails, show that warning and still reopen the new
+menu. If process replacement itself fails, keep the existing menu usable and
+explain how to exit and reopen the installed version manually. Do not restart
+znnd. Test the no-op/failure boundaries, preserved arguments/environment, and a
+real process replacement with unchanged PID and completed staging cleanup.

@@ -138,6 +138,99 @@ sudo nomctl restore                                   # picker
 
 Restore verifies the archive against its sidecar, then inspects every entry: only directories and regular files inside `nom`, `network`, `consensus` and `cache` are accepted. An archive holding anything else, such as `config.json`, `wallet/`, links, devices or paths that escape the folders, is refused before the node is touched, so a restore can never overwrite files a backup did not make. The accepted folders are extracted into a private staging directory while the node keeps running; then the node is stopped, the current copies of those folders are moved into `<backup dir>/restore/<name>.bak.<timestamp>` as a safety snapshot, the staged folders are renamed into place and the node starts. Folders absent from the archive are left alone. If moving or installing these folders fails, recovery puts back their previous state and attempts to restart the node. A failure to start after a completed chain-data installation is reported with the restored data still in place; inspect the service and retained safety copies before recovery.
 
+## Verify recovery files
+
+Under **Backups & recovery → Verify recovery files**, check all ordinary backups
+and protected restore points, or choose one. Verification reads the files while
+znnd remains in its current state. It does not change live data, execute the saved
+binary, delete a failed point, or apply retention rules.
+
+```bash
+sudo nomctl verify                           # all recovery files for this service
+sudo nomctl verify --directory /mnt/backups
+sudo nomctl verify --file ARCHIVE.tar.gz
+sudo nomctl verify --point RESTORE_POINT_ID
+sudo nomctl verify --all --json
+sudo nomctl verify status                    # saved results with identity checks
+sudo nomctl verify status --point RESTORE_POINT_ID --json
+```
+
+Checks cover the archive's SHA-256 sidecar, all archive entries and the gzip
+trailer. Truncation, bad checksums, links, unsafe paths, duplicate/conflicting
+entries, and missing files fail clearly. Full restore points also require valid,
+completed metadata and a saved znnd matching its recorded SHA-256. Older points
+without version or commit metadata are supported; those fields show as
+unavailable. Incomplete points and backups missing a component are included so
+they can be inspected. Other services' files and encrypted wallet archives are
+outside this check. Wallet recovery uses its separate validation workflow.
+
+Results are saved atomically under `/var/lib/nomctl/verification`, with check
+times, failures, exact component paths, file identities, and content hashes. A
+failed artifact gives a nonzero command exit; other selected artifacts are still
+checked unless the operation is cancelled or results cannot be saved. An
+unfinished attempt never counts as a pass. Ctrl+C cancels long reads.
+
+**View saved results** and `verify status` recheck both file metadata and content
+hashes. Changed, replaced, or missing components make the saved result **stale**.
+Previously verified backups and restore points remain listed as stale even when
+all their files have been deleted, within the selected service and directory.
+This reads entire compressed archives and saved executables and can take time
+on large collections; archive inspection and extraction retain their original
+check times. Status checks are available on request so opening the menu does
+not automatically scan every archive. Select one artifact for a narrower check.
+
+**Integrity is not startup compatibility.** A pass establishes the checked files'
+integrity and allowed archive structure; it does not prove that a particular
+znnd version can open the database or that the restored node will start.
+
+### Optional extraction rehearsal
+
+```bash
+sudo nomctl verify --point RESTORE_POINT_ID --rehearse
+```
+
+Choose **Check integrity and rehearse extraction** in the menu for the same
+behavior. After integrity checks, nomctl checks space for the expanded contents
+and filesystem overhead, preserving the 75% disk-use ceiling and configured
+free-space reserve. It extracts into a private temporary directory under the
+selected backup directory, checks space during writes, and removes that
+directory after success, error, or cancellation. It never prunes to make room.
+A forced kill or power loss can leave a `.nomctl-verify-*` directory for manual
+cleanup after confirming no rehearsal is running. Rehearsal is reported
+separately and does not start znnd or establish database compatibility.
+
+### Optional daily verification
+
+```bash
+sudo nomctl verify schedule --hour 5 --directory /mnt/backups
+sudo nomctl verify schedule pause
+sudo nomctl verify schedule resume
+sudo nomctl verify status
+```
+
+The menu offers setup/edit and pause/resume controls. Setup checks cron readiness
+using the same installer as backup scheduling, then saves one separate job in
+`/etc/cron.d/nomctl-verify`. It checks all recovery files for the saved service
+and directory daily at minute 17 of the selected hour, in server time. Setup
+does not run verification immediately. Editing preserves unspecified settings
+and keeps a paused job paused. Pause leaves files and saved results intact;
+resume checks cron before enabling the job. A saved enabled schedule describes
+configuration, not proof that cron is healthy; inspect the last scheduled
+attempt and the cron service if runs are missing.
+
+Scheduled runs record success, failure, unfinished attempts, or
+**skipped-because-busy**. They never rehearse extraction. Verification shares the
+operation lock with backup, restore, upgrade, and cleanup, so these operations
+cannot change recovery files during a check. The lock is held for the entire
+verification, including all archive reads. Large collections can take a long
+time and compete with znnd for disk bandwidth; choose a quiet daily slot.
+Manual backup, restore, upgrade, or cleanup attempts during that window return
+busy and must be retried after verification finishes or is cancelled.
+Busy runs are skipped; missed or
+failed runs do not catch up or retry automatically. The next daily slot is the
+next attempt. Backup schedules, retention, and protected-point deletion rules
+are unchanged.
+
 ## Wallet and config backup
 
 Chain-data backups leave out the two files that let a node produce: the wallet directory, which holds the producer key, and `config.json`, which holds its password. They get their own small, encrypted backup:
@@ -169,3 +262,7 @@ The whole current wallet directory and `config.json` are moved to a unique priva
 An installation failure puts back the previous files, removes paths that did not previously exist, and leaves the node stopped. If the restored node fails to restart, nomctl first confirms it is stopped, then restores the previous files and leaves it stopped for inspection. If that stop fails, the complete restored files stay installed and the previous files stay in the reported safety directory; stop the node before recovery. Any incomplete rollback is reported with the recovery directory. Inspect the data and safety directories before starting the node after an error.
 
 The menu offers both under **Backups & recovery**. The `wallet_backup_missing` alert (off by default) sends one message when a producer key exists without a backup newer than the key; see [Alert rules](/alerts/rules).
+
+## Health after changes
+
+Upgrades and chain restores now finish with a [bounded health check](/guide/health), including before/after znnd version, commit, and executable hashes. Failures identify a retained matching recovery point and offer separately confirmed recovery in interactive use. There is no automatic binary-only downgrade.

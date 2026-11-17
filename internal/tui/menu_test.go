@@ -22,6 +22,8 @@ func TestMenuOptions(t *testing.T) {
 func TestRequestedLabelsAndReachableActions(t *testing.T) {
 	labels := map[Action]string{
 		ActionDoctor:         "Check my node",
+		ActionMigration:      "Migrate to a new device",
+		ActionVerifyRecovery: "Verify recovery files",
 		ActionRestore:        "Restore from backup",
 		ActionBackupSchedule: "Backup status & schedule", ActionManageBackups: "Manage backups",
 		ActionCreatePoint: "Create restore point", ActionRestorePoint: "Restore from restore point", ActionManagePoints: "Manage restore points",

@@ -99,19 +99,8 @@ func publishSchedule(s Schedule, path string, newEpoch bool, now func() time.Tim
 	if !s.Enabled {
 		return publish()
 	}
-	cronUnit, err := ensureCronInstalled()
-	if err != nil {
+	if err := EnsureCronReady(); err != nil {
 		return err
-	}
-	if err := service.EnableNow(cronUnit); err != nil {
-		return fmt.Errorf("enable backup scheduler %s: %w", cronUnit, err)
-	}
-	state, err := service.Status(cronUnit)
-	if err != nil {
-		return err
-	}
-	if state != service.Active {
-		return fmt.Errorf("backup scheduler %s did not start (state: %s); check its service logs and retry", cronUnit, state)
 	}
 	timerExists, err := service.Exists(TimerName + ".timer")
 	if err != nil {
@@ -130,6 +119,26 @@ func publishSchedule(s Schedule, path string, newEpoch bool, now func() time.Tim
 		return err
 	}
 	logx.Success(fmt.Sprintf("Local backups scheduled daily at %02d:%02d (server time), keeping up to %d days; disk limit %d%%. Cron job: %s", s.Hour, s.Minute, s.RetentionDays, MaxDiskUsedPercent, path))
+	return nil
+}
+
+// EnsureCronReady is shared by backup and recovery verification schedules. It
+// does not alter the node service or either managed job.
+func EnsureCronReady() error {
+	cronUnit, err := ensureCronInstalled()
+	if err != nil {
+		return err
+	}
+	if err := service.EnableNow(cronUnit); err != nil {
+		return fmt.Errorf("enable backup scheduler %s: %w", cronUnit, err)
+	}
+	state, err := service.Status(cronUnit)
+	if err != nil {
+		return err
+	}
+	if state != service.Active {
+		return fmt.Errorf("backup scheduler %s did not start (state: %s); check its service logs and retry", cronUnit, state)
+	}
 	return nil
 }
 
