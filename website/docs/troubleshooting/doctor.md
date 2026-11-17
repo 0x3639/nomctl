@@ -23,6 +23,10 @@ hashing. Ctrl+C cancels. A short unchanged height does not prove a stall;
 observe longer with `nomctl top` when the report recommends it. Recent log
 signatures describe historical events that may already be resolved.
 
+Service identity is checked before and after each RPC observation. A restart
+or unavailable identity query prevents the report from comparing heights
+across potentially different processes.
+
 ## znnd version and hashes
 
 Both text and JSON reports show:

@@ -69,10 +69,10 @@ func Run(ctx context.Context, cfg config.Config, opts Options) (Report, error) {
 	// HTTP RPC is disabled. An empty URL fails locally without network access.
 	sampler.Node = node.NewWithTimeout(settings.rpcURL, cfg.RPCTimeout)
 	sampler.SetPillarName("")
-	take := func() metrics.Sample {
+	take := func() observation {
 		sampleCtx, stop := context.WithTimeout(ctx, 10*time.Second)
 		defer stop()
-		return sampler.Take(sampleCtx)
+		return observe(sampleCtx, sampler.Take, metrics.ReadServicePropsContext)
 	}
 	before := take()
 	timer := time.NewTimer(opts.Wait)
@@ -83,11 +83,11 @@ func Run(ctx context.Context, cfg config.Config, opts Options) (Report, error) {
 	case <-timer.C:
 	}
 	after := take()
-	r.Checks = sampleChecks(before, after, settings, settingsErr)
+	r.Checks = observationChecks(before, after, settings, settingsErr)
 	r.Identity = collectIdentity(ctx, cfg.BinaryPath(), "/proc", after.Service, after.Node)
 	// ProcessInfo can succeed even when another stats method fails. Retain
 	// version/commit evidence without declaring the entire RPC healthy.
-	if settings.rpcURL != "" && r.Identity.Version == "" {
+	if settings.rpcURL != "" && after.continuity == "" && r.Identity.Version == "" {
 		infoCtx, stop := context.WithTimeout(ctx, 5*time.Second)
 		p, err := sampler.Node.ProcessInfo(infoCtx)
 		stop()

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/0x3639/nomctl/internal/nodeconfig"
@@ -46,7 +47,12 @@ func readSettings(dir string) (settings, error) {
 			}
 		case nodeconfig.String:
 			host, ok := value.(string)
-			if !ok || (host != "localhost" && net.ParseIP(host) == nil) {
+			if !ok || strings.TrimSpace(host) == "" {
+				return settings{}, fmt.Errorf("%s must be a nonempty host", key)
+			}
+			// Only HTTP is contacted by this diagnostic. P2P hostnames are
+			// supported by znnd; listener inspection needs no DNS lookup.
+			if key == "RPC.HTTPHost" && host != "localhost" && net.ParseIP(host) == nil {
 				return settings{}, fmt.Errorf("%s must be an IP address or localhost", key)
 			}
 		case nodeconfig.Int:

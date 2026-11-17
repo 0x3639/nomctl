@@ -25,7 +25,9 @@ after hashing and discard the running identity if the process changed.
   existing schema defaults. Invalid settings are reported rather than replaced
   with guessed values. A custom HTTP bind address must be an IP or localhost.
 - Default observation gap: 10 seconds; `--wait` accepts 1 second to 2 minutes.
-  Each sample has a 10-second deadline. Positive progress is evidence; a short
+  Each sample has a 10-second deadline. Recheck service PID, start time, restart
+  count and state after its RPC calls; a change or unavailable identity query
+  invalidates process continuity and height comparisons. Positive progress is evidence; a short
   unchanged height alone does not prove a stall. A stale synced frontier uses
   the existing two-minute threshold; syncing without observed progress is a
   warning to observe longer, not a conclusive failure. Decreasing heights,
