@@ -54,6 +54,7 @@ var menus = map[Action]menuDefinition{
 	}},
 	menuManage: {"Manage node", []menuEntry{
 		{ActionStatus, "Live dashboard", "Watch sync progress, CPU, memory and node health."},
+		{ActionDoctor, "Check my node", "Diagnose problems; show znnd version, commit and executable hashes."},
 		{ActionMonitor, "View logs", "Follow node logs; Ctrl+C returns to this menu."},
 		{ActionStart, "Start node", "Start the configured node service."},
 		{ActionRestart, "Restart node", "Stop and start the configured node service."},

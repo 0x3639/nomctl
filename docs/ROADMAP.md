@@ -1,9 +1,14 @@
 # nomctl roadmap
 
 The [phased roadmap](../website/docs/roadmap.md) is the current delivery plan.
-**R2: backup status and schedule controls** is implemented, pending release.
-Next are R1 diagnostics, R3 recovery-file verification, and R4 health checks
-after changes.
+**R1: Check my node** and **R2: backup status and schedule controls** are
+implemented for **v0.16.0**. R1 includes znnd version/commit and installed/running
+executable SHA-256. Next are R3 recovery-file verification and R4 health checks
+after changes. **R11: device migration** will transfer the entire configured `.znn`
+folder to a new device using rsync over SSH, including wallet/config and hidden
+files, with stopped-node copying, transfer verification, and an explicit
+producer handoff. The original data stays intact until the operator chooses
+to remove it. R11 depends on R3/R4, not R8's off-machine archive uploads.
 
 The list below retains the earlier feature history and backlog beyond v0.2.0;
 use the phased roadmap for current priority order. Each feature gets a design

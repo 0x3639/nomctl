@@ -21,6 +21,7 @@ import (
 	"github.com/0x3639/nomctl/internal/bootstrap"
 	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/deploy"
+	"github.com/0x3639/nomctl/internal/doctor"
 	"github.com/0x3639/nomctl/internal/fsx"
 	"github.com/0x3639/nomctl/internal/lock"
 	"github.com/0x3639/nomctl/internal/nodeconfig"
@@ -47,6 +48,7 @@ const (
 	ActionStart       Action = "start"
 	ActionMonitor     Action = "monitor"
 	ActionStatus      Action = "status"
+	ActionDoctor      Action = "doctor"
 	ActionAlerts      Action = "alerts"
 	ActionSupport     Action = "support"
 	ActionResync      Action = "resync"
@@ -122,6 +124,8 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return Monitor(*cfg, true, 20)
 	case ActionStatus:
 		return Top(*cfg, 2*time.Second, PillarName(), nil)
+	case ActionDoctor:
+		return CheckNode(*cfg)
 	case ActionAlerts:
 		return AlertsAction()
 	case ActionSupport:
@@ -150,6 +154,18 @@ func Dispatch(cfg *config.Config, action Action) error {
 // Version is the nomctl version string recorded in support bundles; the cmd
 // package sets it at startup.
 var Version = "dev"
+
+// CheckNode shares the command-line report, with external probes off by default.
+func CheckNode(cfg config.Config) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	fmt.Fprintln(os.Stderr, "Checking node health; observing progress for 10s… (Ctrl+C cancels)")
+	r, err := doctor.Run(ctx, cfg, doctor.Options{Wait: doctor.DefaultWait})
+	if err != nil {
+		return err
+	}
+	return doctor.Write(os.Stderr, r, false)
+}
 
 // PillarName is installed by the cmd package; it returns the configured
 // pillar name for the dashboard.

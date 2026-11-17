@@ -36,6 +36,9 @@ const annotationRoot = "nomctl.requiresRoot"
 // the pre-flight checks.
 const annotationNoPreflight = "nomctl.noPreflight"
 
+// doctor can still report partial evidence when systemd tools are absent.
+const annotationOptionalServiceTools = "nomctl.optionalServiceTools"
+
 var (
 	cfg           config.Config
 	closeLog      = func() {}
@@ -148,7 +151,7 @@ func setup(cmd *cobra.Command) error {
 		}
 	}
 
-	if requiresRoot {
+	if requiresRoot && cmd.Annotations[annotationOptionalServiceTools] != "true" {
 		if err := service.Available(); err != nil {
 			return err
 		}
