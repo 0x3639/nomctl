@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBackupRestartsBeforeCompressionAndRecovers(t *testing.T) {
@@ -64,10 +65,21 @@ exec /usr/bin/tar "$@"
 				}
 				return 150 << 20, 50 << 20, nil
 			})
-			archive, err := Run(cfg, Options{})
+			schedulePath := filepath.Join(commands, "cron")
+			historyPath := filepath.Join(commands, "history")
+			writeTestSchedule(t, schedulePath, newSchedule(cfg, "/bin/nomctl", "host", time.Now()))
+			err := runScheduled(schedulePath, historyPath, filepath.Join(commands, "operation.lock"), Run)
+			status, statusErr := scheduleStatus(schedulePath, historyPath, time.Now())
+			if statusErr != nil || status.LastAttempt == nil {
+				t.Fatalf("scheduled outcome missing: %+v %v", status, statusErr)
+			}
+			archive := status.LastAttempt.Archive
 			success := mode == "active" || mode == "inactive"
 			if mode == "pressure-during-copy" && (err == nil || !strings.Contains(err.Error(), "insufficient disk space")) {
 				t.Fatalf("disk-pressure cause lost: %v", err)
+			}
+			if (status.LastAttempt.Outcome == "success") != success {
+				t.Fatalf("wrong scheduled outcome: %+v", status.LastAttempt)
 			}
 			if (err == nil) != success {
 				t.Fatalf("unexpected result: %v", err)

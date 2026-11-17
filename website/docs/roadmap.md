@@ -58,6 +58,8 @@ Effort is relative: **S** means a focused change, **M** spans several components
 
 Start with **R1, R2, and R3**. R2 is a useful smaller delivery while diagnostics and verification are developed. Complete R4 before adding unattended update policies.
 
+**R2 is implemented locally, pending release.** Next are R1 diagnostics and R3 recovery-file verification, then R4 health checks.
+
 ## Phase 1: reliable operation
 
 ### R1 — Check my node
@@ -67,6 +69,8 @@ Add a menu action that explains service failures, RPC failures, stalled chain pr
 Completion means the report shows evidence, severity, and a suggested next step for each finding, with text and JSON output. Network checks distinguish local listening from outside reachability on the configured P2P port (default 35995/TCP). They report **unknown**, not **closed**, when an external probe is unavailable. The first version diagnoses without editing firewall rules or restarting services. External probes are optional and disclose what endpoint is contacted.
 
 ### R2 — Backup status and schedule controls
+
+**Implemented, unreleased.** `backup status [--json]` and `backup schedule edit|pause|resume`, also available under **Backup status & schedule** in the menu. [Usage and retry policy](./guide/backups.md#status-edit-pause-and-resume). Design: `docs/superpowers/specs/2026-11-16-backup-schedule-controls-design.md`.
 
 Show enabled/paused state, server timezone, next scheduled run, chosen retention, backup destination, last attempted run, last successful run, and failure reason. Add edit, pause, and resume actions so stopping future backups does not require deleting a cron file by hand.
 

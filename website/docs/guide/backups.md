@@ -15,7 +15,7 @@ nomctl distinguishes automatically managed **backups** from protected **restore 
 
 Wallet and configuration backups remain a separate encrypted operation.
 
-In the menu, use **Schedule local backups** for daily protection and **Create restore point** for a manual save. Both **Restore from backup** and **Restore from restore point** remain available.
+In the menu, use **Backup status & schedule** for daily protection and **Create restore point** for a manual save. Both **Restore from backup** and **Restore from restore point** remain available.
 
 ## Taking a backup
 
@@ -39,7 +39,7 @@ Archives use a temporary filename and are published only after the checksum side
 
 ## Schedule local backups
 
-From **Backups & recovery**, choose **Schedule local backups**. The prompts ask how many days to keep backups (default 7, maximum 30) and which hour to run them (default 02:00 hour, in the server's local time). Setup does not take a backup immediately.
+From **Backups & recovery**, choose **Backup status & schedule**. The status view shows the saved schedule and recent outcomes. Choose **Set up daily backups** or **Edit schedule** to select retention (1–30 days), the daily hour in the server's timezone, and the backup destination. Setup does not take a backup immediately. Editing loads saved settings and keeps a paused schedule paused.
 
 The equivalent command is:
 
@@ -53,12 +53,24 @@ The job runs daily, using a minute derived from the hostname and service name to
 
 The cron job preserves the backup directory, node data directory, service name, log path, retention and free-space minimum selected during setup. It keeps backups for the requested number of days, with an additional maximum of 30 archives; disk pressure can shorten retention. Rerunning setup replaces the existing job. An existing `nomctl-backup.timer` is disabled automatically, so both schedulers do not run together. Older timers keep working until you run the new setup.
 
-Inspect or remove the schedule with:
+### Status, edit, pause and resume
 
 ```bash
-sudo cat /etc/cron.d/nomctl-backup
-sudo rm /etc/cron.d/nomctl-backup   # stop future scheduled backups
+sudo nomctl backup status
+sudo nomctl backup status --json
+sudo nomctl backup schedule edit --hour 3 --retention-days 14
+sudo nomctl backup schedule edit --directory /mnt/backups
+sudo nomctl backup schedule pause
+sudo nomctl backup schedule resume
 ```
+
+Status shows enabled/paused state, the server timezone, cron service health, the next scheduled slot, saved retention/destination, the last scheduled attempt, last scheduled success, and a failure reason when available. It distinguishes **success**, **failure**, **skipped-because-busy**, **running**, and **interrupted**. A due slot without a recorded attempt is reported as **missed** after a five-minute grace period. The next slot is a schedule prediction, not a guarantee that cron is healthy; check the separate scheduler line. The displayed slot follows [Debian/Ubuntu cron’s daylight-saving policy](https://manpages.debian.org/bookworm/cron/cron.8.en.html#NOTES): skipped fixed times run shortly after the forward jump, and repeated times do not run twice. The daemon controls actual dispatch. Different cron versions use different timezone configuration files. If `/etc/timezone` and `/etc/localtime` disagree, status shows a warning and omits next/missed slot predictions until the files are aligned and cron is restarted; the schedule controls and run history remain available. When both files are absent, UTC is used.
+
+`edit` changes only the fields supplied and preserves the existing minute, data directory, service, log path and free-space limit. It does not move or prune existing archives. `pause` comments out the managed job while retaining its settings and all stored files; it does not disable the system-wide cron service. `resume` verifies cron before enabling the same job. Neither starts a backup immediately, and repeating pause/resume is safe. An invocation that read the schedule before a pause/resume or edit is ignored if the saved schedule changed before it acquired the operation lock. A menu form also refuses to overwrite a schedule changed by another operator while the form was open. These controls use the operation lock: if a backup, restore or upgrade is running, wait for it to finish and retry.
+
+Schedule settings are saved in `/etc/cron.d/nomctl-backup`; scheduled outcomes survive reboots under `/var/lib/nomctl/backups/`. History retains 64 recent attempts plus the latest successful record. A recorded success describes the archive at completion; it does not guarantee the archive is still present or verified today. Manual backups and protected restore points are separate from scheduled outcomes. Changing the destination or service filters status to the matching history.
+
+Older nomctl cron jobs can be inspected immediately; **edit** or **pause/resume** adopts them without losing their saved settings and enables outcome tracking. Earlier run outcomes are unknown. An older systemd timer requires `nomctl backup schedule` to migrate. Unexpected manual edits to the managed cron file are reported rather than silently overwritten by edit/pause/resume; review the file, then rerun setup to replace it.
 
 To take a backup now and then install the daily schedule, use:
 
@@ -66,7 +78,7 @@ To take a backup now and then install the daily schedule, use:
 sudo nomctl backup --schedule --cadence 0 --retention-days 7 --hour 2
 ```
 
-Cron does not catch up on runs missed while the machine is off. An overlapping nomctl operation causes the backup to fail safely under the shared operation lock; the next attempt is the following day. Backup failures are recorded in the configured nomctl log (normally `/var/log/nomctl.log`), and the `backup_stale` alert recognizes both cron schedules and older timers.
+Cron does not catch up on runs missed while the machine is off. An overlapping nomctl operation records **skipped-because-busy** under the shared operation lock. There is no immediate catch-up or automatic retry after a failure, busy skip, missed run, or resume: the next attempt is the next daily slot. The original disk guard and retention rules still apply. Backup failures are also recorded in the configured nomctl log (normally `/var/log/nomctl.log`). The `backup_stale` alert uses the saved cron destination and is suppressed while that schedule is paused; it also recognizes older timers.
 
 ## Protected restore points
 

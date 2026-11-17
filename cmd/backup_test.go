@@ -7,6 +7,26 @@ import (
 	"github.com/0x3639/nomctl/internal/config"
 )
 
+func TestBackupScheduleControlsAreReachableWithoutPreflight(t *testing.T) {
+	for _, args := range [][]string{{"backup", "status"}, {"backup", "schedule", "edit"}, {"backup", "schedule", "pause"}, {"backup", "schedule", "resume"}} {
+		command, remaining, err := rootCmd.Find(args)
+		if err != nil || len(remaining) != 0 || command.Name() != args[len(args)-1] {
+			t.Fatalf("missing command %v: %v", args, err)
+		}
+		if command.Annotations[annotationRoot] != "true" || command.Annotations[annotationNoPreflight] != "true" {
+			t.Fatalf("wrong permissions/preflight policy for %v", args)
+		}
+	}
+	if backupStatusCmd.Flags().Lookup("json") == nil {
+		t.Fatal("missing JSON status")
+	}
+	for _, flag := range []string{"hour", "retention-days", "directory"} {
+		if backupScheduleEditCmd.Flags().Lookup(flag) == nil {
+			t.Fatalf("missing edit flag %s", flag)
+		}
+	}
+}
+
 func TestBackupRetentionFlagOverridesEnvironment(t *testing.T) {
 	previous, previousFlag := cfg, flagBackupRetention
 	t.Cleanup(func() { cfg, flagBackupRetention = previous, previousFlag })

@@ -46,7 +46,8 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | Path | Written by |
 |---|---|
 | `/etc/systemd/system/go-zenon.service` | `deploy` |
-| `/etc/cron.d/nomctl-backup` | `backup schedule` (or `backup --schedule` after a backup) |
+| `/etc/cron.d/nomctl-backup` | Saved daily schedule and pause state; `backup schedule`, `edit`, `pause`, `resume` |
+| `/var/lib/nomctl/backups/` | Persistent scheduled run outcomes; shown by `backup status` |
 | `/etc/systemd/system/nomctl-alerts.service` | `alerts setup` |
 | `/etc/nomctl/alerts.json` (0600) | `alerts setup`, `alerts set`, `enable`, `disable` |
 | `/run/nomctl/alerts-state.json` | the alerts daemon, read by `alerts status` |

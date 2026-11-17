@@ -105,7 +105,7 @@ func Dispatch(cfg *config.Config, action Action) error {
 	case ActionManageBackups:
 		return ManageBackups(*cfg)
 	case ActionBackupSchedule:
-		return BackupSchedule(cfg)
+		return BackupScheduleMenu(cfg)
 	case ActionPillarSetup:
 		return PillarSetup(*cfg)
 	case ActionPillarStatus:
@@ -661,7 +661,16 @@ var (
 
 // BackupSchedule collects settings without taking a backup or holding the lock.
 func BackupSchedule(current *config.Config) error {
+	saved, err := backup.ReadSchedule()
+	if err != nil {
+		return err
+	}
 	next := *current
+	if saved != nil {
+		next.BackupDir = saved.Directory
+		next.BackupHour = saved.Hour
+		next.BackupRetentionDays = saved.RetentionDays
+	}
 	cfg := &next
 
 	fmt.Fprintln(os.Stderr, "Daily local backups keep 7 days by default (maximum 30). Old chain backups may be pruned sooner to keep disk usage at or below 75%.")
@@ -702,7 +711,22 @@ func BackupSchedule(current *config.Config) error {
 		cfg.BackupHour = h
 		break
 	}
-	if err := withLock("schedule backups", func() error { return backup.LocalSchedule(*cfg) }); err != nil {
+	directory, err := Input("Backup destination (absolute path) ➜", cfg.BackupDir)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(directory) != "" {
+		cfg.BackupDir = directory
+	}
+	if err := withLock("schedule backups", func() error {
+		if err := backup.CheckScheduleUnchanged(saved); err != nil {
+			return err
+		}
+		if saved == nil {
+			return backup.LocalSchedule(*cfg)
+		}
+		return backup.EditLocalSchedule(backup.ScheduleChanges{Hour: &cfg.BackupHour, RetentionDays: &cfg.BackupRetentionDays, Directory: &cfg.BackupDir})
+	}); err != nil {
 		return err
 	}
 	next.MaxBackups = 30

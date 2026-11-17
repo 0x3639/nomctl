@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -20,6 +21,12 @@ var (
 	flagBackupCadence   int
 	flagBackupHour      int
 	flagBackupSchedule  bool
+	flagBackupScheduled bool
+	flagBackupJSON      bool
+	flagBackupDirectory string
+	flagEditHour        int
+	flagEditRetention   int
+	flagEditDirectory   string
 	flagRestoreFile     string
 )
 
@@ -41,6 +48,12 @@ runs do not use the manual cadence.`,
 	Args:        cobra.NoArgs,
 	Annotations: rootOnly(),
 	RunE: func(*cobra.Command, []string) error {
+		if flagBackupScheduled {
+			if flagBackupSchedule {
+				return errors.New("--scheduled cannot be combined with --schedule")
+			}
+			return backup.RunScheduled(operationLockPath)
+		}
 		return withLock("backup", func() error {
 			if _, err := backup.Run(cfg, backup.Options{Interactive: false}); err != nil {
 				return err
@@ -55,15 +68,70 @@ runs do not use the manual cadence.`,
 
 var backupScheduleCmd = &cobra.Command{
 	Use:   "schedule",
-	Short: "Schedule daily local backups with cron (no backup runs now)",
+	Short: "Set up or manage daily local backups (no backup runs now)",
 	Long: `Schedule one daily local-backup cron job without running a backup now.
 Installs cron with apt if missing on Debian/Ubuntu, enables it at boot,
-and checks it is running before saving the schedule.`,
+and checks it is running before saving the schedule. Use edit to preserve
+unspecified saved settings; pause and resume control future runs only.`,
 	Args:        cobra.NoArgs,
-	Annotations: rootOnly(),
+	Annotations: diagnostic(),
 	RunE: func(*cobra.Command, []string) error {
 		return withLock("schedule local backups", func() error { return backup.LocalSchedule(cfg) })
 	},
+}
+
+var backupStatusCmd = &cobra.Command{
+	Use: "status", Short: "Show the saved schedule and scheduled backup outcomes",
+	Args: cobra.NoArgs, Annotations: diagnostic(),
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		status, err := backup.BackupStatus()
+		if err != nil {
+			return err
+		}
+		if flagBackupJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(status)
+		}
+		backup.WriteScheduleStatus(cmd.OutOrStdout(), status)
+		return nil
+	},
+}
+
+var backupScheduleEditCmd = &cobra.Command{
+	Use: "edit", Short: "Edit selected settings, preserving a paused schedule",
+	Args: cobra.NoArgs, Annotations: diagnostic(),
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		changes := backup.ScheduleChanges{}
+		if cmd.Flags().Changed("hour") {
+			changes.Hour = &flagEditHour
+		}
+		if cmd.Flags().Changed("retention-days") {
+			changes.RetentionDays = &flagEditRetention
+		}
+		if cmd.Flags().Changed("directory") {
+			changes.Directory = &flagEditDirectory
+		}
+		if changes.Hour == nil && changes.RetentionDays == nil && changes.Directory == nil {
+			return errors.New("specify --hour, --retention-days, or --directory to edit the saved schedule")
+		}
+		return withLock("edit backup schedule", func() error { return backup.EditLocalSchedule(changes) })
+	},
+}
+
+func scheduleControlCommand(name string, enabled bool) *cobra.Command {
+	return &cobra.Command{Use: name, Short: name + " future daily backups without changing stored files",
+		Args: cobra.NoArgs, Annotations: diagnostic(),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := withLock(name+" backup schedule", func() error { return backup.SetScheduleEnabled(enabled) }); err != nil {
+				return err
+			}
+			if enabled {
+				fmt.Fprintln(cmd.OutOrStdout(), "Backups resumed; the next daily slot is the next attempt.")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Backups paused; stored files are unchanged.")
+			}
+			return nil
+		},
+	}
 }
 
 var restoreCmd = &cobra.Command{
@@ -113,6 +181,9 @@ This command does not ask for confirmation; the interactive menu does.`,
 
 // applyBackupFlags copies backup flags over the environment and validates.
 func applyBackupFlags(cmd *cobra.Command) error {
+	if cmd.Flags().Changed("directory") {
+		cfg.BackupDir = flagBackupDirectory
+	}
 	if cmd.Flags().Changed("retention-days") {
 		cfg.BackupRetentionDays = flagBackupRetention
 	}
@@ -142,7 +213,15 @@ func init() {
 	}
 	backupCmd.Flags().IntVar(&flagBackupMax, "max-backups", 0, "backups to keep, 1-30 (NOMCTL_MAX_BACKUPS)")
 	backupCmd.Flags().IntVar(&flagBackupCadence, "cadence", 0, "minimum age of newest backup before running, 0-365 days (NOMCTL_BACKUP_CADENCE_DAYS)")
-	backupCmd.AddCommand(backupScheduleCmd)
+	backupCmd.AddCommand(backupScheduleCmd, backupStatusCmd)
+	backupStatusCmd.Flags().BoolVar(&flagBackupJSON, "json", false, "print structured schedule status")
+	backupScheduleCmd.Flags().StringVar(&flagBackupDirectory, "directory", "", "absolute backup destination")
+	backupScheduleEditCmd.Flags().IntVar(&flagEditHour, "hour", 0, "daily hour, 0-23 (server time)")
+	backupScheduleEditCmd.Flags().IntVar(&flagEditRetention, "retention-days", 7, "retention, 1-30 days")
+	backupScheduleEditCmd.Flags().StringVar(&flagEditDirectory, "directory", "", "absolute backup destination")
+	backupScheduleCmd.AddCommand(backupScheduleEditCmd, scheduleControlCommand("pause", false), scheduleControlCommand("resume", true))
+	backupCmd.Flags().BoolVar(&flagBackupScheduled, "scheduled", false, "internal tracked cron invocation")
+	_ = backupCmd.Flags().MarkHidden("scheduled")
 	backupCmd.Flags().BoolVar(&flagBackupSchedule, "schedule", false, "install a daily local-backup cron job after this backup")
 	restoreCmd.Flags().StringVar(&flagRestoreFile, "file", "", "archive to restore (path or name in the backup directory)")
 	rootCmd.AddCommand(backupCmd, restoreCmd, resyncCmd)

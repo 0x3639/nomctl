@@ -28,7 +28,11 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 | `nomctl restore point ID [--data-only]` | Without flags, interactive use asks whether to revert znnd and non-interactive use restores the matching pair. `--data-only` keeps installed znnd and skips all prompts, even in a terminal |
 | `nomctl restore-points` | Manage protected points in the UI, or list them non-interactively |
 | `nomctl backup manage` | Review and prune ordinary backups in the UI |
-| `nomctl backup schedule [--retention-days DAYS] [--hour HOUR]` | Configure daily local backups with cron without taking a backup immediately |
+| `nomctl backup schedule [--retention-days DAYS] [--hour HOUR] [--directory PATH]` | Configure daily local backups with cron without taking a backup immediately |
+| `nomctl backup status [--json]` | Show saved schedule, timezone, next slot, last scheduled attempt/success, and missed or failed runs |
+| `nomctl backup schedule edit [--hour HOUR] [--retention-days DAYS] [--directory PATH]` | Change only supplied settings; preserve a paused schedule |
+| `nomctl backup schedule pause` | Pause future daily backups; keep all stored files |
+| `nomctl backup schedule resume` | Resume at the next daily slot after checking cron |
 | `nomctl restore [--file FILE]` | Restore chain data only, keeping installed znnd; picker when `--file` is omitted |
 | `nomctl backup wallet [--output DIR] [--no-encrypt]` | [wallet and config backup](/guide/backups#wallet-and-config-backup), age-encrypted; passphrase prompted or `NOMCTL_WALLET_PASSPHRASE` |
 | `nomctl restore wallet FILE [--restart]` | verifies the archived key against its config before replacing anything |

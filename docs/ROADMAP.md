@@ -1,6 +1,12 @@
 # nomctl roadmap
 
-Features planned beyond v0.2.0, in priority order. Each one gets a design
+The [phased roadmap](../website/docs/roadmap.md) is the current delivery plan.
+**R2: backup status and schedule controls** is implemented, pending release.
+Next are R1 diagnostics, R3 recovery-file verification, and R4 health checks
+after changes.
+
+The list below retains the earlier feature history and backlog beyond v0.2.0;
+use the phased roadmap for current priority order. Each feature gets a design
 spec under `docs/superpowers/specs/` before code. Inspiration for several
 items is [MyTonCtrl](https://github.com/ton-blockchain/mytonctrl), the TON
 node controller; the mapping is noted where it applies.

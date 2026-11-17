@@ -35,7 +35,7 @@ func TestCronDailySettingsAndQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cron command failed: %s %v", out, err)
 	}
-	want := strings.Join([]string{cfg.BackupDir, cfg.ZnnDir, cfg.ServiceName, cfg.LogFile, "0", "backup", "--skip-preflight", "--cadence", "0", "--max-backups", "30", "--retention-days", "30", ""}, "\n")
+	want := strings.Join([]string{cfg.BackupDir, cfg.ZnnDir, cfg.ServiceName, cfg.LogFile, "0", "backup", "--skip-preflight", "--cadence", "0", "--max-backups", "30", "--retention-days", "30", "--scheduled", ""}, "\n")
 	if string(out) != want {
 		t.Fatalf("cron lost selected settings:\n%s\nwant:\n%s", out, want)
 	}
@@ -45,6 +45,12 @@ func TestCronDailySettingsAndQuoting(t *testing.T) {
 			t.Fatal("invalid cron value accepted")
 		}
 	}
+	cfg = testConfig(t)
+	cfg.BackupHour = 24
+	if _, err := CronEntry(cfg, executable, "node1"); err == nil {
+		t.Fatal("invalid hour normalized to derived schedule")
+	}
+
 	for _, days := range []int{0, 31} {
 		cfg = testConfig(t)
 		cfg.BackupRetentionDays = days
