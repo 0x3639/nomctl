@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -37,30 +38,33 @@ so the daemon uses the new code.`,
 	Args:        cobra.NoArgs,
 	Annotations: diagnostic(),
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		return runSelfUpgrade(cmd.OutOrStdout(), flagUpgradeCheck, flagUpgradeRollback, flagUpgradeVersion)
+		_, err := runSelfUpgrade(cmd.OutOrStdout(), flagUpgradeCheck, flagUpgradeRollback, flagUpgradeVersion)
+		return err
 	},
 }
 
-func runSelfUpgrade(out io.Writer, check, rollback bool, requestedVersion string) error {
+// runSelfUpgrade returns the installed path only after the executable changes.
+// A later alerts-maintenance error does not undo a successful installation.
+func runSelfUpgrade(out io.Writer, check, rollback bool, requestedVersion string) (string, error) {
 	target, err := os.Executable()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if resolved, err := filepath.EvalSymlinks(target); err == nil {
 		target = resolved
 	}
 	if rollback && (check || requestedVersion != "") {
-		return errors.New("--rollback cannot be combined with --check or --version")
+		return "", errors.New("--rollback cannot be combined with --check or --version")
 	}
 	if check && requestedVersion != "" {
-		return errors.New("--check compares against the latest release; it cannot be combined with --version")
+		return "", errors.New("--check compares against the latest release; it cannot be combined with --version")
 	}
 	if rollback {
 		if err := update.Rollback(target); err != nil {
-			return err
+			return "", err
 		}
 		logx.Success("Rolled back to the previous nomctl binary")
-		return restartAlertsIfRunning()
+		return target, restartAlertsIfRunning()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -69,7 +73,7 @@ func runSelfUpgrade(out io.Writer, check, rollback bool, requestedVersion string
 	if tag == "" {
 		tag, err = update.LatestTag(ctx, cfg.ReleaseRepo)
 		if err != nil {
-			return fmt.Errorf("check latest release: %w", err)
+			return "", fmt.Errorf("check latest release: %w", err)
 		}
 	} else if !strings.HasPrefix(tag, "v") {
 		tag = "v" + tag
@@ -78,31 +82,51 @@ func runSelfUpgrade(out io.Writer, check, rollback bool, requestedVersion string
 	if !update.Newer(tag, version) && requestedVersion == "" {
 		if _, ok := update.ParseVersion(version); !ok {
 			fmt.Fprintln(out, "This is a development build; pass --version to install a release anyway.")
-			return nil
+			return "", nil
 		}
 		fmt.Fprintln(out, "Already up to date.")
-		return nil
+		return "", nil
 	}
 	if check {
 		fmt.Fprintf(out, "Update available: https://github.com/%s/releases/tag/%s\n", cfg.ReleaseRepo, tag)
-		return nil
+		return "", nil
 	}
 
 	dir, err := os.MkdirTemp(filepath.Dir(target), ".nomctl-upgrade-")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	bin, err := update.Fetch(ctx, cfg.ReleaseRepo, tag, dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := update.Replace(bin, target); err != nil {
-		return err
+		return "", err
 	}
 	logx.Success(fmt.Sprintf("nomctl %s installed at %s (previous kept as %s.previous)", strings.TrimPrefix(tag, "v"), target, filepath.Base(target)))
 	fmt.Fprintf(out, "Release notes: https://github.com/%s/releases/tag/%s\n", cfg.ReleaseRepo, tag)
-	return restartAlertsIfRunning()
+	return target, restartAlertsIfRunning()
+}
+
+// runMenuSelfUpgrade waits for all updater defers to finish before replacing
+// the process. Successful exec does not return; failure leaves this menu and
+// its logger alive so the operator can recover. Go-opened log files are
+// close-on-exec, so the new process reopens its own log through normal setup.
+func runMenuSelfUpgrade(out io.Writer, args, env []string, upgrade func() (string, error), exec func(string, []string, []string) error) error {
+	target, upgradeErr := upgrade()
+	if target == "" {
+		return upgradeErr
+	}
+	if upgradeErr != nil {
+		fmt.Fprintf(out, "Warning: %v\n", upgradeErr)
+	}
+	fmt.Fprintln(out, "Opening the updated nomctl menu…")
+	argv := append([]string{target}, args...)
+	if err := exec(target, argv, env); err != nil {
+		return errors.Join(upgradeErr, fmt.Errorf("nomctl was installed, but its menu could not reopen: %w; exit and reopen %q manually to use the new version", err, target))
+	}
+	return nil
 }
 
 // restartAlertsIfRunning restarts the alerts daemon so it runs the new code.
@@ -128,7 +152,11 @@ func restartAlertsIfRunning() error {
 }
 
 func init() {
-	tui.UpgradeNomctl = func() error { return runSelfUpgrade(os.Stderr, false, false, "") }
+	tui.UpgradeNomctl = func() error {
+		return runMenuSelfUpgrade(os.Stderr, os.Args[1:], os.Environ(), func() (string, error) {
+			return runSelfUpgrade(os.Stderr, false, false, "")
+		}, syscall.Exec)
+	}
 	upgradeCmd.Flags().BoolVar(&flagUpgradeCheck, "check", false, "only report whether an update is available")
 	upgradeCmd.Flags().StringVar(&flagUpgradeVersion, "version", "", "install this release tag instead of the latest")
 	upgradeCmd.Flags().BoolVar(&flagUpgradeRollback, "rollback", false, "restore the previous binary")

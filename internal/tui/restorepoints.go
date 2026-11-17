@@ -184,9 +184,9 @@ func confirmRestorePoint(cfg config.Config, p backup.RestorePoint) error {
 	if !ok {
 		return ErrCancelled
 	}
-	return withLock("restore from restore point", func() error {
-		return restore.RunRestorePointWithOptions(cfg, p.ID, restore.RestorePointOptions{DataOnly: !withBinary})
-	})
+	return RecoverChange(cfg, withLock("restore from restore point", func() error {
+		return restore.PointWithHealth(cfg, p.ID, restore.RestorePointOptions{DataOnly: !withBinary})
+	}))
 }
 
 func ManageRestorePoints(cfg config.Config) error {

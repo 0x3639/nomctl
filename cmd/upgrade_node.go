@@ -74,9 +74,9 @@ source repository/branch by default or the newest published release with --signe
 					return errCancelled
 				}
 			}
-			return withLock("upgrade node from source", func() error {
+			return finishInteractiveChange(withLock("upgrade node from source", func() error {
 				return nodeupgrade.FromSource(cmd.Context(), cfg, cfg.RepoURL, cfg.BranchName)
-			})
+			}), interactive && !flagNodeUpgradeYes)
 		}
 		client := nodeupgrade.NewClient(cfg.GitHubToken)
 		release, err := tui.ChooseNodeRelease(cmd.Context(), client, flagNodeUpgradeVersion, interactive && !flagNodeUpgradeYes)
@@ -98,7 +98,7 @@ source repository/branch by default or the newest published release with --signe
 				return errCancelled
 			}
 		}
-		return withLock("upgrade node", func() error { return nodeupgrade.Run(cmd.Context(), cfg, client, release) })
+		return finishInteractiveChange(withLock("upgrade node", func() error { return nodeupgrade.Run(cmd.Context(), cfg, client, release) }), interactive && !flagNodeUpgradeYes)
 	},
 }
 

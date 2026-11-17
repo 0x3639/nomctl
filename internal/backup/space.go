@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -24,6 +25,9 @@ var reclaimableBytes = fsx.ReclaimableBytes
 // CheckRestoreSpace checks a destination without deleting anything. Restore
 // staging may be on a different filesystem from backup archives.
 func CheckRestoreSpace(cfg config.Config, path string, additional int64) error {
+	if additional < 0 || additional > math.MaxInt64-diskHeadroom {
+		return fmt.Errorf("restore space requirement exceeds supported limits")
+	}
 	available, used, err := diskCapacity(path)
 	if err != nil {
 		return fmt.Errorf("check restore space: %w", err)

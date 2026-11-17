@@ -47,10 +47,16 @@ func WriteRuntimeFile(path string, data []byte, mode os.FileMode) error {
 	if err := f.Chmod(mode); err != nil {
 		return err
 	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return unix.Renameat(dir, tmp, dir, filepath.Base(path))
+	if err := unix.Renameat(dir, tmp, dir, filepath.Base(path)); err != nil {
+		return err
+	}
+	return unix.Fsync(dir)
 }
 
 // ReadRuntimeFile reads a bounded regular file without following a final link

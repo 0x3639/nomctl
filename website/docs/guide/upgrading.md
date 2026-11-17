@@ -14,6 +14,18 @@ sudo nomctl upgrade --rollback # restore the previous binary
 
 `upgrade` finds the latest GitHub release, downloads the archive for the host architecture together with `checksums.txt`, verifies the sha256, and replaces the running binary in one atomic rename. The old binary is kept as `nomctl.previous` next to it for `--rollback`. If `nomctl-alerts.service` is running it is restarted so the daemon uses the new code. Nothing else on the node is touched.
 
+From **Install & upgrade → Upgrade nomctl**, a successful installation
+automatically reopens the main menu using the new version. Your launch flags,
+environment and terminal session are preserved. Already-current or failed
+installations keep the existing menu open; command-line upgrades return to the
+shell. If alerts-daemon maintenance fails after installation, its warning is
+shown and the new menu still opens. If reopening fails, the existing menu shows
+instructions to exit and reopen nomctl manually. The znnd service is not
+restarted by reopening the menu.
+
+An older running version, including v0.16.0, still needs one manual exit and
+reopen when upgrading to a version that first includes this behavior.
+
 The installer one-liner does the same thing and remains a fine way to upgrade; `nomctl upgrade` just saves a trip to the README. `NOMCTL_REPO` (default `0x3639/nomctl`) selects the repository releases come from.
 
 ## The node
@@ -247,3 +259,7 @@ It is informational: one Telegram message when an update appears, no reminders, 
 ## The relay
 
 The relay is a container; upgrade it by redeploying the new image on Coolify. Pairings survive in the volume.
+
+## Health after changes
+
+Upgrades and chain restores now finish with a [bounded health check](/guide/health), including before/after znnd version, commit, and executable hashes. Failures identify a retained matching recovery point and offer separately confirmed recovery in interactive use. There is no automatic binary-only downgrade.

@@ -23,12 +23,14 @@ const (
 	ActionWalletBackup   Action = "backup-wallet"
 	ActionWalletRestore  Action = "restore-wallet"
 	ActionBackupSchedule Action = "backup-schedule"
+	ActionVerifyRecovery Action = "verify-recovery"
 	ActionCreatePoint    Action = "create-restore-point"
 	ActionRestorePoint   Action = "restore-point"
 	ActionManagePoints   Action = "manage-restore-points"
 	ActionManageBackups  Action = "manage-backups"
 	ActionPillarStatus   Action = "pillar-status"
 	ActionPillarSetup    Action = "pillar-setup"
+	ActionMigration      Action = "migrate"
 	ActionOrchStatus     Action = "orchestrator-status"
 	ActionOrchLogs       Action = "orchestrator-logs"
 	ActionOrchReset      Action = "orchestrator-reset"
@@ -70,15 +72,17 @@ var menus = map[Action]menuDefinition{
 		{ActionWalletBackup, "Back up wallet & configuration", "Create an encrypted backup of wallet files and config.json."},
 		{ActionWalletRestore, "Restore wallet & configuration", "Restore an encrypted wallet backup; keep current files aside."},
 		{ActionBackupSchedule, "Backup status & schedule", "View results; edit, pause or resume daily backups."},
+		{ActionVerifyRecovery, "Verify recovery files", "Check backups and saved znnd; view results or schedule daily verification."},
 		{ActionBootstrap, `Restore from "trusted" bootstrap snapshot`, "Choose a publisher you trust; the snapshot hash checks integrity."},
 		{ActionResync, "Resync from scratch", "Delete chain data and sync again; keep wallet and configuration."},
 	}},
 	menuInstall: {"Install & upgrade", []menuEntry{
+		{ActionMigration, "Migrate to a new device", "Preview, copy with rsync, and confirm a guarded handoff to a new server."},
 		{ActionDeploy, "Deploy a node from source", "Choose a repository and branch; build and set up the node service."},
 		{ActionPillarDep, "Deploy a Pillar", "Build official go-zenon master and configure the producer key."},
 		{ActionUpgradeSource, "Upgrade a node from source", "Build first, then back up chain data and replace the installed binary."},
 		{ActionUpgradeNode, "Upgrade a node from signed release", "Select a go-zenon-releases version; verify its signature before upgrading."},
-		{ActionUpgradeNomctl, "Upgrade nomctl", "Download and install the latest nomctl release."},
+		{ActionUpgradeNomctl, "Upgrade nomctl", "Install the latest release and reopen the menu with the new version."},
 	}},
 	menuPillar: {"Pillar & orchestrator", []menuEntry{
 		{ActionPillarStatus, "Pillar status", "Show the configured producer address and key file."},
@@ -185,7 +189,7 @@ func upgradeNomctl() error {
 	if UpgradeNomctl == nil {
 		return errors.New("nomctl self-upgrade is unavailable")
 	}
-	ok, err := Confirm("Upgrade nomctl to its latest release?")
+	ok, err := Confirm("Upgrade nomctl to its latest release? The menu will reopen with the new version after installation.")
 	if err != nil {
 		return err
 	}

@@ -27,6 +27,46 @@ func TestAcquireRelease(t *testing.T) {
 	l2.Release() // idempotent
 }
 
+func TestMigrationGuardPersistsBeyondLockHolder(t *testing.T) {
+	dir := t.TempDir()
+	path, guard := filepath.Join(dir, "lock"), filepath.Join(dir, "blocked")
+	l, err := acquire(path, "migration", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(guard, []byte("migration-id"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+	for _, operation := range []string{"scheduled backup", "start", "restore"} {
+		if l, err := acquire(path, operation, guard); err == nil {
+			l.Release()
+			t.Fatalf("%s bypassed migration", operation)
+		}
+	}
+	l, err = acquire(path, "resume migration", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+	if err := os.Remove(guard); err != nil {
+		t.Fatal(err)
+	}
+	l, err = acquire(path, "start after handoff", guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+	// An unreadable or dangling sentinel must fail closed too.
+	if err := os.Symlink(filepath.Join(dir, "missing"), guard); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := acquire(path, "start", guard); err == nil {
+		l.Release()
+		t.Fatal("dangling guard bypassed")
+	}
+}
+
 // TestContention holds the lock from another process (flock is per open
 // file description, so a second Acquire in the same process would also
 // conflict, but a separate process is the real scenario).

@@ -19,6 +19,7 @@ type settings struct {
 	rpcEnabled bool
 	port       int
 	minPeers   int
+	p2pHost    string
 }
 
 func readSettings(dir string) (settings, error) {
@@ -78,7 +79,7 @@ func readSettings(dir string) (settings, error) {
 	if host == "::" {
 		host = "::1"
 	}
-	s := settings{rpcEnabled: values["RPC.EnableHTTP"].(bool), port: values["Net.ListenPort"].(int), minPeers: values["Net.MinPeers"].(int)}
+	s := settings{p2pHost: values["Net.ListenHost"].(string), rpcEnabled: values["RPC.EnableHTTP"].(bool), port: values["Net.ListenPort"].(int), minPeers: values["Net.MinPeers"].(int)}
 	if s.rpcEnabled {
 		s.rpcURL = "http://" + net.JoinHostPort(host, strconv.Itoa(values["RPC.HTTPPort"].(int)))
 	}

@@ -42,6 +42,7 @@ Use **Backup status & schedule** for automatic daily backups and **Create restor
 | Manage restore points | Show sizes and saved znnd details; delete one point or preview manual pruning of eligible points; confirmation required |
 | Manage backups | Delete a selected ordinary backup or preview old backups to prune |
 | Backup status & schedule | Shows saved settings, next run and scheduled outcomes; set up/edit retention, hour and destination, pause/resume, or refresh; no immediate backup |
+| Verify recovery files | Check backups and saved znnd; view saved results, rehearse extraction, or set up/edit/pause/resume daily verification |
 | Restore from "trusted" bootstrap snapshot | [Bootstrap](/guide/bootstrap): URL prompt, keep/discard choice and confirmation |
 | Resync from scratch | Wipe chain data and resync, after confirmation |
 
@@ -52,11 +53,14 @@ hash sidecar verifies download integrity; it does not authenticate the publisher
 
 | Entry | Runs |
 |---|---|
+| Migrate to a new device | [Migration](/guide/migration): preview, transfer/resume, status, explicit handoff, or return to the original |
 | Deploy a node from source | [Deploy](/guide/deploy), with repository and branch pickers |
 | Deploy a Pillar | [Pillar deployment](/guide/pillar), using official go-zenon master and producer-key setup |
 | Upgrade a node from source | [Source upgrade](/guide/upgrading#source-upgrades) (`nomctl upgrade-node`): pick a repository/branch, build before downtime, back up and install |
 | Upgrade a node from signed release | [Signed upgrade](/guide/upgrading#signed-node-releases) (`nomctl upgrade-node --signed`): choose a release, verify its signature/checksum, back up and install |
-| Upgrade nomctl | Confirm and run the latest-release self-upgrade; reopen nomctl afterward to use the new version |
+| Upgrade nomctl | Confirm and install the latest release, then automatically reopen its main menu |
+
+Upgrades and chain restores finish with a [post-change health report](/guide/health) and offer confirmed recovery when needed.
 
 The signed-release picker selects the most recently published release by default.
 

@@ -160,7 +160,7 @@ When omitted on a terminal, an interactive picker is shown.`,
 		} else {
 			file = restore.Resolve(cfg, file)
 		}
-		return withLock("restore", func() error { return restore.Run(cfg, file) })
+		return finishInteractiveChange(withLock("restore", func() error { return restore.WithHealth(cfg, file) }), recoveryInteractive())
 	},
 }
 

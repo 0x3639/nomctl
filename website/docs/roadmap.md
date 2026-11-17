@@ -58,7 +58,7 @@ Effort is relative: **S** means a focused change, **M** spans several components
 
 Start with **R1, R2, and R3**. R2 is a useful smaller delivery while diagnostics and verification are developed. Complete R4 before adding unattended update policies.
 
-**[v0.16.0](https://github.com/0x3639/nomctl/releases/tag/v0.16.0) delivery: R1 diagnostics and R2 backup controls.** Next are R3 recovery-file verification and R4 health checks. Device migration (R11) transfers the entire `.znn` folder directly with rsync over SSH; it does not depend on the off-machine archive-upload feature (R8).
+**[v0.16.0](https://github.com/0x3639/nomctl/releases/tag/v0.16.0) delivery: R1 diagnostics and R2 backup controls.** R3 recovery-file verification, R4 post-change health checks, and R11 device migration are implemented locally, pending release. Device migration (R11) transfers the entire `.znn` folder directly with rsync over SSH; it does not depend on the off-machine archive-upload feature (R8).
 
 ## Phase 1: reliable operation
 
@@ -80,11 +80,15 @@ Completion means status survives restarts and distinguishes success, failure, sk
 
 ### R3 — Verify backups and restore points
 
+**Implemented locally; not yet released.** `nomctl verify` and **Backups & recovery → Verify recovery files** check archive integrity and saved znnd, persist results tied to file identities, support optional extraction rehearsal, and provide daily verification with pause/resume. [Usage and limits](./guide/backups.md#verify-recovery-files). Design: `docs/superpowers/specs/2026-11-17-recovery-verification-design.md`.
+
 Add **Verify recovery files**, with an optional schedule. Reuse checksum and archive-entry validation; verify the saved znnd checksum for full restore points. Record the result, time, and exact artifact identity so an old verification result cannot be shown for a changed file.
 
 Completion means truncation, bad checksums, unsafe archive entries, and missing components produce clear results without modifying live data or stopping znnd. Verification works on legacy metadata. Failed verification never deletes a restore point automatically. A separate optional extraction rehearsal must check temporary-space requirements first. Archive verification establishes file integrity, not database-version compatibility or guaranteed startup; the UI must distinguish those results.
 
 ### R4 — Confirm health after changes
+
+**Implemented locally, pending release.** [Health reports and recovery behavior](./guide/health.md).
 
 Extend upgrade and restore completion beyond “systemd is active.” Observe RPC responsiveness, chain-height movement, peer state, repeated restarts, and the reported znnd identity over a bounded window.
 
@@ -131,6 +135,8 @@ Offer explicit maintenance windows and update policies: notify only, prepare for
 Completion means pinned versions can be respected, pending changes and expected downtime are visible, and every installed node upgrade retains its required restore point and space check. No unattended source-branch upgrade by default. Unattended installation depends on proven health checks and a reviewed recovery policy; it must stop after a failed attempt rather than enter an upgrade/rollback loop.
 
 ### R11 — Migrate to a new device with rsync
+
+**Implemented locally, pending release.** [Migration workflow and supported installations](./guide/migration.md). Container rehearsals exercise rsync and controlled service failures; real-server deployment and reboot acceptance remain a release check.
 
 Add a **Migrate to a new device** menu action and a matching command-line workflow. Transfer the **entire `.znn` directory using rsync over SSH**, including chain databases, wallet/producer keys, `config.json`, hidden files, and any other contents. Use the configured node data directory (`NOMCTL_ZNN_DIR`, default `/root/.znn`) and an explicitly selected destination. This must not reuse the chain-backup folder allowlist, which would omit wallet/config and other files.
 
