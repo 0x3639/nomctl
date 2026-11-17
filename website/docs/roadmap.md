@@ -58,13 +58,13 @@ Effort is relative: **S** means a focused change, **M** spans several components
 
 Start with **R1, R2, and R3**. R2 is a useful smaller delivery while diagnostics and verification are developed. Complete R4 before adding unattended update policies.
 
-**v0.16.0 delivery: R1 diagnostics and R2 backup controls.** Next are R3 recovery-file verification and R4 health checks. Device migration (R11) transfers the entire `.znn` folder directly with rsync over SSH; it does not depend on the off-machine archive-upload feature (R8).
+**[v0.16.0](https://github.com/0x3639/nomctl/releases/tag/v0.16.0) delivery: R1 diagnostics and R2 backup controls.** Next are R3 recovery-file verification and R4 health checks. Device migration (R11) transfers the entire `.znn` folder directly with rsync over SSH; it does not depend on the off-machine archive-upload feature (R8).
 
 ## Phase 1: reliable operation
 
 ### R1 — Check my node
 
-**Implemented for v0.16.0.** `nomctl doctor [--json] [--wait 10s]`, also under **Manage node → Check my node**. Includes znnd version/commit and installed/running executable SHA-256. [Usage and evidence limits](./troubleshooting/doctor.md). Design: `docs/superpowers/specs/2026-11-17-node-diagnostics-design.md`.
+**Implemented for v0.16.0 ([PR #38](https://github.com/0x3639/nomctl/pull/38)).** `nomctl doctor [--json] [--wait 10s]`, also under **Manage node → Check my node**. Includes znnd version/commit and installed/running executable SHA-256. [Usage and evidence limits](./troubleshooting/doctor.md). Design: `docs/superpowers/specs/2026-11-17-node-diagnostics-design.md`.
 
 Add a menu action that explains service failures, RPC failures, stalled chain progress, low peer counts, time drift, disk pressure, and known log signatures. Integrate the existing planned **Doctor** and **Network check** work into one operator flow.
 
