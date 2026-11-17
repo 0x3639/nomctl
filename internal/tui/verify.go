@@ -52,6 +52,10 @@ func VerifyRecoveryFiles(cfg config.Config) error {
 		case "back":
 			return nil
 		case "status":
+			targets, err := recovery.ListStatus(cfg, recovery.StateDir)
+			if err != nil {
+				return err
+			}
 			fmt.Fprintln(os.Stderr, "Rechecking saved file hashes; large archives can take time. Ctrl+C cancels…")
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			states := make([]recovery.Status, 0, len(targets))

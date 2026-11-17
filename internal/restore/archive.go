@@ -99,6 +99,7 @@ func Extract(archive, dst string) error {
 // ExtractReader extracts into a new private directory. beforeWrite can enforce
 // free-space limits before every directory creation and file-write chunk.
 func ExtractReader(source io.Reader, dst string, beforeWrite func(int64) error) error {
+	buffer := make([]byte, 1<<20)
 	return walkReader(source, func(h *tar.Header, r io.Reader) error {
 		folder, rel, err := entryPath(h.Name)
 		if err != nil {
@@ -131,7 +132,7 @@ func ExtractReader(source io.Reader, dst string, beforeWrite func(int64) error) 
 			if err != nil {
 				return err
 			}
-			if _, err := io.CopyBuffer(guardedWriter{out, beforeWrite}, r, make([]byte, 1<<20)); err != nil {
+			if _, err := io.CopyBuffer(guardedWriter{out, beforeWrite}, r, buffer); err != nil {
 				_ = out.Close()
 				return fmt.Errorf("extract %s: %w", h.Name, err)
 			}

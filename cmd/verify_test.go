@@ -3,12 +3,14 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/0x3639/nomctl/internal/config"
+	"github.com/0x3639/nomctl/internal/recovery"
 )
 
 func TestVerifyCommandsAndSelections(t *testing.T) {
@@ -63,5 +65,33 @@ func TestVerifyCLIJSONFailureAndNoServiceTools(t *testing.T) {
 	}
 	if c.Annotations[annotationOptionalServiceTools] != "true" {
 		t.Fatal("verification unnecessarily requires systemctl")
+	}
+	if err := os.Remove(archive); err != nil {
+		t.Fatal(err)
+	}
+	for _, flags := range [][]string{{"--json"}, {"--all", "--json"}, {"--file", archive, "--json"}, {"--directory", t.TempDir(), "--json"}} {
+		status := newVerifyStatusCommand()
+		status.SetContext(context.Background())
+		out.Reset()
+		status.SetOut(&out)
+		if err := status.ParseFlags(flags); err != nil {
+			t.Fatal(err)
+		}
+		if err := status.RunE(status, nil); err != nil {
+			t.Fatal(err)
+		}
+		var report struct {
+			Files []recovery.Status `json:"files"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		if flags[0] == "--directory" {
+			if len(report.Files) != 0 {
+				t.Fatal("included results from a different backup directory")
+			}
+		} else if len(report.Files) != 1 || report.Files[0].State != "stale" || report.Files[0].Last == nil {
+			t.Fatalf("deleted backup missing from status: %s", out.String())
+		}
 	}
 }

@@ -128,6 +128,16 @@ func newVerifyStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if f.file == "" && f.point == "" {
+				selected, err := f.config()
+				if err != nil {
+					return err
+				}
+				targets, err = recovery.ListStatus(selected, verificationStateDir)
+				if err != nil {
+					return err
+				}
+			}
 			states := make([]recovery.Status, 0, len(targets))
 			for _, t := range targets {
 				states = append(states, recovery.SavedStatus(ctx, verificationStateDir, t))

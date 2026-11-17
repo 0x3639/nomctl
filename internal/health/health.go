@@ -68,7 +68,13 @@ func check(ctx context.Context, before doctor.NodeObservation, expected string, 
 	ctx, stop := context.WithTimeout(ctx, window)
 	defer stop()
 	for ctx.Err() == nil {
-		r.After = append(r.After, take(ctx))
+		sample := take(ctx)
+		// A deadline can interrupt collection midway through service/RPC
+		// identity checks. Keep only observations completed within the window.
+		if ctx.Err() != nil {
+			break
+		}
+		r.After = append(r.After, sample)
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
@@ -120,7 +126,7 @@ func Evaluate(samples []doctor.NodeObservation, expected string) (string, []stri
 	if n.NumPeers < 1 || n.State == node.NotEnoughPeers {
 		return failed("node has no usable peers")
 	}
-	var first *doctor.NodeObservation
+	var first, previous *doctor.NodeObservation
 	for i := range samples {
 		o := &samples[i]
 		svc := o.Sample.Service
@@ -130,8 +136,14 @@ func Evaluate(samples []doctor.NodeObservation, expected string) (string, []stri
 		if o.Problem == "changed" {
 			return failed("service changed during RPC collection")
 		}
-		if o.Problem == "" && o.Sample.Node.Reachable && svc.MainPID == s.MainPID && !svc.Since.IsZero() && first == nil {
-			first = o
+		if o.Problem == "" && o.Sample.Node.Reachable && svc.MainPID == s.MainPID && !svc.Since.IsZero() {
+			if previous != nil && (o.Sample.Node.CurrentHeight < previous.Sample.Node.CurrentHeight || o.Sample.Node.FrontierKnown && previous.Sample.Node.FrontierKnown && o.Sample.Node.FrontierHeight < previous.Sample.Node.FrontierHeight) {
+				return failed("chain height moved backwards within one process")
+			}
+			previous = o
+			if first == nil {
+				first = o
+			}
 		}
 	}
 	if first == nil || first == &samples[len(samples)-1] {

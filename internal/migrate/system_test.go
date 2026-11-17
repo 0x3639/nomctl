@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,35 @@ import (
 
 	"github.com/0x3639/nomctl/internal/lock"
 )
+
+func TestFreePortsAcceptsPortableRPCBinds(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "0.0.0.0", "::1", "::"} {
+		t.Run(host, func(t *testing.T) {
+			addr := net.JoinHostPort(host, "0")
+			listener, err := net.Listen("tcp", addr)
+			if err != nil {
+				t.Skipf("bind unavailable on this test host: %v", err)
+			}
+			_ = listener.Close()
+			if err := freePorts("http://"+addr, 0); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for _, host := range []string{"192.0.2.1", "2001:db8::1", "invalid"} {
+		if err := freePorts("http://"+net.JoinHostPort(host, "0"), 0); err == nil || !strings.Contains(err.Error(), "loopback or wildcard") {
+			t.Fatalf("nonportable bind %s: %v", host, err)
+		}
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	if err := freePorts("http://"+listener.Addr().String(), 0); err == nil {
+		t.Fatal("accepted occupied RPC port")
+	}
+}
 
 func TestSystemRuntimeDurableBlocks(t *testing.T) {
 	ctx := context.Background()

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -124,7 +125,7 @@ func Rsync(ctx context.Context, p Plan, progress io.Writer) error {
 		if strings.HasSuffix(pair[0], "/") {
 			args = append(args, "--delete-delay")
 		}
-		args = append(args, "--", pair[0], p.Connection.Host+":"+pair[1])
+		args = append(args, "--", pair[0], rsyncHost(p.Connection.Host)+":"+pair[1])
 		cmd := exec.CommandContext(ctx, "rsync", args...)
 		cmd.Stdout = progress
 		cmd.Stderr = io.Discard
@@ -133,6 +134,19 @@ func Rsync(ctx context.Context, p Plan, progress io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// Rsync uses a colon to separate host and path, so IPv6 literals need brackets.
+// SSH itself accepts the unbracketed host stored in the connection settings.
+func rsyncHost(host string) string {
+	user := ""
+	if i := strings.LastIndexByte(host, '@'); i >= 0 {
+		user, host = host[:i+1], host[i+1:]
+	}
+	if ip, err := netip.ParseAddr(host); err == nil && ip.Is6() {
+		host = "[" + host + "]"
+	}
+	return user + host
 }
 
 func rsyncFileArgs(p Plan) []string {

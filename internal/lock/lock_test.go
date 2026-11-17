@@ -1,16 +1,20 @@
 package lock
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestAcquireRelease(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nomctl.lock")
-	l, err := Acquire(path, "backup")
+	guard := filepath.Join(t.TempDir(), "blocked")
+	l, err := acquire(path, "backup", guard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +23,7 @@ func TestAcquireRelease(t *testing.T) {
 		t.Errorf("holder not recorded: %q", data)
 	}
 	l.Release()
-	l2, err := Acquire(path, "restore")
+	l2, err := acquire(path, "restore", guard)
 	if err != nil {
 		t.Fatalf("lock should be free after Release: %v", err)
 	}
@@ -72,14 +76,15 @@ func TestMigrationGuardPersistsBeyondLockHolder(t *testing.T) {
 // conflict, but a separate process is the real scenario).
 func TestContention(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nomctl.lock")
+	guard := filepath.Join(t.TempDir(), "blocked")
 	if _, err := exec.LookPath("flock"); err != nil {
 		// macOS has no flock(1); hold it from this process instead.
-		l, err := Acquire(path, "backup")
+		l, err := acquire(path, "backup", guard)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer l.Release()
-		if _, err := Acquire(path, "restore"); err == nil || !strings.Contains(err.Error(), "backup pid") {
+		if _, err := acquire(path, "restore", guard); err == nil || !strings.Contains(err.Error(), "backup pid") {
 			t.Errorf("second acquire should fail naming the holder, got %v", err)
 		}
 		return
@@ -91,12 +96,35 @@ func TestContention(t *testing.T) {
 	defer func() { _ = holder.Process.Kill(); _ = holder.Wait() }()
 	// Give flock a moment to take the lock.
 	for range 50 {
-		if _, err := Acquire(path, "restore"); err != nil {
+		l, err := acquire(path, "restore", guard)
+		if err != nil {
 			if !strings.Contains(err.Error(), "in progress") {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			return
 		}
+		l.Release()
+		time.Sleep(10 * time.Millisecond)
 	}
 	t.Error("expected contention")
+}
+
+func TestMigrationGuardErrorPreservesCauseAndReleasesLock(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(parent, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "lock")
+	if l, err := acquire(path, "backup", filepath.Join(parent, "blocked")); l != nil || !errors.Is(err, syscall.ENOTDIR) {
+		if l != nil {
+			l.Release()
+		}
+		t.Fatalf("guard lookup should fail closed with its cause: %v", err)
+	}
+	l, err := AcquireMigration(path, "inspect migration")
+	if err != nil {
+		t.Fatalf("guard lookup failure leaked the lock: %v", err)
+	}
+	l.Release()
 }

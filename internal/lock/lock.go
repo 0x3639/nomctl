@@ -66,6 +66,9 @@ func acquire(path, operation, guard string) (*Lock, error) {
 	if guard != "" {
 		if _, err := os.Lstat(guard); !errors.Is(err, os.ErrNotExist) {
 			l.Release()
+			if err != nil {
+				return nil, fmt.Errorf("check migration handoff guard %s: %w", guard, err)
+			}
 			return nil, fmt.Errorf("node operations are blocked by a persistent migration handoff; use 'nomctl migrate status', resume, or return before changing this node")
 		}
 	}

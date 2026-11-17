@@ -10,8 +10,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/0x3639/nomctl/internal/backup"
+	"github.com/0x3639/nomctl/internal/config"
 	"github.com/0x3639/nomctl/internal/fsx"
 )
 
@@ -46,6 +50,68 @@ type Status struct {
 	State  string  `json:"state"`
 	Reason string  `json:"reason,omitempty"`
 	Last   *Result `json:"last,omitempty"`
+}
+
+// ListStatus includes saved targets in this service and backup directory even
+// when all their files have disappeared. Verification itself uses List so it
+// does not overwrite those historical results with new missing-file attempts.
+func ListStatus(cfg config.Config, dir string) ([]Target, error) {
+	targets, err := List(cfg)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return targets, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	root, err := filepath.Abs(cfg.BackupDir)
+	if err != nil {
+		return nil, err
+	}
+	pointRoot, err := filepath.Abs(backup.RestorePointsDir(cfg))
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[Target]bool, len(targets))
+	for _, target := range targets {
+		seen[target] = true
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		id, err := hex.DecodeString(strings.TrimSuffix(name, ".json"))
+		if err != nil || len(id) != sha256.Size {
+			continue // Scheduled attempts and temporary files have other names.
+		}
+		data, err := fsx.ReadRuntimeFile(filepath.Join(dir, name), 4<<20)
+		if err != nil {
+			return nil, fmt.Errorf("read saved verification target: %w", err)
+		}
+		var r Result
+		if err := json.Unmarshal(data, &r); err != nil || r.Version != 1 || r.Started.IsZero() || name != key(r.Target)+".json" {
+			return nil, fmt.Errorf("invalid saved verification result: %s", name)
+		}
+		target := r.Target
+		if target.Service != cfg.ServiceName || !filepath.IsAbs(target.Path) || filepath.Clean(target.Path) != target.Path {
+			continue
+		}
+		inDirectory := target.Kind == "backup" && filepath.Dir(target.Path) == root
+		if target.Kind == "restore-point" && filepath.Dir(target.Path) == pointRoot {
+			point, err := Point(cfg, filepath.Base(target.Path))
+			inDirectory = err == nil && point == target
+		}
+		if inDirectory && !seen[target] {
+			targets = append(targets, target)
+			seen[target] = true
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Path < targets[j].Path })
+	return targets, nil
 }
 
 // SavedStatus compares both file metadata and content hashes. Timestamps alone

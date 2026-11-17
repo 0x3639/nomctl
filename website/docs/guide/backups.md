@@ -172,6 +172,8 @@ unfinished attempt never counts as a pass. Ctrl+C cancels long reads.
 
 **View saved results** and `verify status` recheck both file metadata and content
 hashes. Changed, replaced, or missing components make the saved result **stale**.
+Previously verified backups and restore points remain listed as stale even when
+all their files have been deleted, within the selected service and directory.
 This reads entire compressed archives and saved executables and can take time
 on large collections; archive inspection and extraction retain their original
 check times. Status checks are available on request so opening the menu does
@@ -219,7 +221,12 @@ attempt and the cron service if runs are missing.
 Scheduled runs record success, failure, unfinished attempts, or
 **skipped-because-busy**. They never rehearse extraction. Verification shares the
 operation lock with backup, restore, upgrade, and cleanup, so these operations
-cannot change recovery files during a check. Busy runs are skipped; missed or
+cannot change recovery files during a check. The lock is held for the entire
+verification, including all archive reads. Large collections can take a long
+time and compete with znnd for disk bandwidth; choose a quiet daily slot.
+Manual backup, restore, upgrade, or cleanup attempts during that window return
+busy and must be retried after verification finishes or is cancelled.
+Busy runs are skipped; missed or
 failed runs do not catch up or retry automatically. The next daily slot is the
 next attempt. Backup schedules, retention, and protected-point deletion rules
 are unchanged.

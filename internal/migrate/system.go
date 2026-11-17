@@ -284,7 +284,7 @@ func freePorts(settingsURL string, p2p int) error {
 		return err
 	}
 	ip := net.ParseIP(u.Hostname())
-	if ip == nil || !ip.IsLoopback() {
+	if ip == nil || !ip.IsLoopback() && !ip.IsUnspecified() {
 		return errors.New("migration requires a loopback or wildcard HTTP RPC bind address")
 	}
 	for _, addr := range []string{u.Host, net.JoinHostPort("", fmt.Sprint(p2p))} {

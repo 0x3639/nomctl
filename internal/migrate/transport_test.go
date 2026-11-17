@@ -48,6 +48,13 @@ func TestRemoteHelper(t *testing.T) {
 }
 
 func TestProductionRsyncReceiverAndControlProtocol(t *testing.T) {
+	for _, host := range []string{"replacement", "root@192.0.2.1", "2001:db8::1", "root@2001:db8::1"} {
+		t.Run(host, func(t *testing.T) { exerciseProductionTransport(t, host) })
+	}
+}
+
+func exerciseProductionTransport(t *testing.T, host string) {
+	t.Helper()
 	r := fixture(t)
 	root := t.TempDir()
 	bin, err := os.Executable()
@@ -62,14 +69,17 @@ func TestProductionRsyncReceiverAndControlProtocol(t *testing.T) {
 	ssh := filepath.Join(root, "ssh")
 	putFile(t, ssh, `#!/bin/sh
 set -eu
+login=
 while [ "$#" -gt 0 ]; do
  case "$1" in
- -p|-l) shift 2;;
+ -p) shift 2;;
+ -l) login="$2@"; shift 2;;
  -o*) shift;;
  --) shift; break;;
  *) break;;
  esac
 done
+test "$login$1" = "$NOMCTL_TEST_HOST"
 shift
 exec sh -c "$*" 2>"$NOMCTL_TEST_TRACE"
 `)
@@ -78,6 +88,7 @@ exec sh -c "$*" 2>"$NOMCTL_TEST_TRACE"
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NOMCTL_TEST_REMOTE", r.dest.Dir)
+	t.Setenv("NOMCTL_TEST_HOST", host)
 	trace := filepath.Join(root, "trace")
 	t.Setenv("NOMCTL_TEST_TRACE", trace)
 	s, err := r.c.Local.Status()
@@ -85,7 +96,7 @@ exec sh -c "$*" 2>"$NOMCTL_TEST_TRACE"
 		t.Fatal(err)
 	}
 	s.Plan.Connection.Nomctl = helper
-	s.Plan.Connection.Host = "replacement"
+	s.Plan.Connection.Host = host
 	if err := saveState(r.c.Local.Dir, s); err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -76,5 +77,46 @@ func TestRecoveryCommandPreservesDataOnly(t *testing.T) {
 	e := &Failure{RecoveryID: "point", DataOnly: true, Report: Report{Outcome: "failed"}}
 	if !strings.Contains(e.Error(), "'nomctl restore point point --data-only'") {
 		t.Fatal(e.Error())
+	}
+}
+
+func TestWindowExpiryDiscardsIncompleteSample(t *testing.T) {
+	for _, complete := range []int{0, 1, 2} {
+		t.Run(fmt.Sprint(complete), func(t *testing.T) {
+			calls := 0
+			r, err := check(context.Background(), healthy(999), "expected", time.Second, time.Millisecond, func(ctx context.Context) doctor.NodeObservation {
+				calls++
+				if calls <= complete {
+					return healthy(uint64(calls))
+				}
+				<-ctx.Done()
+				return doctor.NodeObservation{}
+			})
+			if len(r.After) != complete || r.Passed() != (complete == 2) || (err == nil) != r.Passed() {
+				t.Fatalf("complete=%d: %+v, %v", complete, r, err)
+			}
+			if complete < 2 && r.Outcome != "unknown" {
+				t.Fatalf("insufficient evidence must be unknown: %+v", r)
+			}
+		})
+	}
+}
+
+func TestIntermediateHeightDecreaseFails(t *testing.T) {
+	for _, frontier := range []bool{false, true} {
+		samples := []doctor.NodeObservation{healthy(10), healthy(12), healthy(13)}
+		if frontier {
+			samples[2].Sample.Node.FrontierHeight = 11
+		} else {
+			samples[2].Sample.Node.CurrentHeight = 11
+		}
+		// Recovery above the earlier maximum must not conceal the regression.
+		for range 2 {
+			outcome, reasons := Evaluate(samples, "expected")
+			if outcome != "failed" || !strings.Contains(strings.Join(reasons, " "), "backwards") {
+				t.Fatalf("frontier=%t: %s %v", frontier, outcome, reasons)
+			}
+			samples = append(samples, healthy(14))
+		}
 	}
 }
