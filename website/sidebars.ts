@@ -20,7 +20,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Troubleshooting',
       collapsed: false,
-      items: ['troubleshooting/first-look', 'troubleshooting/signatures', 'troubleshooting/support-bundle'],
+      items: ['troubleshooting/doctor', 'troubleshooting/first-look', 'troubleshooting/signatures', 'troubleshooting/support-bundle'],
     },
     {
       type: 'category',

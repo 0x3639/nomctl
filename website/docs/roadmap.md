@@ -53,16 +53,18 @@ Effort is relative: **S** means a focused change, **M** spans several components
 | 2 — Visibility and resilience | R8 | Encrypted off-machine recovery copies | L | R2, R3 |
 | 3 — Controlled maintenance | R9 | Operation history and maintenance notifications | M | R2, R4 |
 | 3 — Controlled maintenance | R10 | Opt-in maintenance windows and update policy | L | R3, R4, R9 |
-| 3 — Controlled maintenance | R11 | Guided migration to a replacement node | L | R3, R4, R8 |
+| 3 — Controlled maintenance | R11 | Migrate the entire `.znn` folder to a new device with rsync | L | R3, R4; SSH and rsync on both devices |
 | 3 — Controlled maintenance | R12 | Configuration review and change history | M | Existing schema validation and config backups |
 
 Start with **R1, R2, and R3**. R2 is a useful smaller delivery while diagnostics and verification are developed. Complete R4 before adding unattended update policies.
 
-**R2 is implemented locally, pending release.** Next are R1 diagnostics and R3 recovery-file verification, then R4 health checks.
+**[v0.16.0](https://github.com/0x3639/nomctl/releases/tag/v0.16.0) delivery: R1 diagnostics and R2 backup controls.** Next are R3 recovery-file verification and R4 health checks. Device migration (R11) transfers the entire `.znn` folder directly with rsync over SSH; it does not depend on the off-machine archive-upload feature (R8).
 
 ## Phase 1: reliable operation
 
 ### R1 — Check my node
+
+**Implemented for v0.16.0 ([PR #38](https://github.com/0x3639/nomctl/pull/38)).** `nomctl doctor [--json] [--wait 10s]`, also under **Manage node → Check my node**. Includes znnd version/commit and installed/running executable SHA-256. [Usage and evidence limits](./troubleshooting/doctor.md). Design: `docs/superpowers/specs/2026-11-17-node-diagnostics-design.md`.
 
 Add a menu action that explains service failures, RPC failures, stalled chain progress, low peer counts, time drift, disk pressure, and known log signatures. Integrate the existing planned **Doctor** and **Network check** work into one operator flow.
 
@@ -70,7 +72,7 @@ Completion means the report shows evidence, severity, and a suggested next step 
 
 ### R2 — Backup status and schedule controls
 
-**Implemented, unreleased.** `backup status [--json]` and `backup schedule edit|pause|resume`, also available under **Backup status & schedule** in the menu. [Usage and retry policy](./guide/backups.md#status-edit-pause-and-resume). Design: `docs/superpowers/specs/2026-11-16-backup-schedule-controls-design.md`.
+**Implemented for v0.16.0 ([PR #37](https://github.com/0x3639/nomctl/pull/37)).** `backup status [--json]` and `backup schedule edit|pause|resume`, also available under **Backup status & schedule** in the menu. [Usage and retry policy](./guide/backups.md#status-edit-pause-and-resume). Design: `docs/superpowers/specs/2026-11-16-backup-schedule-controls-design.md`.
 
 Show enabled/paused state, server timezone, next scheduled run, chosen retention, backup destination, last attempted run, last successful run, and failure reason. Add edit, pause, and resume actions so stopping future backups does not require deleting a cron file by hand.
 
@@ -128,11 +130,21 @@ Offer explicit maintenance windows and update policies: notify only, prepare for
 
 Completion means pinned versions can be respected, pending changes and expected downtime are visible, and every installed node upgrade retains its required restore point and space check. No unattended source-branch upgrade by default. Unattended installation depends on proven health checks and a reviewed recovery policy; it must stop after a failed attempt rather than enter an upgrade/rollback loop.
 
-### R11 — Move to replacement hardware
+### R11 — Migrate to a new device with rsync
 
-Provide a guided export/import checklist that combines a verified recovery point, separately encrypted wallet/config backup, version details, and destination checks. Revalidate architecture, paths, ports, and service settings on the target machine; a saved executable may not run on a different architecture.
+Add a **Migrate to a new device** menu action and a matching command-line workflow. Transfer the **entire `.znn` directory using rsync over SSH**, including chain databases, wallet/producer keys, `config.json`, hidden files, and any other contents. Use the configured node data directory (`NOMCTL_ZNN_DIR`, default `/root/.znn`) and an explicitly selected destination. This must not reuse the chain-backup folder allowlist, which would omit wallet/config and other files.
 
-Completion means the procedure is rehearsed on a second machine and has an explicit producer handoff: the original producer is stopped and confirmed inactive before enabling the replacement. Do not copy TON-specific election timing or assume two active producers are safe. The first delivery is an operator-driven migration, not automatic failover or a fleet controller.
+The first version uses a stopped-node transfer. Before downtime, check SSH access and host identity, rsync availability on both devices, destination space and permissions, and the target's architecture, znnd version, data path, ports, and service settings. Preview the two devices, exact paths, data size, and expected downtime. Prepare a compatible znnd and service on the destination without starting it; the executable and service definition normally live outside `.znn` and are not supplied by the directory copy. Retain a verified recovery point and a separate encrypted wallet/config backup before the handoff.
+
+Completion means:
+
+- Stop znnd on both devices and confirm it is inactive before copying. Hold the operation lock on both devices and prevent service auto-start and scheduled mutations during the transfer. The original producer must remain stopped, including after a reboot, before the replacement can start.
+- Copy into a dedicated destination staging directory, including hidden entries, with progress and resumable interrupted transfers. Preserve file permissions, timestamps, and links, validate destination ownership for its service user, and identify links that depend on paths outside `.znn`. The first version refuses external symlinks: the operator must move the required contents inside `.znn` and adjust the link before migration, or defer migration. It never silently follows or copies an external target. Refuse to overwrite an existing destination data directory in the first version.
+- Verify the completed directory against the stopped source, including file contents and required metadata, before putting it into service. Recheck link resolution and refuse any link that escapes the staged `.znn` tree, including dangling external targets; internal links must resolve within that tree after promotion. An interrupted or failed copy never starts the destination; report each node's state and provide an explicit resume or recovery path. Never automatically restart the original when the replacement may be active.
+- Start the replacement only after the producer handoff is confirmed, then check RPC, sync progress, peers, and producer configuration using R4. Keep the original `.znn` directory intact after success; source cleanup is a separate, explicit operator action. Returning to the original requires first confirming the replacement is stopped and disabling its automatic starts, including at boot, so it stays inactive through a reboot before the original can restart.
+- Protect wallet/config material through SSH transport and restrictive destination permissions; do not expose secrets in progress output or logs. Explain that copying `.znn` does not migrate external backup directories, alerts configuration, backup schedules, or orchestrator data; list the setup actions needed on the new device.
+
+Rehearse the workflow on a second machine, including transfer interruption/resume, insufficient space, verification failure, an existing destination, and failed destination startup. Cover external symlinks with absent or differing destination targets: both must block migration and destination startup until the dependency is brought inside `.znn`. Rehearse returning to the original and rebooting the replacement to confirm it stays inactive. R3 supplies recovery-file verification and R4 supplies post-migration health checks; R8 is not a prerequisite for direct device-to-device transfer. Automatic failover and multi-node management remain outside this delivery.
 
 ### R12 — Review configuration changes
 
@@ -145,8 +157,8 @@ Completion means secrets are redacted, malformed changes are refused, and revert
 - **Backups** are rotating chain-data archives: daily scheduling, default 7 days, maximum 30, with oldest-first space pruning.
 - **Restore points** preserve chain data and znnd. Days mark eligibility for manual pruning; indefinite points require individual deletion. No future scheduler, uploader, or cleanup feature may silently convert them into automatically expiring backups.
 - **Restore from backup** changes data only. Restore-point recovery offers the saved znnd or an explicit data-only path and clearly explains compatibility.
-- Check space before downtime, restart before compression where possible, and reuse the shared operation lock. Long uploads, verification, and benchmarking must not accidentally extend the stopped-service interval.
-- Retain separate encrypted handling for wallet/config secrets. New automation is opt-in and must expose its status, failures, and disable control.
+- Check space before downtime, restart before compression where possible, and reuse the shared operation lock. Long archive uploads, routine archive verification, and benchmarking must not accidentally extend the stopped-service interval. R11 explicitly includes the directory transfer and final verification in its planned downtime.
+- Retain separate encrypted wallet/config backups. R11 also transfers the live wallet/config as part of the complete `.znn` directory over SSH, with restrictive destination permissions. New automation is opt-in and must expose its status, failures, and disable control.
 
 ## Backlog and boundaries
 

@@ -283,6 +283,12 @@ func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
 	n := NodeSample{URL: s.Node.URL, Pillar: PillarSample{Configured: s.PillarName != "", Name: s.PillarName}}
 	s.Node.PillarName = s.PillarName
 	snap := s.Node.Snapshot(ctx)
+	// A failed stats method does not erase independently returned identity.
+	// Keep it from this same RPC snapshot so diagnostics can bracket all of
+	// its observations with service-identity checks, without a later query.
+	if snap.Process != nil {
+		n.Version, n.Commit = snap.Process.Version, snap.Process.Commit
+	}
 	if snap.Err != nil {
 		n.Error = snap.Err.Error()
 		s.heights = nil
@@ -309,7 +315,6 @@ func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
 	n.StateText = snap.Sync.State.String()
 	n.CurrentHeight, n.TargetHeight = snap.Sync.CurrentHeight, snap.Sync.TargetHeight
 	n.NumPeers = snap.Network.NumPeers
-	n.Version, n.Commit = snap.Process.Version, snap.Process.Commit
 	n.Goroutines = snap.Os.NumGoroutine
 	if snap.Frontier != nil {
 		n.FrontierKnown = true

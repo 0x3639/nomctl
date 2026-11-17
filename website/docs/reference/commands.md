@@ -70,6 +70,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 
 | Command | Notes |
 |---|---|
+| `nomctl doctor [--json] [--wait 10s] [--probe-url HTTPS_URL --public-ip IP]` | [Check my node](/troubleshooting/doctor): read-only diagnostics, suggested actions, znnd version/commit and installed/running SHA-256; external probe is opt-in |
 | `nomctl status [--json] [--wait 2s] [--no-update-check]` | one-screen summary, with update lines when something is newer |
 | `nomctl top [--interval 2s] [--no-update-check]` | live dashboard, `q` to quit |
 | `nomctl support-bundle [--watch] [--since "12 hours ago"] [--output DIR] [--poll 10s] [--timeout 0]` | [Support bundle](/troubleshooting/support-bundle) |

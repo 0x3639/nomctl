@@ -4,8 +4,13 @@ description: "How to read nomctl status and nomctl top: service, sync, frontier,
 ---
 
 ```bash
+sudo nomctl doctor
 sudo nomctl status
 ```
+
+Start with [Check my node](./doctor.md) for a diagnostic report and suggested
+actions, including znnd's version, commit and installed/running executable
+hashes. `status` gives the compact measurement summary shown below.
 
 ```
 Service   go-zenon active (running), pid 1234, 0 restarts, up 3d 4h

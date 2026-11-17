@@ -21,6 +21,7 @@ Opening the menu does not run hardware, NTP or Internet pre-flight checks. Those
 | Entry | Runs |
 |---|---|
 | Live dashboard | [`nomctl top`](/troubleshooting/first-look) |
+| Check my node | [`nomctl doctor`](/troubleshooting/doctor): diagnostics, suggested actions, znnd version, commit and executable hashes |
 | View logs | `nomctl logs -f` |
 | Start node | `nomctl start` |
 | Restart node | `nomctl restart` |
