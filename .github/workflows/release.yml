@@ -26,7 +26,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install rsync for migration rehearsals
+        run: sudo apt-get update && sudo apt-get install -y rsync
       - name: Test
+        env:
+          NOMCTL_REQUIRE_RSYNC: "1"
         run: go test ./...
       - uses: goreleaser/goreleaser-action@v6
         with:

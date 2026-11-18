@@ -73,7 +73,7 @@ dockers_v2:
       - ghcr.io/0x3639/nomctl-relay
     tags:
       - "{{ .Version }}"
-      - latest
+      - "{{ if not .Prerelease }}latest{{ end }}"
     dockerfile: deploy/relay/Dockerfile.release
     platforms:
       - linux/amd64
