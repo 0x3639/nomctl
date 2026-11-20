@@ -1147,13 +1147,16 @@
       "paths": [
         "experiments/scheduleproof/**"
       ],
-      "contract": "Experimental replicas require verified historical inputs, continuity and fresh evidence; restart/fork reconciliation fail closed.",
+      "contract": "Experimental replicas require verified historical inputs, continuity and fresh evidence; ownership and identity are checked under the lock, interrupted bootstrap resumes only from validated artifacts, durable commits count even after engine errors, and restart/fork reconciliation fail closed.",
       "laws": [
         "replica_accepts_valid",
         "replica_requires_complete",
         "replica_requires_continuous",
         "replica_requires_current",
-        "replica_requires_history"
+        "replica_requires_history",
+        "change_requires_locked",
+        "publication_requires_owned",
+        "publication_requires_fresh"
       ],
       "evidence": [
         {
@@ -1179,6 +1182,66 @@
         {
           "file": "experiments/scheduleproof/sync_test.go",
           "test": "TestKilledProcessResumesAtomicCommit",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/replica_test.go",
+          "test": "TestReplicaResumesInterruptedInitialization",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/replica_test.go",
+          "test": "TestReplicaRefusesUnrelatedBootstrapArtifacts",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/replica_test.go",
+          "test": "TestReplicaRejectsNonregularIdentityWithoutBlocking",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/replica_test.go",
+          "test": "TestReplicaRechecksIdentityAfterAcquiringLock",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/rpc_test.go",
+          "test": "TestWebSocketCancellationDuringUpgrade",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/rpc_test.go",
+          "test": "TestWebSocketCanceledDuringDecodeIsNotReused",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/storage_test.go",
+          "test": "TestAtomicManagerReleasesLocalSnapshots",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/sync_test.go",
+          "test": "TestReadyStatusUsesOneClockObservation",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/sync_test.go",
+          "test": "TestSyncCountsDurableCommitOnInsertError",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/sync_test.go",
+          "test": "TestReadOnlyRPCTransportAndLimits",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/mirror_test.go",
+          "test": "TestRejectsCorruptOrIncompleteHistory",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/mirror_test.go",
+          "test": "TestMainnetRPCFixture",
           "module": "scheduleproof"
         }
       ],

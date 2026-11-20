@@ -47,9 +47,10 @@ Telegram chat or production directory is used.
 
 Bend 2.0.40 release archives are checked against the two SHA-256 values from the
 [official installer](https://bend-lang.com/install.sh). Its base image is pinned
-by digest. The independent checker pins the elan installer commit and checksum
-and Lean 4.34.0. Elan/Lean binary downloads are version-selected, not independently
-checksummed here. Go and Node images follow their declared version tags. These
+by digest. The independent checker pins the elan 4.4.0 executable archives and
+their release-asset SHA-256 digests, and Lean 4.34.0. Lean binary downloads are
+version-selected, not independently checksummed here. Go and Node images follow
+their declared version tags. These
 are explicit toolchain trust boundaries, not a fully hermetic supply chain.
 
 ## What the full gate does

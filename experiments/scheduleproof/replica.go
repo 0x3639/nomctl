@@ -1,10 +1,13 @@
 package scheduleproof
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zenon-network/go-zenon/chain/store"
 	"github.com/zenon-network/go-zenon/common/types"
@@ -77,6 +80,11 @@ func noSymlinks(path string) error {
 	}
 }
 func OpenReplica(root string, genesis store.Genesis) (r *Replica, err error) {
+	return openReplica(root, genesis, nil)
+}
+
+// beforeLock is a test seam for competing initializers; production passes nil.
+func openReplica(root string, genesis store.Genesis, beforeLock func()) (r *Replica, err error) {
 	root, err = filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -89,17 +97,21 @@ func OpenReplica(root string, genesis store.Genesis) (r *Replica, err error) {
 	}
 	expected := replicaIdentity{2, EngineVersion, genesis.GetGenesisMomentum().Identifier()}
 	identityPath := filepath.Join(root, "replica.json")
-	raw, readErr := os.ReadFile(identityPath)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return nil, readErr
+	// Avoid even creating a lock in an unrelated directory. This preliminary
+	// screen never authorizes initialization; repeat validation under the lock.
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
 	}
-	if os.IsNotExist(readErr) {
-		entries, e := os.ReadDir(root)
-		if e != nil {
-			return nil, e
-		}
-		if len(entries) != 0 {
-			return nil, fmt.Errorf("data directory is not an empty standalone replica directory")
+	hasIdentity := false
+	for _, entry := range entries {
+		hasIdentity = hasIdentity || entry.Name() == "replica.json"
+	}
+	if !hasIdentity {
+		for _, entry := range entries {
+			if entry.Name() != "LOCK" && !strings.HasPrefix(entry.Name(), ".write-") {
+				return nil, fmt.Errorf("data directory contains unrelated bootstrap data: %s", entry.Name())
+			}
 		}
 	}
 	for _, name := range []string{"replica.json", "LOCK", "chain", "status.json"} {
@@ -107,11 +119,18 @@ func OpenReplica(root string, genesis store.Genesis) (r *Replica, err error) {
 			return nil, err
 		}
 	}
-	fd, err := unix.Open(filepath.Join(root, "LOCK"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW, 0600)
+	if beforeLock != nil {
+		beforeLock()
+	}
+	fd, err := unix.Open(filepath.Join(root, "LOCK"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, err
 	}
 	lock := os.NewFile(uintptr(fd), "replica lock")
+	if err = privateRegular(fd); err != nil {
+		lock.Close()
+		return nil, err
+	}
 	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		lock.Close()
 		return nil, fmt.Errorf("replica already in use: %w", err)
@@ -123,6 +142,12 @@ func OpenReplica(root string, genesis store.Genesis) (r *Replica, err error) {
 			owned.Close()
 		}
 	}()
+	// Identity observations and the bootstrap decision belong to this lock.
+	// Another initializer may have completed while this opener was paused.
+	raw, readErr := readPrivateRegular(identityPath, 64<<10)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return nil, readErr
+	}
 	if readErr == nil {
 		var got replicaIdentity
 		if err = json.Unmarshal(raw, &got); err != nil {
@@ -131,8 +156,20 @@ func OpenReplica(root string, genesis store.Genesis) (r *Replica, err error) {
 		if got != expected {
 			return nil, fmt.Errorf("replica format, engine, or genesis mismatch")
 		}
-	} else if err = atomicJSON(identityPath, expected); err != nil {
-		return nil, err
+	} else {
+		var leftovers []string
+		leftovers, err = bootstrapArtifacts(root, expected)
+		if err != nil {
+			return nil, err
+		}
+		if err = atomicJSON(identityPath, expected); err != nil {
+			return nil, err
+		}
+		for _, path := range leftovers {
+			if err = os.Remove(path); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err = atomicJSON(filepath.Join(root, "status.json"), Status{State: "starting", Engine: EngineVersion}); err != nil {
 		return nil, err
@@ -142,6 +179,71 @@ func OpenReplica(root string, genesis store.Genesis) (r *Replica, err error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+func privateRegular(fd int) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return err
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0777 != 0600 || st.Nlink != 1 || st.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("replica metadata must be an owned private regular file")
+	}
+	return nil
+}
+
+func readPrivateRegular(path string, limit int64) ([]byte, error) {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	if err = privateRegular(fd); err != nil {
+		return nil, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err == nil && int64(len(raw)) > limit {
+		err = fmt.Errorf("replica metadata exceeds size limit")
+	}
+	return raw, err
+}
+
+// Before the identity is published, only our empty lock and interrupted writes
+// of that exact identity are adoptable. No chain or unrelated data is adopted.
+func bootstrapArtifacts(root string, expected replicaIdentity) ([]string, error) {
+	encoded, err := json.MarshalIndent(expected, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	encoded = append(encoded, '\n')
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var leftovers []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != "LOCK" && !strings.HasPrefix(name, ".write-") {
+			return nil, fmt.Errorf("data directory contains unrelated bootstrap data: %s", name)
+		}
+		path := filepath.Join(root, name)
+		raw, err := readPrivateRegular(path, int64(len(encoded)))
+		if err != nil {
+			return nil, err
+		}
+		if name == "LOCK" {
+			if len(raw) != 0 {
+				return nil, fmt.Errorf("nonempty replica lock")
+			}
+		} else {
+			if !bytes.HasPrefix(encoded, raw) {
+				return nil, fmt.Errorf("unrecognized interrupted identity write: %s", name)
+			}
+			leftovers = append(leftovers, path)
+		}
+	}
+	return leftovers, nil
 }
 func (r *Replica) Recover() error {
 	if r.Mirror != nil {

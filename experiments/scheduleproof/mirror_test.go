@@ -222,8 +222,8 @@ func TestProofReplacement(t *testing.T) {
 
 func TestRejectsCorruptOrIncompleteHistory(t *testing.T) {
 	z := source(t)
-	z.InsertMomentumsTo(3)
-	list, err := api.NewLedgerApi(z).GetDetailedMomentumsByHeight(2, 2)
+	z.InsertMomentumsTo(4)
+	list, err := api.NewLedgerApi(z).GetDetailedMomentumsByHeight(2, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,16 +232,26 @@ func TestRejectsCorruptOrIncompleteHistory(t *testing.T) {
 		index  int
 		mutate func(map[string]interface{})
 	}{
-		{"missing_height", 1, nil},
-		{"wrong_chain", 0, func(v map[string]interface{}) { v["momentum"].(map[string]interface{})["chainIdentifier"] = 999 }},
-		{"invalid_signature", 0, func(v map[string]interface{}) { v["momentum"].(map[string]interface{})["signature"] = "AA==" }},
-		{"invalid_state_hash", 0, func(v map[string]interface{}) {
+		{"missing_height", 2, nil},
+		{"wrong_chain", 1, func(v map[string]interface{}) { v["momentum"].(map[string]interface{})["chainIdentifier"] = 999 }},
+		{"invalid_signature", 1, func(v map[string]interface{}) { v["momentum"].(map[string]interface{})["signature"] = "AA==" }},
+		{"invalid_state_hash", 1, func(v map[string]interface{}) {
 			v["momentum"].(map[string]interface{})["changesHash"] = types.ZeroHash.String()
 		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newReplica(t)
+			good, err := json.Marshal(list.List[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = m.ApplyJSON(good); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = m.ScheduleAt(0); err != nil {
+				t.Fatalf("schedule must be usable before corruption: %v", err)
+			}
 			raw, _ := json.Marshal(list.List[tc.index])
 			if tc.mutate != nil {
 				var v map[string]interface{}
@@ -420,6 +430,9 @@ func TestMainnetRPCFixture(t *testing.T) {
 				checked++
 			}
 		}
+	}
+	if checked == 0 || (path == "testdata/mainnet-2-61.json" && checked != 13) {
+		t.Fatalf("insufficient observed producer comparisons: %d", checked)
 	}
 	t.Logf("verified %d mainnet momentums from pinned genesis; reconstructed %d election inputs; %d observed slot matches", len(captured.Recent.List), len(result.Inputs), checked)
 }

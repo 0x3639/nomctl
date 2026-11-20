@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sync"
@@ -58,6 +59,31 @@ func (s *RPCSource) Close() {
 		s.conn = nil
 	}
 }
+
+func dialWebSocket(ctx context.Context, endpoint string) (*websocket.Conn, error) {
+	var stop func() bool
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 15 * time.Second,
+		NetDialContext: func(dialCtx context.Context, network, address string) (net.Conn, error) {
+			c, err := (&net.Dialer{}).DialContext(dialCtx, network, address)
+			if err == nil {
+				// Use the caller context: Gorilla cancels its handshake context
+				// on successful return too. Keep its socket deadline intact.
+				stop = context.AfterFunc(ctx, func() { c.Close() })
+			}
+			return c, err
+		},
+	}
+	c, _, err := dialer.DialContext(ctx, endpoint, nil)
+	if stop != nil && !stop() {
+		if c != nil {
+			c.Close()
+		}
+		return nil, ctx.Err()
+	}
+	return c, err
+}
+
 func (s *RPCSource) call(ctx context.Context, method string, params []interface{}, result interface{}) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -101,8 +127,7 @@ func (s *RPCSource) call(ctx context.Context, method string, params []interface{
 			}
 		}()
 		if s.conn == nil {
-			dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
-			c, _, e := dialer.DialContext(ctx, s.endpoint.String(), nil)
+			c, e := dialWebSocket(ctx, s.endpoint.String())
 			if e != nil {
 				return fmt.Errorf("RPC websocket connection failed")
 			}
@@ -111,7 +136,15 @@ func (s *RPCSource) call(ctx context.Context, method string, params []interface{
 		}
 		c := s.conn
 		stop := context.AfterFunc(ctx, func() { c.Close() })
-		defer stop()
+		defer func() {
+			// stop does not wait for a callback that has already started.
+			// Discard that connection while still holding s.mu, even if the
+			// response was decoded successfully before cancellation.
+			if !stop() {
+				c.Close()
+				s.conn = nil
+			}
+		}()
 		deadline, _ := ctx.Deadline()
 		c.SetReadDeadline(deadline)
 		c.SetWriteDeadline(deadline)

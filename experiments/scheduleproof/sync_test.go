@@ -11,9 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/zenon-network/go-zenon/chain"
 	"github.com/zenon-network/go-zenon/chain/genesis"
 	g "github.com/zenon-network/go-zenon/chain/genesis/mock"
 	"github.com/zenon-network/go-zenon/chain/nom"
@@ -109,6 +112,78 @@ func savedStatus(t *testing.T, r *Replica) Status {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func TestReadyStatusUsesOneClockObservation(t *testing.T) {
+	z := source(t)
+	z.InsertMomentumsTo(31)
+	r := openTestReplica(t, t.TempDir())
+	s, _ := testSyncer(t, z, r)
+	observed := s.Now()
+	reads := 0
+	s.Now = func() time.Time {
+		reads++
+		if reads > 2 { // checking status, then the ready freshness observation
+			return observed.Add(-time.Minute)
+		}
+		return observed
+	}
+	stepOK(t, s)
+	status := savedStatus(t, r)
+	if status.State != "ready" || reads != 2 || !status.GeneratedAt.Equal(observed) {
+		t.Fatalf("ready status used inconsistent clock observations: %+v, reads=%d", status, reads)
+	}
+	if interval := status.ValidUntil.Sub(status.GeneratedAt); interval <= 0 || interval > 15*time.Second {
+		t.Fatalf("invalid ready interval: %s", interval)
+	}
+}
+
+type insertFaultChain struct {
+	chain.Chain
+	afterCommit bool
+}
+
+func (c insertFaultChain) AddMomentumTransaction(lock sync.Locker, tx *nom.MomentumTransaction) error {
+	if c.afterCommit {
+		if err := c.Chain.AddMomentumTransaction(lock, tx); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("injected insertion failure")
+}
+
+func TestSyncCountsDurableCommitOnInsertError(t *testing.T) {
+	z := source(t)
+	z.InsertMomentumsTo(3)
+	for _, afterCommit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("after-commit-%t", afterCommit), func(t *testing.T) {
+			r := openTestReplica(t, t.TempDir())
+			s, src := testSyncer(t, z, r)
+			s.Batch = 1 // the final available block in a bounded run
+			r.Mirror.chain = insertFaultChain{r.Mirror.chain, afterCommit}
+			if err := s.Step(context.Background()); err == nil {
+				t.Fatal("injected error was lost")
+			}
+			want := uint64(0)
+			if afterCommit {
+				want = 1
+			}
+			status := savedStatus(t, r)
+			if status.Applied != want || status.State != "unavailable" || !r.Mirror.failed {
+				t.Fatalf("lost durable progress or failure status: %+v", status)
+			}
+			if status.Frontier.Height != 1+want {
+				t.Fatalf("unexpected durable frontier: %v", status.Frontier)
+			}
+			// A bounded runner stops here when Applied reaches its limit. For
+			// an unbounded retry, reopen and count the following commit once.
+			failedMirror := r.Mirror
+			stepOK(t, s)
+			if r.Mirror == failedMirror || s.Status.Applied != want+1 || src.detailsStarts[1] != 2+want {
+				t.Fatalf("retry did not resume from durable progress: %+v, starts=%v", s.Status, src.detailsStarts)
+			}
+		})
+	}
 }
 
 func TestSyncResumesAndInvalidatesReadyOnRestart(t *testing.T) {
@@ -301,7 +376,9 @@ func TestReplicaOwnershipLockAndIdentity(t *testing.T) {
 func TestReadOnlyRPCTransportAndLimits(t *testing.T) {
 	allowed := map[string]bool{"ledger.getFrontierMomentum": true, "ledger.getMomentumsByHeight": true, "ledger.getDetailedMomentumsByHeight": true}
 	seen := map[string]bool{}
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		var q struct {
 			ID     uint64 `json:"id"`
 			Method string `json:"method"`
@@ -334,8 +411,12 @@ func TestReadOnlyRPCTransportAndLimits(t *testing.T) {
 	if len(seen) != 3 || src.Calls != 3 || src.Bytes == 0 {
 		t.Fatal("missing RPC measurements")
 	}
+	before := requests.Load()
 	if _, err = src.Details(context.Background(), 1, 101); err == nil {
 		t.Fatal("unbounded request")
+	}
+	if requests.Load() != before {
+		t.Fatal("oversized request reached the server")
 	}
 }
 

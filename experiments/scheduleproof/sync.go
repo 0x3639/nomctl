@@ -42,8 +42,11 @@ func NewSyncer(replica *Replica, source Source) *Syncer {
 	return &Syncer{Replica: replica, Source: source, Batch: 50, MaxReorg: 120, MaxAge: 45 * time.Second, Now: time.Now, Status: Status{State: "starting", Engine: EngineVersion, Source: source.Name()}}
 }
 func (s *Syncer) save(state string, err error) error {
+	return s.saveAt(state, err, s.Now())
+}
+func (s *Syncer) saveAt(state string, err error, observed time.Time) error {
 	s.Status.State = state
-	s.Status.GeneratedAt = s.Now().UTC()
+	s.Status.GeneratedAt = observed.UTC()
 	s.Status.Error = ""
 	if err != nil {
 		s.Status.Error = err.Error()
@@ -179,13 +182,17 @@ func (s *Syncer) Step(ctx context.Context) (err error) {
 			if compared && !match {
 				return fmt.Errorf("pre-apply schedule differs from supplied producer")
 			}
-			if err = mirror.ApplyJSON(item); err != nil {
-				return fmt.Errorf("replay at height %d: %w", mirror.Frontier().Height+1, err)
+			height := mirror.Frontier().Height + 1
+			committed, applyErr := mirror.applyJSON(item)
+			if committed {
+				s.Status.Applied++
+				if compared {
+					s.Status.Compared++
+					s.Status.Matched++
+				}
 			}
-			s.Status.Applied++
-			if compared {
-				s.Status.Compared++
-				s.Status.Matched++
+			if applyErr != nil {
+				return fmt.Errorf("replay at height %d: %w", height, applyErr)
 			}
 		}
 	}
@@ -230,7 +237,7 @@ func (s *Syncer) Step(ctx context.Context) (err error) {
 	if freshUntil.Before(s.Status.ValidUntil) {
 		s.Status.ValidUntil = freshUntil.UTC()
 	}
-	return s.save("ready", nil)
+	return s.saveAt("ready", nil, now)
 }
 func (s *Syncer) compareBeforeApply(raw json.RawMessage) (bool, bool) {
 	var item api.DetailedMomentum

@@ -19,6 +19,7 @@ type atomicManager struct {
 	ldb         *leveldb.DB
 	path        string
 	cache       map[types.HashHeight]db.DB
+	commits     uint64 // successful durable Add operations, including genesis
 	beforeWrite func() // fault-injection seam; nil outside tests
 }
 
@@ -94,7 +95,12 @@ func (m *atomicManager) Get(id types.HashHeight) db.DB {
 func (m *atomicManager) GetPatch(id types.HashHeight) db.Patch {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	current := m.snapshot()
+	snapshot, err := m.ldb.GetSnapshot()
+	if err != nil {
+		panic(err)
+	}
+	defer snapshot.Release()
+	current := db.NewLevelDBSnapshotWrapper(snapshot).Subset(statePrefix)
 	found, err := db.GetIdentifierByHash(current, id.Hash)
 	if err == leveldb.ErrNotFound {
 		return nil
@@ -165,7 +171,12 @@ func (m *atomicManager) Add(tx db.Transaction) error {
 	if len(commits) != 1 {
 		return fmt.Errorf("expected one momentum commit")
 	}
-	current := m.snapshot()
+	snapshot, err := m.ldb.GetSnapshot()
+	if err != nil {
+		return err
+	}
+	defer snapshot.Release()
+	current := db.NewLevelDBSnapshotWrapper(snapshot).Subset(statePrefix)
 	if db.GetFrontierIdentifier(current) != commits[0].Previous() {
 		return fmt.Errorf("non-contiguous atomic commit")
 	}
@@ -199,12 +210,26 @@ func (m *atomicManager) Add(tx db.Transaction) error {
 	height := commits[0].Identifier().Height
 	batch.Put(heightKey("patch/", height), patch.Dump())
 	batch.Put(heightKey("undo/", height), undo.patch.Dump())
-	return m.write(batch)
+	if err = m.write(batch); err != nil {
+		return err
+	}
+	m.commits++
+	return nil
+}
+func (m *atomicManager) commitCount() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.commits
 }
 func (m *atomicManager) Pop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id := db.GetFrontierIdentifier(m.snapshot())
+	snapshot, err := m.ldb.GetSnapshot()
+	if err != nil {
+		return err
+	}
+	defer snapshot.Release()
+	id := db.GetFrontierIdentifier(db.NewLevelDBSnapshotWrapper(snapshot).Subset(statePrefix))
 	if id.Height <= 1 {
 		return fmt.Errorf("cannot remove genesis")
 	}

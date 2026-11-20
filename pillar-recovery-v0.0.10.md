@@ -1,79 +1,55 @@
-# Pillar recovery: upgrade to v0.0.10 and resync
+# Pillar fork recovery prerequisites for v0.0.10
 
-Run these commands **on the pillar’s existing server**, one step at a time. These instructions assume the standard installation:
+**Safe fork recovery is not yet provided by this procedure. Do not use the
+upgrade-and-resync sequence as a recovery runbook for a configured pillar.**
 
-- Service: `go-zenon`
-- Data directory: `/root/.znn`
-- Node binary: `/usr/local/bin/znnd`
+`nomctl upgrade-node` starts the installed node, and `nomctl resync` restarts a
+previously running node while preserving its wallet and producer configuration.
+An explicit `nomctl start` has the same production risk. The pillar can therefore
+produce before an operator verifies its recovered branch, including between
+the upgrade and the wipe. Stopping the service once does not prevent those
+automatic restarts or a later boot from enabling production.
 
-If those differ, configure nomctl for the existing paths before proceeding.
+A safe fork-recovery procedure must wait for a verified way to keep production
+disabled throughout recovery. The proposed R13 workflow is described in the
+[chain recovery design](docs/superpowers/specs/2026-11-17-chain-recovery-design.md);
+it is not an implemented operator command. The schedule-proof experiment does
+not control production and does not supply this missing capability.
 
-## 1. Install nomctl
+## Preparation that does not perform recovery
 
-On Ubuntu/Debian, install nomctl and the signature-verification dependency:
+These commands assume the existing service is `go-zenon`, its data directory is
+`/root/.znn`, and the binary is `/usr/local/bin/znnd`. Configure nomctl for the
+existing paths if they differ.
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y curl ca-certificates gnupg
-curl -fsSL https://raw.githubusercontent.com/0x3639/nomctl/main/install.sh | sudo bash
-nomctl --version
 sudo nomctl status
-```
-
-Confirm that status finds the existing node.
-
-Reference: [Installation guide](https://nomctl.0x3639.com/getting-started).
-
-## 2. Back up the pillar’s wallet and configuration
-
-```bash
 sudo nomctl backup wallet
 ```
 
-Choose a passphrase, save it securely, and copy the resulting encrypted archive off the server. This protects the existing producer key and configuration.
+Confirm that status identifies the existing node. Save the wallet-backup
+passphrase securely and copy the encrypted archive off the server. These steps
+protect wallet/configuration material; they do not establish a safe chain or
+disable an already running producer.
 
 Reference: [Wallet backup guide](https://nomctl.0x3639.com/guide/backups#wallet-and-config-backup).
 
-## 3. Upgrade the node to exactly v0.0.10
+## Required order for a future verified recovery procedure
 
-```bash
-sudo nomctl upgrade-node --signed --version v0.0.10
-```
+1. Disable production before upgrading, wiping or restarting anything. Verify
+   that the disabled state survives every automatic restart and reboot, while
+   allowing the node to synchronize without producing.
+2. Verify the exact v0.0.10 release and preserve recoverable chain data and
+   binary material before changing them. Keep production disabled during the
+   upgrade and empty-database resynchronization.
+3. After synchronization, compare a momentum hash after the fork point against
+   a known healthy v0.0.10 node at the same height. Matching heights or a
+   `synced` status alone do not establish the correct branch. If verification
+   fails or remains uncertain, leave production disabled.
+4. Resume production only after branch verification and an explicit operator
+   action. Confirm that the intended pillar identity is used and that no other
+   instance is producing with it.
 
-Choose **Indefinite** for the restore point and confirm the upgrade. nomctl verifies the release, saves the existing chain data and binary, installs v0.0.10, and restarts the service.
-
-**Wait for the upgrade and restore point to finish successfully before continuing.** If it reports an error, resolve that first.
-
-Reference: [Upgrade guide](https://nomctl.0x3639.com/guide/upgrading#signed-node-releases).
-
-## 4. Clear the forked chain data and start a full resync
-
-**This deletes the local chain database and logs immediately, without a confirmation prompt. It preserves the wallet and `config.json`.**
-
-```bash
-sudo nomctl resync
-```
-
-After that succeeds:
-
-```bash
-sudo nomctl start
-```
-
-Resync automatically restarts a previously running node; `start` also covers a node that was stopped.
-
-Reference: [Resync documentation](https://nomctl.0x3639.com/guide/service#resync).
-
-## 5. Monitor progress and verify recovery
-
-```bash
-sudo nomctl status
-sudo nomctl pillar status
-sudo nomctl logs -f
-```
-
-Confirm the node reports **v0.0.10**, gains peers, and advances toward `synced`. Full synchronization from genesis can take days. Press **Ctrl+C** to exit the log viewer; the node keeps running.
-
-Once synchronized, **compare a momentum hash after the fork point with a known healthy v0.0.10 node at the same height**. Matching heights alone do not establish that it is on the correct chain. The project’s recovery guidance confirms that a node on the old branch needs an empty-database resync after upgrading.
-
-Reference: [Fork recovery guidance](https://forum.hypercore.one/t/go-zenon-v0-0-10-what-to-expect-at-the-community-spork-renewal/946).
+This checklist specifies acceptance criteria, not commands that currently
+guarantee them. Do not proceed with fork recovery using this document until the
+non-producing recovery path has been implemented and validated.

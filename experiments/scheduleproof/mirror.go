@@ -50,6 +50,15 @@ func NewMirror(path string, genesis store.Genesis) (*Mirror, error) {
 func (m *Mirror) Close()                     { m.consensus.Stop(); m.chain.Stop() }
 func (m *Mirror) Frontier() types.HashHeight { return m.chain.GetFrontierMomentumStore().Identifier() }
 
+// applyJSON reports durable progress even if the engine subsequently fails
+// while prefetching or notifying listeners. Mirror operations are serialized
+// by the caller; the counter is advanced only by a successful synchronous Add.
+func (m *Mirror) applyJSON(raw []byte) (committed bool, err error) {
+	before := m.manager.commitCount()
+	err = m.ApplyJSON(raw)
+	return m.manager.commitCount() != before, err
+}
+
 // ApplyJSON consumes one item from ledger.getDetailedMomentumsByHeight.
 // Invalid or partially applied data poisons this disposable prototype. It must
 // be rebuilt rather than serving schedules from possibly uncommitted state.

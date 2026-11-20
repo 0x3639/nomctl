@@ -71,6 +71,21 @@ class InventoryTests(unittest.TestCase):
             log.write_text(json.dumps({"Action": "pass", "Package": "example.test/project", "Test": "TestSafe"}) + "\n")
             run.check_evidence(evidence, {"main": log})
 
+    def test_imported_helper_safety(self):
+        helper = "test/bend/helper.bend"
+        self.files.append(helper)
+        self.manifest["areas"][0]["paths"].append(helper)
+        self.save()
+        (self.root / "test/bend/model.bend").write_text("import Base\nimport ./helper.bend as Helper\n")
+        for source in ["import Base\n", "@unsafe def loop(): loop()\n", "def unfinished(): ?todo\n", 'import "foreign"\n']:
+            with self.subTest(source=source):
+                (self.root / helper).write_text(source)
+                if source == "import Base\n":
+                    run.inventory(self.root, self.files)
+                else:
+                    with self.assertRaisesRegex(ValueError, "unsafe, unfinished or foreign"):
+                        run.inventory(self.root, self.files)
+
     def test_scope_does_not_swallow_nested_packages(self):
         self.assertFalse(run.scope_matches("cmd/nomctl-relay/main.go", "cmd/*.go"))
         self.assertTrue(run.scope_matches("internal/node/client.go", "internal/node/**"))

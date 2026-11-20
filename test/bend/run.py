@@ -31,10 +31,6 @@ def inventory(root=ROOT, files=None):
     proofs = re.findall(r"^def Laws\.(\w+)\(", (root / "PROOF.bend").read_text(), re.M)
     if not laws or len(set(laws)) != len(laws) or sorted(laws) != sorted(proofs):
         raise ValueError("laws and proof definitions must match exactly")
-    for path in [root / "LAWS.bend", root / "PROOF.bend", root / "test/bend/model.bend"]:
-        source = "\n".join(line.split("#", 1)[0] for line in path.read_text().splitlines())
-        if re.search(r"@unsafe|\?\w*|\bimport\s+[\"']", source):
-            raise ValueError(f"unsafe, unfinished or foreign proof code: {path}")
     if files is None:
         files = subprocess.check_output(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
@@ -48,7 +44,10 @@ def inventory(root=ROOT, files=None):
         if relative in reached:
             continue
         reached.add(relative)
-        for target in re.findall(r"^import (\S+)", path.read_text(), re.M):
+        source = "\n".join(line.split("#", 1)[0] for line in path.read_text().splitlines())
+        if re.search(r"@unsafe|\?\w*|\bimport\s+[\"']", source):
+            raise ValueError(f"unsafe, unfinished or foreign proof code: {path}")
+        for target in re.findall(r"^import (\S+)", source, re.M):
             if target == "Base":
                 continue
             if not target.startswith(".") or not target.endswith(".bend"):
