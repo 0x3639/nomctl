@@ -274,7 +274,7 @@ def main():
         "schedule-tests": (container(["go", "test", "-mod=readonly", "-p=2", "-race", "-json", "-count=1", "./..."], directory="/work/experiments/scheduleproof"), ROOT),
         "website": (["nodebox", "--offline", "sh", "-c", "npm test && npm run build"], ROOT / "website"),
         "harness-tests": (container(["python3", "-B", "-m", "unittest", "discover", "-s", "test/bend", "-p", "test_*.py"], root=True), ROOT),
-        "build": (container(["sh", "-c", "go vet -mod=readonly ./... && go build -mod=readonly ./... && cd experiments/scheduleproof && go vet -mod=readonly ./... && go build -mod=readonly -o /tmp/scheduleproof ./cmd/scheduleproof"]), ROOT),
+        "build": (container(["sh", "-c", "go vet -mod=readonly ./... && go build -mod=readonly -buildvcs=false ./... && cd experiments/scheduleproof && go vet -mod=readonly ./... && go build -mod=readonly -buildvcs=false -o /tmp/scheduleproof ./cmd/scheduleproof"]), ROOT),
     }
     # Independent checks run concurrently; mutable node operations retain their existing ordering.
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:

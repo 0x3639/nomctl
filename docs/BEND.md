@@ -34,6 +34,8 @@ make laws
 coverage map without running dependency code. Neither substitutes for `make laws`.
 Rebuild `make law-images` after changing Go dependencies or toolchain pins.
 The full gate fails if a required image, nodebox, test, proof or build is missing.
+Validation builds disable Go's Git version stamping so container checkout
+ownership and shallow PR metadata cannot prevent compilation.
 
 Checks run without network access; dependency downloads happen only during
 image builds and `nodebox npm ci`. Bend and Go run as non-root users with read-only
