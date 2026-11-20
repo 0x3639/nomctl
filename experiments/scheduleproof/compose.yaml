@@ -1,0 +1,33 @@
+name: nomctl-scheduleproof
+services:
+  schedule:
+    build: .
+    command:
+      - --rpc
+      - ${SCHEDULEPROOF_RPC:?Set SCHEDULEPROOF_RPC to an existing ledger RPC}
+      - --data-dir
+      - /data
+      - --duration
+      - "0"
+      - --max-blocks
+      - "0"
+      - --batch
+      - "100"
+      - --poll
+      - 1s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 2g
+    environment:
+      GOMEMLIMIT: 1GiB
+    volumes:
+      - replica:/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+volumes:
+  replica:
