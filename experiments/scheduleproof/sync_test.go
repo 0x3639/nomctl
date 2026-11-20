@@ -408,13 +408,18 @@ func TestKilledProcessResumesAtomicCommit(t *testing.T) {
 				}
 				ready <- false
 			}()
+			// Replaying the signed fixture with -race can take nearly 30s even
+			// locally, and longer beside other CI checks. This is a deadlock
+			// watchdog, not a replay-performance assertion: still require the
+			// exact commit boundary before killing and verifying durable state.
+			const helperTimeout = 2 * time.Minute
 			select {
 			case ok := <-ready:
 				if !ok {
 					t.Fatal("helper failed before crash window")
 				}
-			case <-time.After(30 * time.Second):
-				t.Fatal("helper timeout")
+			case <-time.After(helperTimeout):
+				t.Fatalf("helper did not reach the %s commit boundary within %s", when, helperTimeout)
 			}
 			if err = cmd.Process.Kill(); err != nil {
 				t.Fatal(err)

@@ -1175,6 +1175,11 @@
           "file": "experiments/scheduleproof/mirror_test.go",
           "test": "TestRestartReusesVerifiedPrivateHistory",
           "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/sync_test.go",
+          "test": "TestKilledProcessResumesAtomicCommit",
+          "module": "scheduleproof"
         }
       ],
       "go_packages": [
