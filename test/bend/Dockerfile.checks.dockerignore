@@ -1,0 +1,7 @@
+**
+!go.mod
+!go.sum
+!experiments/
+!experiments/scheduleproof/
+!experiments/scheduleproof/go.mod
+!experiments/scheduleproof/go.sum

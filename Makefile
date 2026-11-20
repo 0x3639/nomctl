@@ -15,7 +15,7 @@ endif
 GOFLAGS     := -trimpath
 export CGO_ENABLED=0
 
-.PHONY: all build test lint fmt vet cross clean tidy rename
+.PHONY: all build test lint fmt vet cross clean tidy rename bend-image law-images proof laws laws-inventory
 
 all: build
 
@@ -31,6 +31,22 @@ cross: ## Cross-compile static linux/amd64 and linux/arm64 binaries
 
 test: ## Run unit tests
 	go test ./...
+
+bend-image: ## Build the pinned containerized Bend checker
+	docker build -t nomctl-bend:2.0.40 test/bend
+
+law-images: bend-image ## Build independent proof checker and offline Go test environment
+	docker build -f test/bend/Dockerfile.verdict -t nomctl-bend:2.0.40-verdict test/bend
+	docker build -f test/bend/Dockerfile.checks -t nomctl-law-checks:go1.26 .
+
+proof: ## Check all Bend proofs in the container
+	./scripts/bend PROOF.bend
+
+laws-inventory: ## Check subsystem/law/test coverage without running dependencies
+	python3 -B test/bend/run.py --inventory-only
+
+laws: ## Full proof, comparison, race-test and website gate (see docs/BEND.md)
+	python3 -B test/bend/run.py
 
 fmt: ## gofmt check
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi

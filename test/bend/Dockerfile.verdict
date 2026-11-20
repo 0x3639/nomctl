@@ -1,0 +1,18 @@
+ARG BASE=nomctl-bend:2.0.40
+FROM ${BASE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/*
+USER bend
+ENV HOME=/home/bend
+ARG ELAN_COMMIT=58e8d545e33641f66dbcbd22c4283109e71757be
+ARG ELAN_INIT_SHA256=4bacca9502cb89736fe63d2685abc2947cfbf34dc87673504f1bb4c43eda9264
+ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.34.0
+RUN curl --proto '=https' --tlsv1.2 -fsSL \
+      "https://raw.githubusercontent.com/leanprover/elan/${ELAN_COMMIT}/elan-init.sh" -o /tmp/elan-init.sh \
+ && echo "${ELAN_INIT_SHA256}  /tmp/elan-init.sh" | sha256sum -c - \
+ && sh /tmp/elan-init.sh -y --default-toolchain "${LEAN_TOOLCHAIN}" && rm /tmp/elan-init.sh
+ENV PATH=/home/bend/.elan/bin:/opt/bend/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN mkdir -p /tmp/warm && printf 'import Base\nlaw one:\n  {1n == 1n : Nat}\ndef one():\n  {==}\n' > /tmp/warm/w.bend \
+ && cd /tmp/warm && bend w.bend --verdict && rm -rf /tmp/warm
+WORKDIR /work

@@ -35,6 +35,11 @@ make test
 make lint       # gofmt + go vet + golangci-lint
 ```
 
+Repository-wide contracts live in [`LAWS.bend`](LAWS.bend), with checked proofs
+and links to implementation tests for every subsystem. See
+[Bend setup and verification boundaries](docs/BEND.md). After the one-time
+container setup, run `make laws` before committing.
+
 Releases are produced by goreleaser on tag push: archives for both architectures, `checksums.txt` (which `install.sh` verifies) and the `ghcr.io/0x3639/nomctl-relay` image. The docs site lives in `website/` and deploys to GitHub Pages from `main`.
 
 The module path is declared in `go.mod`; `make rename NEW=github.com/you/nomctl` rewrites it and every import. `install.sh` takes the GitHub repository slug from `NOMCTL_REPO` (default `0x3639/nomctl`). Source for the docs, design specs and plans is under `docs/` and `website/`.

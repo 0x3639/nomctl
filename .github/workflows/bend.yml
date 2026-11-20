@@ -1,0 +1,39 @@
+name: Bend laws
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  laws:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Containerized Node helper
+        run: |
+          mkdir -p "$RUNNER_TEMP/nomctl-tools"
+          install -m 0755 test/bend/nodebox-ci "$RUNNER_TEMP/nomctl-tools/nodebox"
+          echo "$RUNNER_TEMP/nomctl-tools" >> "$GITHUB_PATH"
+      - name: Install locked website dependencies in container
+        run: nodebox npm ci
+        working-directory: website
+      - name: Build proof and test containers
+        run: make law-images
+      - name: Check every law and implementation contract
+        run: make laws
+      - name: Retain check logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bend-law-logs
+          path: .bend-work/run-*/**/*.log
+          include-hidden-files: true
+          retention-days: 7

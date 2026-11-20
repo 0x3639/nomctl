@@ -1,0 +1,1376 @@
+{
+  "schema": 1,
+  "areas": [
+    {
+      "area": "alertproto",
+      "paths": [
+        "internal/alertproto/**"
+      ],
+      "contract": "Reject unknown, oversized or incorrectly classified alerts; authenticate identity, body and timestamp.",
+      "laws": [
+        "authentication_accepts_valid",
+        "authentication_requires_fresh",
+        "authentication_requires_known",
+        "authentication_requires_signed",
+        "events_cannot_fire",
+        "oversized_alert_is_rejected",
+        "unknown_alert_is_rejected"
+      ],
+      "evidence": [
+        {
+          "file": "internal/alertproto/proto_test.go",
+          "test": "TestSignVerify",
+          "module": "main"
+        },
+        {
+          "file": "internal/alertproto/proto_test.go",
+          "test": "TestLookup",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/alertproto"
+      ]
+    },
+    {
+      "area": "alerts",
+      "paths": [
+        "internal/alerts/**"
+      ],
+      "contract": "Retain failed deliveries for retry; disable reminders for informational events; run unprivileged.",
+      "laws": [
+        "disabled_alerts_are_silent",
+        "failed_delivery_is_retryable",
+        "successful_delivery_advances"
+      ],
+      "evidence": [
+        {
+          "file": "internal/alerts/regression_test.go",
+          "test": "TestFailedRecoveryIsRetriedByDaemon",
+          "module": "main"
+        },
+        {
+          "file": "internal/alerts/daemon_test.go",
+          "test": "TestInfoAlertsAreNotReminded",
+          "module": "main"
+        },
+        {
+          "file": "internal/alerts/unit_test.go",
+          "test": "TestUnitIsUnprivilegedAndHardened",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/alerts"
+      ]
+    },
+    {
+      "area": "analytics",
+      "paths": [
+        "internal/analytics/**"
+      ],
+      "contract": "Validate monitoring configuration before activation, preserve unrelated jobs, bind generated services to loopback.",
+      "laws": [
+        "failed_commit_preserves_old",
+        "invalid_config_preserves_old"
+      ],
+      "evidence": [
+        {
+          "file": "internal/analytics/prometheus_config_test.go",
+          "test": "TestPrometheusConfigValidationAndRecovery",
+          "module": "main"
+        },
+        {
+          "file": "internal/analytics/prometheus_config_test.go",
+          "test": "TestNodeScrapeJobPreservesExistingJobs",
+          "module": "main"
+        },
+        {
+          "file": "internal/analytics/prometheus_config_test.go",
+          "test": "TestGeneratedMonitoringUnitsMigrateToLoopback",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/analytics"
+      ]
+    },
+    {
+      "area": "backup",
+      "paths": [
+        "internal/backup/**"
+      ],
+      "contract": "Back up only chain folders, exclude incomplete archives, preserve protected points, enforce retention and current schedule generations.",
+      "laws": [
+        "backup_preserves_config",
+        "backup_preserves_other",
+        "backup_preserves_wallet",
+        "paused_schedule_cannot_run",
+        "pruning_empty_is_empty",
+        "pruning_keeps_requested_count",
+        "pruning_zero_keeps_nothing",
+        "schedule_requires_lock",
+        "stale_schedule_never_recovers"
+      ],
+      "evidence": [
+        {
+          "file": "internal/backup/backup_test.go",
+          "test": "TestSelectForPruning",
+          "module": "main"
+        },
+        {
+          "file": "internal/backup/backup_test.go",
+          "test": "TestListIgnoresIncompleteArchives",
+          "module": "main"
+        },
+        {
+          "file": "internal/backup/restorepoint_test.go",
+          "test": "TestRestorePointsSurviveAgeCountAndDiskPressure",
+          "module": "main"
+        },
+        {
+          "file": "internal/backup/review_regression_test.go",
+          "test": "TestStaleInvocationCannotRunAfterPauseResume",
+          "module": "main"
+        },
+        {
+          "file": "internal/backup/run_test.go",
+          "test": "TestBackupRestartsBeforeCompressionAndRecovers",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/backup"
+      ]
+    },
+    {
+      "area": "bootstrap",
+      "paths": [
+        "internal/bootstrap/**"
+      ],
+      "contract": "Verify downloads and archive scope before downtime; recover previous data on install failure.",
+      "laws": [
+        "archive_accepts_valid",
+        "archive_requires_allowed",
+        "archive_requires_contained",
+        "archive_requires_safe_type",
+        "change_accepts_valid",
+        "change_requires_locked",
+        "change_requires_recoverable",
+        "change_requires_stopped",
+        "change_requires_validated",
+        "failed_commit_preserves_old"
+      ],
+      "evidence": [
+        {
+          "file": "internal/bootstrap/bootstrap_test.go",
+          "test": "TestRunRefusesBadChecksumBeforeTouchingNode",
+          "module": "main"
+        },
+        {
+          "file": "internal/bootstrap/bootstrap_test.go",
+          "test": "TestRunRollsBackWhenInstallFails",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/bootstrap"
+      ]
+    },
+    {
+      "area": "config",
+      "paths": [
+        "internal/config/**"
+      ],
+      "contract": "Use validated defaults and environment overrides; redact credentials.",
+      "laws": [
+        "absent_value_uses_default",
+        "configured_value_wins",
+        "secrets_are_redacted"
+      ],
+      "evidence": [
+        {
+          "file": "internal/config/config_test.go",
+          "test": "TestDefaults",
+          "module": "main"
+        },
+        {
+          "file": "internal/config/config_test.go",
+          "test": "TestEnvOverrides",
+          "module": "main"
+        },
+        {
+          "file": "internal/config/config_test.go",
+          "test": "TestInvalidValues",
+          "module": "main"
+        },
+        {
+          "file": "internal/config/config_test.go",
+          "test": "TestGitHubTokenRedacted",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/config"
+      ]
+    },
+    {
+      "area": "deploy",
+      "paths": [
+        "internal/deploy/**"
+      ],
+      "contract": "Complete a source build before stopping the service; quote configured paths.",
+      "laws": [
+        "change_requires_validated"
+      ],
+      "evidence": [
+        {
+          "file": "internal/deploy/deploy_test.go",
+          "test": "TestCloneAndBuildKeepsServiceRunningUntilBuildSucceeds",
+          "module": "main"
+        },
+        {
+          "file": "internal/deploy/deploy_test.go",
+          "test": "TestUnitFileQuotesConfiguredPaths",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/deploy"
+      ]
+    },
+    {
+      "area": "doctor",
+      "paths": [
+        "internal/doctor/**"
+      ],
+      "contract": "Bind evidence to the observed process and preserve uncertainty and partial results without leaking logs.",
+      "laws": [
+        "health_uncertain_does_not_pass",
+        "progress_accepts_valid",
+        "progress_requires_identified",
+        "progress_requires_increasing",
+        "progress_requires_reachable",
+        "progress_requires_stable"
+      ],
+      "evidence": [
+        {
+          "file": "internal/doctor/observation_test.go",
+          "test": "TestRestartWithinRPCSampleInvalidatesProgress",
+          "module": "main"
+        },
+        {
+          "file": "internal/doctor/collect_test.go",
+          "test": "TestCollectIdentityRechecksProcess",
+          "module": "main"
+        },
+        {
+          "file": "internal/doctor/checks_test.go",
+          "test": "TestLogSignaturesDoNotDiscloseRawMessages",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/doctor"
+      ]
+    },
+    {
+      "area": "execx",
+      "paths": [
+        "internal/execx/**"
+      ],
+      "contract": "Bound command output and duration; preserve failures and interrupt semantics.",
+      "laws": [
+        "bounded_output_empty",
+        "bounded_output_exact_budget",
+        "bounded_output_zero_budget"
+      ],
+      "evidence": [
+        {
+          "file": "internal/execx/execx_test.go",
+          "test": "TestOutputLimitedKeepsPrivateBoundedCapture",
+          "module": "main"
+        },
+        {
+          "file": "internal/execx/execx_test.go",
+          "test": "TestContextBoundsCommand",
+          "module": "main"
+        },
+        {
+          "file": "internal/execx/execx_test.go",
+          "test": "TestInteractiveUntilInterruptForwardsSIGINT",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/execx"
+      ]
+    },
+    {
+      "area": "fsx",
+      "paths": [
+        "internal/fsx/**"
+      ],
+      "contract": "Publish runtime files atomically in private writer directories; reject unsafe filesystem objects.",
+      "laws": [
+        "failed_commit_preserves_old",
+        "publication_accepts_valid",
+        "publication_requires_complete",
+        "publication_requires_fresh",
+        "publication_requires_owned",
+        "publication_requires_verified"
+      ],
+      "evidence": [
+        {
+          "file": "internal/fsx/runtime_test.go",
+          "test": "TestRuntimeFilePublication",
+          "module": "main"
+        },
+        {
+          "file": "internal/fsx/runtime_test.go",
+          "test": "TestRuntimeFileRequiresPrivateWriterDirectory",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/fsx"
+      ]
+    },
+    {
+      "area": "health",
+      "paths": [
+        "internal/health/**"
+      ],
+      "contract": "Success requires stable process identity and chain progress; unknown, failed, stalled and canceled checks cannot pass.",
+      "laws": [
+        "health_progress_can_pass",
+        "health_stalled_does_not_pass",
+        "health_uncertain_does_not_pass",
+        "health_unhealthy_does_not_pass",
+        "progress_accepts_valid",
+        "progress_requires_identified",
+        "progress_requires_increasing",
+        "progress_requires_reachable",
+        "progress_requires_stable"
+      ],
+      "evidence": [
+        {
+          "file": "internal/health/health_test.go",
+          "test": "TestEvaluate",
+          "module": "main"
+        },
+        {
+          "file": "internal/health/health_test.go",
+          "test": "TestCancellationNeverPasses",
+          "module": "main"
+        },
+        {
+          "file": "internal/health/health_test.go",
+          "test": "TestIntermediateHeightDecreaseFails",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/health"
+      ]
+    },
+    {
+      "area": "lock",
+      "paths": [
+        "internal/lock/**"
+      ],
+      "contract": "Allow one mutating owner; preserve migration guards and release on errors.",
+      "laws": [
+        "change_requires_locked",
+        "schedule_requires_lock"
+      ],
+      "evidence": [
+        {
+          "file": "internal/lock/lock_test.go",
+          "test": "TestContention",
+          "module": "main"
+        },
+        {
+          "file": "internal/lock/lock_test.go",
+          "test": "TestMigrationGuardPersistsBeyondLockHolder",
+          "module": "main"
+        },
+        {
+          "file": "internal/lock/lock_test.go",
+          "test": "TestMigrationGuardErrorPreservesCauseAndReleasesLock",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/lock"
+      ]
+    },
+    {
+      "area": "logx",
+      "paths": [
+        "internal/logx/**"
+      ],
+      "contract": "Sanitize untrusted console text and retain requested logging destinations.",
+      "laws": [
+        "public_text_is_preserved",
+        "redaction_is_idempotent",
+        "secrets_are_redacted"
+      ],
+      "evidence": [
+        {
+          "file": "internal/logx/logx_test.go",
+          "test": "TestSanitizeControlCharacters",
+          "module": "main"
+        },
+        {
+          "file": "internal/logx/logx_test.go",
+          "test": "TestHandlerWritesConsoleAndFile",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/logx"
+      ]
+    },
+    {
+      "area": "metrics",
+      "paths": [
+        "internal/metrics/**"
+      ],
+      "contract": "Report only current snapshot identity; do not mistake busy ledgers for unreachable nodes; bound sample history.",
+      "laws": [
+        "bounded_output_empty",
+        "bounded_output_exact_budget",
+        "bounded_output_zero_budget",
+        "progress_accepts_valid",
+        "progress_requires_identified",
+        "progress_requires_increasing",
+        "progress_requires_reachable",
+        "progress_requires_stable"
+      ],
+      "evidence": [
+        {
+          "file": "internal/metrics/sample_test.go",
+          "test": "TestPartialStatsPreserveOnlyCurrentSnapshotIdentity",
+          "module": "main"
+        },
+        {
+          "file": "internal/metrics/sample_test.go",
+          "test": "TestBusyLedgerSample",
+          "module": "main"
+        },
+        {
+          "file": "internal/metrics/sample_test.go",
+          "test": "TestRateAndETA",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/metrics"
+      ]
+    },
+    {
+      "area": "migrate",
+      "paths": [
+        "internal/migrate/**"
+      ],
+      "contract": "Never activate both nodes during handoff; keep durable source blocks across failure and restart; validate transfer scope.",
+      "laws": [
+        "archive_accepts_valid",
+        "archive_requires_allowed",
+        "archive_requires_contained",
+        "archive_requires_safe_type",
+        "handoff_preserves_exclusion",
+        "migration_never_runs_both_nodes"
+      ],
+      "evidence": [
+        {
+          "file": "internal/migrate/migrate_test.go",
+          "test": "TestFullDirectoryHandoffAndReturn",
+          "module": "main"
+        },
+        {
+          "file": "internal/migrate/migrate_test.go",
+          "test": "TestFailureKeepsSourceBlocked",
+          "module": "main"
+        },
+        {
+          "file": "internal/migrate/migrate_test.go",
+          "test": "TestRejectLinksAndSpecialFiles",
+          "module": "main"
+        },
+        {
+          "file": "internal/migrate/transport_test.go",
+          "test": "TestProductionRsyncReceiverAndControlProtocol",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/migrate"
+      ]
+    },
+    {
+      "area": "node",
+      "paths": [
+        "internal/node/**"
+      ],
+      "contract": "Preserve RPC errors and partial snapshots; bound request durations.",
+      "laws": [
+        "bounded_output_empty",
+        "bounded_output_exact_budget",
+        "bounded_output_zero_budget",
+        "progress_requires_reachable"
+      ],
+      "evidence": [
+        {
+          "file": "internal/node/client_test.go",
+          "test": "TestRPCError",
+          "module": "main"
+        },
+        {
+          "file": "internal/node/client_test.go",
+          "test": "TestSnapshotBusyLedgerIsNotUnreachable",
+          "module": "main"
+        },
+        {
+          "file": "internal/node/client_test.go",
+          "test": "TestNewWithTimeout",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/node"
+      ]
+    },
+    {
+      "area": "nodeconfig",
+      "paths": [
+        "internal/nodeconfig/**"
+      ],
+      "contract": "Validate edits before atomic save; preserve unrelated configuration and resolve defaults only when absent.",
+      "laws": [
+        "absent_value_uses_default",
+        "configured_value_wins",
+        "failed_commit_preserves_old",
+        "invalid_config_preserves_old",
+        "successful_commit_installs_new"
+      ],
+      "evidence": [
+        {
+          "file": "internal/nodeconfig/nodeconfig_test.go",
+          "test": "TestValidate",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeconfig/nodeconfig_test.go",
+          "test": "TestSaveAndEffective",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeconfig/edit_test.go",
+          "test": "TestEditFlow",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/nodeconfig"
+      ]
+    },
+    {
+      "area": "nodeupgrade",
+      "paths": [
+        "internal/nodeupgrade/**"
+      ],
+      "contract": "Verify release identity and checksums, build before downtime, confirm stop and keep matching recovery material.",
+      "laws": [
+        "change_accepts_valid",
+        "change_requires_locked",
+        "change_requires_recoverable",
+        "change_requires_stopped",
+        "change_requires_validated",
+        "publication_requires_verified"
+      ],
+      "evidence": [
+        {
+          "file": "internal/nodeupgrade/verify_test.go",
+          "test": "TestPinnedSignerStatus",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeupgrade/verify_test.go",
+          "test": "TestChecksumVerification",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeupgrade/upgrade_test.go",
+          "test": "TestUpgradeRequiresConfirmedStop",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeupgrade/upgrade_test.go",
+          "test": "TestUpgradeSequenceAndProtectedRestorePoint",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeupgrade/source_test.go",
+          "test": "TestSourceUpgradeBuildsBeforeDowntime",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/nodeupgrade"
+      ]
+    },
+    {
+      "area": "orchestrator",
+      "paths": [
+        "internal/orchestrator/**"
+      ],
+      "contract": "Refuse unsafe hard-reset paths and unavailable services before mutation.",
+      "laws": [
+        "archive_requires_contained",
+        "change_accepts_valid",
+        "change_requires_locked",
+        "change_requires_recoverable",
+        "change_requires_stopped",
+        "change_requires_validated"
+      ],
+      "evidence": [
+        {
+          "file": "internal/orchestrator/orchestrator_test.go",
+          "test": "TestHardResetRefusesUnsafeDir",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/orchestrator_test.go",
+          "test": "TestHardResetRefusesWithoutUnit",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/orchestrator"
+      ]
+    },
+    {
+      "area": "preflight",
+      "paths": [
+        "internal/preflight/**"
+      ],
+      "contract": "Check resource and time synchronization prerequisites before deployment.",
+      "laws": [
+        "change_requires_validated"
+      ],
+      "evidence": [
+        {
+          "file": "internal/preflight/preflight_test.go",
+          "test": "TestPatchTimesyncd",
+          "module": "main"
+        },
+        {
+          "file": "internal/preflight/preflight_test.go",
+          "test": "TestReadMeminfo",
+          "module": "main"
+        },
+        {
+          "file": "internal/preflight/preflight_test.go",
+          "test": "TestCPUMessage",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/preflight"
+      ]
+    },
+    {
+      "area": "producer",
+      "paths": [
+        "internal/producer/**"
+      ],
+      "contract": "Validate configuration before creating keys; preserve key/address compatibility and explicit replacement intent.",
+      "laws": [
+        "change_requires_validated",
+        "invalid_config_preserves_old"
+      ],
+      "evidence": [
+        {
+          "file": "internal/producer/setup_test.go",
+          "test": "TestSetupRefusesNullConfigBeforeCreatingKey",
+          "module": "main"
+        },
+        {
+          "file": "internal/producer/producer_test.go",
+          "test": "TestCreateVerifyAddress",
+          "module": "main"
+        },
+        {
+          "file": "internal/producer/setup_test.go",
+          "test": "TestSetupReplaceExistingWhenAsked",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/producer"
+      ]
+    },
+    {
+      "area": "recovery",
+      "paths": [
+        "internal/recovery/**"
+      ],
+      "contract": "Verification never changes live data; results bind all selected artifact components; schedules reject stale generations.",
+      "laws": [
+        "paused_schedule_cannot_run",
+        "publication_accepts_valid",
+        "publication_requires_complete",
+        "publication_requires_fresh",
+        "publication_requires_owned",
+        "publication_requires_verified",
+        "stale_schedule_never_recovers"
+      ],
+      "evidence": [
+        {
+          "file": "internal/recovery/verify_test.go",
+          "test": "TestVerifyLegacyPointsAndBackupsWithoutTouchingNode",
+          "module": "main"
+        },
+        {
+          "file": "internal/recovery/verify_test.go",
+          "test": "TestStatusInvalidatesEveryComponent",
+          "module": "main"
+        },
+        {
+          "file": "internal/recovery/schedule_test.go",
+          "test": "TestScheduledVerificationBusyPauseAndGeneration",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/recovery"
+      ]
+    },
+    {
+      "area": "relay",
+      "paths": [
+        "internal/relay/**"
+      ],
+      "contract": "Authenticate before consuming quota; isolate nodes and chats; retry failed delivery; independent nodes can proceed concurrently.",
+      "laws": [
+        "authentication_accepts_valid",
+        "authentication_requires_fresh",
+        "authentication_requires_known",
+        "authentication_requires_signed",
+        "failed_delivery_is_retryable",
+        "secrets_are_redacted",
+        "successful_delivery_advances"
+      ],
+      "evidence": [
+        {
+          "file": "internal/relay/server_test.go",
+          "test": "TestChatIsolation",
+          "module": "main"
+        },
+        {
+          "file": "internal/relay/security_test.go",
+          "test": "TestBadSignaturesDoNotConsumeNodeQuota",
+          "module": "main"
+        },
+        {
+          "file": "internal/relay/security_test.go",
+          "test": "TestDeliveryErrorNeverCarriesToken",
+          "module": "main"
+        },
+        {
+          "file": "internal/relay/concurrency_test.go",
+          "test": "TestBusyNodeDoesNotBlockAnotherNode",
+          "module": "main"
+        },
+        {
+          "file": "internal/relay/regression_test.go",
+          "test": "TestFailedRecoveryIsRetried",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/relay"
+      ]
+    },
+    {
+      "area": "restore",
+      "paths": [
+        "internal/restore/**"
+      ],
+      "contract": "Validate hostile archives before stopping services; restore a matching pair or preserve rollback material.",
+      "laws": [
+        "archive_accepts_valid",
+        "archive_requires_allowed",
+        "archive_requires_contained",
+        "archive_requires_safe_type",
+        "change_accepts_valid",
+        "change_requires_locked",
+        "change_requires_recoverable",
+        "change_requires_stopped",
+        "change_requires_validated",
+        "failed_commit_preserves_old"
+      ],
+      "evidence": [
+        {
+          "file": "internal/restore/archive_test.go",
+          "test": "TestRunRefusesHostileArchiveBeforeStopping",
+          "module": "main"
+        },
+        {
+          "file": "internal/restore/archive_test.go",
+          "test": "TestRunRollbackAfterPartialInstall",
+          "module": "main"
+        },
+        {
+          "file": "internal/restore/point_test.go",
+          "test": "TestRestorePointRestoresMatchingPairOrRollsBack",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/restore"
+      ]
+    },
+    {
+      "area": "resync",
+      "paths": [
+        "internal/resync/**"
+      ],
+      "contract": "Delete only the documented chain folders after confirmed stop; preserve wallet and configuration.",
+      "laws": [
+        "change_requires_stopped",
+        "resync_preserves_config",
+        "resync_preserves_other",
+        "resync_preserves_wallet"
+      ],
+      "evidence": [
+        {
+          "file": "internal/resync/resync_test.go",
+          "test": "TestWipePreservesWalletAndConfig",
+          "module": "main"
+        },
+        {
+          "file": "internal/resync/resync_test.go",
+          "test": "TestRunStopsBeforeWipingDuringTransitions",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/resync"
+      ]
+    },
+    {
+      "area": "service",
+      "paths": [
+        "internal/service/**"
+      ],
+      "contract": "Unknown and transitional states never count as stopped; stop waits for a confirmed terminal state.",
+      "laws": [
+        "service_activating_is_not_stopped",
+        "service_active_is_not_stopped",
+        "service_deactivating_is_not_stopped",
+        "service_maintenance_is_not_stopped",
+        "service_refreshing_is_not_stopped",
+        "service_reloading_is_not_stopped",
+        "service_terminal_states_are_stopped",
+        "service_unknown_is_not_stopped"
+      ],
+      "evidence": [
+        {
+          "file": "internal/service/service_test.go",
+          "test": "TestStatus",
+          "module": "main"
+        },
+        {
+          "file": "internal/service/service_test.go",
+          "test": "TestStopWaitsForTerminalState",
+          "module": "main"
+        },
+        {
+          "file": "internal/service/service_test.go",
+          "test": "TestStopRefusesUncertainResult",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/service"
+      ]
+    },
+    {
+      "area": "support",
+      "paths": [
+        "internal/support/**"
+      ],
+      "contract": "Redact credentials and peers, bound collection and publish only to fresh private destinations.",
+      "laws": [
+        "bounded_output_empty",
+        "bounded_output_exact_budget",
+        "bounded_output_zero_budget",
+        "publication_requires_owned",
+        "redaction_is_idempotent",
+        "secrets_are_redacted"
+      ],
+      "evidence": [
+        {
+          "file": "internal/support/redact_test.go",
+          "test": "TestRedactStructuredCredentials",
+          "module": "main"
+        },
+        {
+          "file": "internal/support/collect_test.go",
+          "test": "TestPrivateOutputDoesNotReuseFiles",
+          "module": "main"
+        },
+        {
+          "file": "internal/support/logs_test.go",
+          "test": "TestTailBytesBounded",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/support"
+      ]
+    },
+    {
+      "area": "tui",
+      "paths": [
+        "internal/tui/**"
+      ],
+      "contract": "Revalidate destructive selections, hold operation locks and preserve errors/recovery context.",
+      "laws": [
+        "change_requires_locked",
+        "change_requires_validated",
+        "failed_commit_preserves_old"
+      ],
+      "evidence": [
+        {
+          "file": "internal/tui/restorepoints_test.go",
+          "test": "TestRestorePointDeletionRevalidatesEntirePreview",
+          "module": "main"
+        },
+        {
+          "file": "internal/tui/service_test.go",
+          "test": "TestServiceActionsRespectOperationLock",
+          "module": "main"
+        },
+        {
+          "file": "internal/tui/changehealth_test.go",
+          "test": "TestRecoverChangeOnlyOffersCompletePointsAndPreservesErrors",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/tui"
+      ]
+    },
+    {
+      "area": "ui",
+      "paths": [
+        "internal/ui/**"
+      ],
+      "contract": "Execute each requested action once and return its failure to the caller.",
+      "laws": [
+        "ui_runs_action_once"
+      ],
+      "evidence": [
+        {
+          "file": "internal/ui/ui_test.go",
+          "test": "TestStepRunsOnceAndPreservesError",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/ui"
+      ]
+    },
+    {
+      "area": "update",
+      "paths": [
+        "internal/update/**"
+      ],
+      "contract": "Verify fetched releases and atomically replace with rollback; never reuse another writer temporary file.",
+      "laws": [
+        "failed_commit_preserves_old",
+        "publication_requires_verified",
+        "successful_commit_installs_new"
+      ],
+      "evidence": [
+        {
+          "file": "internal/update/update_test.go",
+          "test": "TestFetchVerifiesAndExtracts",
+          "module": "main"
+        },
+        {
+          "file": "internal/update/update_test.go",
+          "test": "TestReplaceAndRollback",
+          "module": "main"
+        },
+        {
+          "file": "internal/update/update_test.go",
+          "test": "TestSaveUsesIndependentTemporaryFile",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/update"
+      ]
+    },
+    {
+      "area": "walletbackup",
+      "paths": [
+        "internal/walletbackup/**"
+      ],
+      "contract": "Encrypt wallet material; verify identity before replacement; retain original existence and recovery files on failure.",
+      "laws": [
+        "archive_accepts_valid",
+        "archive_requires_allowed",
+        "archive_requires_contained",
+        "archive_requires_safe_type",
+        "change_accepts_valid",
+        "change_requires_locked",
+        "change_requires_recoverable",
+        "change_requires_stopped",
+        "change_requires_validated",
+        "failed_commit_preserves_old"
+      ],
+      "evidence": [
+        {
+          "file": "internal/walletbackup/walletbackup_test.go",
+          "test": "TestCreateListOpenInspect",
+          "module": "main"
+        },
+        {
+          "file": "internal/walletbackup/restore_test.go",
+          "test": "TestRestoreVerifiesProducerIndex",
+          "module": "main"
+        },
+        {
+          "file": "internal/walletbackup/restore_test.go",
+          "test": "TestRestoreRollbackPreservesOriginalExistence",
+          "module": "main"
+        },
+        {
+          "file": "internal/walletbackup/restore_test.go",
+          "test": "TestRestoreIncompleteRollbackKeepsSafetyFiles",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "internal/walletbackup"
+      ]
+    },
+    {
+      "area": "commands",
+      "paths": [
+        "cmd/*.go",
+        "main.go"
+      ],
+      "contract": "Flag precedence, root authorization, diagnostic access and lock boundaries remain consistent between CLI and menu.",
+      "laws": [
+        "change_requires_locked",
+        "flags_override_environment"
+      ],
+      "evidence": [
+        {
+          "file": "cmd/backup_test.go",
+          "test": "TestApplyBackupFlagsPrecedence",
+          "module": "main"
+        },
+        {
+          "file": "cmd/backup_test.go",
+          "test": "TestPrivilegedCommandsAreAnnotated",
+          "module": "main"
+        },
+        {
+          "file": "cmd/status_test.go",
+          "test": "TestDiagnosticCommandsSkipPreflight",
+          "module": "main"
+        },
+        {
+          "file": "cmd/service_test.go",
+          "test": "TestServiceActionsRespectOperationLock",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        ".",
+        "cmd"
+      ]
+    },
+    {
+      "area": "relay-entrypoint",
+      "paths": [
+        "cmd/nomctl-relay/**"
+      ],
+      "contract": "Relay entrypoint builds with its authenticated and isolated server.",
+      "laws": [
+        "authentication_accepts_valid",
+        "authentication_requires_fresh",
+        "authentication_requires_known",
+        "authentication_requires_signed"
+      ],
+      "evidence": [
+        {
+          "file": "internal/relay/server_test.go",
+          "test": "TestAuth",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "cmd/nomctl-relay"
+      ]
+    },
+    {
+      "area": "dashboards",
+      "paths": [
+        "dashboards/**"
+      ],
+      "contract": "Embedded dashboards remain valid and query the supported monitoring data.",
+      "laws": [
+        "publication_requires_complete"
+      ],
+      "evidence": [
+        {
+          "file": "internal/analytics/analytics_test.go",
+          "test": "TestEmbeddedDashboard",
+          "module": "main"
+        }
+      ],
+      "go_packages": [
+        "dashboards"
+      ]
+    },
+    {
+      "area": "scheduleproof",
+      "paths": [
+        "experiments/scheduleproof/**"
+      ],
+      "contract": "Experimental replicas require verified historical inputs, continuity and fresh evidence; restart/fork reconciliation fail closed.",
+      "laws": [
+        "replica_accepts_valid",
+        "replica_requires_complete",
+        "replica_requires_continuous",
+        "replica_requires_current",
+        "replica_requires_history"
+      ],
+      "evidence": [
+        {
+          "file": "experiments/scheduleproof/sync_test.go",
+          "test": "TestSyncResumesAndInvalidatesReadyOnRestart",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/sync_test.go",
+          "test": "TestSourceChangesDuringBatchNeverPublishesReady",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/mirror_test.go",
+          "test": "TestMissingConfirmedAccountBlockFailsClosed",
+          "module": "scheduleproof"
+        },
+        {
+          "file": "experiments/scheduleproof/mirror_test.go",
+          "test": "TestRestartReusesVerifiedPrivateHistory",
+          "module": "scheduleproof"
+        }
+      ],
+      "go_packages": [
+        "experiments/scheduleproof",
+        "experiments/scheduleproof/cmd/scheduleproof"
+      ]
+    },
+    {
+      "area": "website",
+      "paths": [
+        "website/**"
+      ],
+      "contract": "Documentation output stays inside its build directory; routes and full documentation build remain valid.",
+      "laws": [
+        "archive_requires_contained"
+      ],
+      "evidence": [],
+      "checks": [
+        "website-tests",
+        "website-build"
+      ],
+      "go_packages": []
+    },
+    {
+      "area": "documentation",
+      "paths": [
+        "docs/**",
+        "README.md",
+        "pillar-recovery-v0.0.10.md",
+        "LICENSE"
+      ],
+      "contract": "Describe the verification boundary and preserve the recovery contract; documentation remains buildable.",
+      "laws": [
+        "publication_requires_complete"
+      ],
+      "evidence": [],
+      "checks": [
+        "inventory",
+        "website-build"
+      ],
+      "go_packages": []
+    },
+    {
+      "area": "operations",
+      "paths": [
+        "deploy/**",
+        "install.sh",
+        ".github/**",
+        ".goreleaser.yaml",
+        ".golangci.yml",
+        "Makefile",
+        "go.mod",
+        "go.sum",
+        ".gitignore",
+        "test/migration/**"
+      ],
+      "contract": "Release installation verifies bytes before installation; both binaries build; proofs and dependency execution remain containerized.",
+      "laws": [
+        "change_requires_validated",
+        "publication_requires_verified"
+      ],
+      "evidence": [],
+      "checks": [
+        "installer-tests",
+        "build",
+        "inventory"
+      ],
+      "go_packages": []
+    },
+    {
+      "area": "law-system",
+      "paths": [
+        "AGENTS.md",
+        "LAWS.bend",
+        "PROOF.bend",
+        "scripts/**",
+        "test/bend/**"
+      ],
+      "contract": "All declared laws have checked proofs and named evidence; orphaned subsystems, stale evidence and incorrect models fail the gate.",
+      "laws": [
+        "change_requires_locked",
+        "change_requires_validated",
+        "change_requires_stopped",
+        "change_requires_recoverable",
+        "change_accepts_valid",
+        "publication_requires_complete",
+        "publication_requires_verified",
+        "publication_requires_fresh",
+        "publication_requires_owned",
+        "publication_accepts_valid",
+        "authentication_requires_known",
+        "authentication_requires_signed",
+        "authentication_requires_fresh",
+        "authentication_accepts_valid",
+        "progress_requires_stable",
+        "progress_requires_reachable",
+        "progress_requires_identified",
+        "progress_requires_increasing",
+        "progress_accepts_valid",
+        "replica_requires_history",
+        "replica_requires_current",
+        "replica_requires_continuous",
+        "replica_requires_complete",
+        "replica_accepts_valid",
+        "failed_delivery_is_retryable",
+        "successful_delivery_advances",
+        "disabled_alerts_are_silent",
+        "service_active_is_not_stopped",
+        "service_activating_is_not_stopped",
+        "service_deactivating_is_not_stopped",
+        "service_reloading_is_not_stopped",
+        "service_maintenance_is_not_stopped",
+        "service_refreshing_is_not_stopped",
+        "service_unknown_is_not_stopped",
+        "service_terminal_states_are_stopped",
+        "backup_preserves_wallet",
+        "backup_preserves_config",
+        "backup_preserves_other",
+        "resync_preserves_wallet",
+        "resync_preserves_config",
+        "resync_preserves_other",
+        "archive_requires_contained",
+        "archive_requires_safe_type",
+        "archive_requires_allowed",
+        "archive_accepts_valid",
+        "pruning_keeps_requested_count",
+        "pruning_zero_keeps_nothing",
+        "pruning_empty_is_empty",
+        "bounded_output_zero_budget",
+        "bounded_output_empty",
+        "bounded_output_exact_budget",
+        "stale_schedule_never_recovers",
+        "paused_schedule_cannot_run",
+        "schedule_requires_lock",
+        "handoff_preserves_exclusion",
+        "migration_never_runs_both_nodes",
+        "health_stalled_does_not_pass",
+        "health_uncertain_does_not_pass",
+        "health_unhealthy_does_not_pass",
+        "health_progress_can_pass",
+        "configured_value_wins",
+        "absent_value_uses_default",
+        "flags_override_environment",
+        "invalid_config_preserves_old",
+        "failed_commit_preserves_old",
+        "successful_commit_installs_new",
+        "secrets_are_redacted",
+        "public_text_is_preserved",
+        "redaction_is_idempotent",
+        "unknown_alert_is_rejected",
+        "events_cannot_fire",
+        "oversized_alert_is_rejected",
+        "ui_runs_action_once"
+      ],
+      "evidence": [
+        {
+          "file": "test/bend/contract_test.go",
+          "test": "TestBendRetention",
+          "module": "main"
+        },
+        {
+          "file": "test/bend/contract_test.go",
+          "test": "TestBendServiceStates",
+          "module": "main"
+        },
+        {
+          "file": "test/bend/contract_test.go",
+          "test": "TestBendDataScope",
+          "module": "main"
+        },
+        {
+          "file": "test/bend/contract_test.go",
+          "test": "TestBendHealthOutcomes",
+          "module": "main"
+        },
+        {
+          "file": "test/bend/contract_test.go",
+          "test": "TestBendAlertValidation",
+          "module": "main"
+        },
+        {
+          "file": "test/bend/contract_test.go",
+          "test": "TestBendConfigDefaults",
+          "module": "main"
+        }
+      ],
+      "checks": [
+        "inventory",
+        "proof",
+        "verdict",
+        "model-mutations",
+        "harness-tests"
+      ],
+      "go_packages": [
+        "test/bend"
+      ]
+    }
+  ]
+}
