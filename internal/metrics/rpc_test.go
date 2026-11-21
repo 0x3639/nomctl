@@ -45,7 +45,7 @@ func TestSamplerUsesConfiguredHTTP(t *testing.T) {
 	if !smp.Node.Reachable || smp.Node.URL != next.URL || smp.Node.CurrentHeight != 2000 || smp.Node.MomentumsPerSec != 0 {
 		t.Fatalf("new endpoint or rate incorrect: %+v", smp.Node)
 	}
-	for _, body := range []string{`{"RPC":{"EnableHTTP":false}}`, `{"RPC":{"HTTPPort":"wrong"}}`, `{`} {
+	for _, body := range []string{`{"RPC":{"EnableHTTP":false}}`, `{"RPC":{"HTTPPort":"wrong"}}`, `{`, "", " \n\t"} {
 		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}

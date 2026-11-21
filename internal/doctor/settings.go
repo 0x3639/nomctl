@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,9 @@ func readSettings(dir string) (settings, error) {
 	data, err := readRegular(filepath.Join(dir, "config.json"), 1<<20)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return settings{}, err
+	}
+	if err == nil && len(bytes.TrimSpace(data)) == 0 {
+		return settings{}, errors.New("config.json is empty")
 	}
 	d, err := nodeconfig.Parse(data)
 	if err != nil {

@@ -13,6 +13,8 @@ func TestConfiguredNetworkSettings(t *testing.T) {
 		bad             bool
 	}{
 		{"defaults", `{}`, "http://127.0.0.1:35997", 35995, false},
+		{"empty file", "", "", 0, true},
+		{"whitespace file", " \n\t", "", 0, true},
 		{"custom", `{"RPC":{"HTTPHost":"127.0.0.2","HTTPPort":40000},"Net":{"ListenPort":40001}}`, "http://127.0.0.2:40000", 40001, false},
 		{"P2P hostname", `{"Net":{"ListenHost":"node.example","ListenPort":40001},"RPC":{"HTTPPort":40000}}`, "http://127.0.0.1:40000", 40001, false},
 		{"empty P2P host", `{"Net":{"ListenHost":"  "}}`, "", 0, true},

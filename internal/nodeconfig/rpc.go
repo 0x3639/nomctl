@@ -1,6 +1,7 @@
 package nodeconfig
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,9 @@ func ReadLocalHTTPURL(dir string) (string, error) {
 		}
 		if len(data) > limit {
 			return "", errors.New("config.json exceeds the RPC settings size limit")
+		}
+		if len(bytes.TrimSpace(data)) == 0 {
+			return "", errors.New("config.json is empty")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err

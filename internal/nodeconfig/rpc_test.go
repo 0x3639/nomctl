@@ -14,6 +14,8 @@ func TestLocalHTTPURL(t *testing.T) {
 		bad              bool
 	}{
 		{"defaults", `{}`, "http://127.0.0.1:35997", false},
+		{"empty file", "", "", true},
+		{"whitespace file", " \n\t", "", true},
 		{"internal Caddy upstream", `{"RPC":{"HTTPHost":"127.0.0.1","HTTPPort":3597,"WSPort":3598}}`, "http://127.0.0.1:3597", false},
 		{"port only", `{"RPC":{"HTTPPort":40000}}`, "http://127.0.0.1:40000", false},
 		{"localhost", `{"RPC":{"HTTPHost":"localhost"}}`, "http://127.0.0.1:35997", false},
