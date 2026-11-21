@@ -19,8 +19,13 @@ import (
 
 func fakeNode(t *testing.T, height uint64) *httptest.Server {
 	t.Helper()
-	h := strconv.FormatUint(height, 10)
+	return fakeNodeWithHeight(t, func() uint64 { return height })
+}
+
+func fakeNodeWithHeight(t *testing.T, height func() uint64) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := strconv.FormatUint(height(), 10)
 		var req struct{ Method string }
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		var res string
@@ -160,15 +165,15 @@ func TestRateAndETA(t *testing.T) {
 	if rate(pts[:1]) != 0 {
 		t.Error("one point has no rate")
 	}
-	srv := fakeNode(t, 1000)
+	var height atomic.Uint64
+	height.Store(1000)
+	srv := fakeNodeWithHeight(t, height.Load)
+	defer srv.Close()
 	s := testSampler(t, srv.URL)
 	now := base
 	s.Now = func() time.Time { return now }
 	s.Take(context.Background())
-	srv.Close()
-	srv2 := fakeNode(t, 1100)
-	defer srv2.Close()
-	s.Node = node.New(srv2.URL)
+	height.Store(1100)
 	now = now.Add(20 * time.Second)
 	smp := s.Take(context.Background())
 	if smp.Node.MomentumsPerSec < 4.99 || smp.Node.MomentumsPerSec > 5.01 {
@@ -208,7 +213,7 @@ func TestStalledAndUnreachable(t *testing.T) {
 		t.Errorf("unreachable node not reported: %+v", down.Node)
 	}
 	text := Format(down)
-	if !strings.Contains(text, "node rpc unreachable") || !strings.Contains(text, "go-zenon active (running)") {
+	if !strings.Contains(text, "node rpc check failed") || !strings.Contains(text, "go-zenon active (running)") {
 		t.Errorf("Format:\n%s", text)
 	}
 }

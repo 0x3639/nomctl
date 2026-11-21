@@ -30,7 +30,7 @@ CPU % and the sync rate are measured over `--wait` (default 2 seconds). `--json`
 - **Frontier**: the newest momentum the node has. Momentums arrive roughly every 10 seconds, so on a healthy synced node this is always a few seconds old.
 - **Pillar** (only when a pillar name is configured): produced should track expected through the epoch; a growing gap means missed production slots.
 - **`Frontier   ledger busy`**: the stats calls answered but `ledger.getFrontierMomentum` did not within `NOMCTL_RPC_TIMEOUT` (3 s). That call waits on the lock momentum insertion holds, so it happens on a node inserting momentums flat out, typically while catching up after a deploy or bootstrap. The sync line still shows height and rate; as long as the height climbs, nothing is wrong. Raise the timeout on a slow disk. A ledger that stays busy while the height stops moving is a hung insert, and `momentums_stalled` reports it.
-- **`node rpc unreachable`**: the process is not up, or its HTTP RPC on port 35997 was disabled in `config.json`. The rest of the output is still valid.
+- **`node rpc check failed`** (`node rpc unreachable` in older versions): read the error after the endpoint. A refused connection means nothing accepted the connection; an HTTP error means a listener answered but rejected the request. The process and host measurements remain valid.
 - **Process**: open files near the 32768 limit, or memory close to the host total, predict the two most common crashes.
 - **Host**: less than 15 GB free on the data directory stops backups and will eventually stop the node. IO pressure above about 50% on a syncing node means the disk is the bottleneck.
 
@@ -40,4 +40,23 @@ CPU % and the sync rate are measured over `--wait` (default 2 seconds). `--json`
 sudo nomctl top
 ```
 
-The same values refreshed every two seconds (`--interval`), with a sync progress bar and a sparkline of momentums per second. `q` quits. Both commands are read-only and need no configuration.
+The same values refreshed every two seconds (`--interval`), with a sync progress bar and a sparkline of momentums per second. `q` quits. Both commands are read-only.
+
+`status` and `top` read `RPC.EnableHTTP`, `RPC.HTTPHost`, and `RPC.HTTPPort`
+from `<NOMCTL_ZNN_DIR>/config.json` (normally `/root/.znn/config.json`). Missing
+settings use the node defaults. Wildcard binds (`0.0.0.0` or `::`) are contacted
+through loopback. Disabled HTTP or invalid/unreadable settings produce an
+explicit error instead of probing an assumed port. Restart the node after
+changing its listener settings; the dashboard reads the file again each sample.
+
+For a public node behind Caddy, nomctl uses the **internal HTTP listener**.
+For example, `HTTPHost: "127.0.0.1"` and `HTTPPort: 3597` select
+`http://127.0.0.1:3597`, even when Caddy exposes HTTPS on `35997` and WSS on
+`35998`. No public URL or TLS setting is needed in nomctl. An older version
+hard-coded `35997`; if that port belongs to Caddy, its response can be
+`HTTP 400: Client sent an HTTP request to an HTTPS server.`
+
+The unprivileged alerts daemon receives only the resolved connection settings
+through its root-owned probe, refreshed every 30 seconds. It does not receive
+the node configuration or producer secrets. A missing, stale, or mismatched
+probe reports unavailable RPC settings instead of guessing a port.

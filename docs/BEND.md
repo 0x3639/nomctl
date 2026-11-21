@@ -130,10 +130,10 @@ below is a readable index; review the named laws and tests when changing an area
 | `health` | Success requires stable process identity and chain progress; unknown, failed, stalled and canceled checks cannot pass. |
 | `lock` | Allow one mutating owner; preserve migration guards and release on errors. |
 | `logx` | Sanitize untrusted console text and retain requested logging destinations. |
-| `metrics` | Report only current snapshot identity; do not mistake busy ledgers for unreachable nodes; bound sample history. |
+| `metrics` | Use configured internal RPC or fresh probe settings; report current snapshot identity and preserve RPC errors; bound sample history. |
 | `migrate` | Never activate both nodes during handoff; keep durable source blocks across failure and restart; validate transfer scope. |
-| `node` | Preserve RPC errors and partial snapshots; bound request durations. |
-| `nodeconfig` | Validate edits before atomic save; preserve unrelated configuration and resolve defaults only when absent. |
+| `node` | Use configured internal HTTP; preserve bounded RPC error details and partial snapshots; bound request durations. |
+| `nodeconfig` | Validate edits before atomic save; preserve unrelated configuration; resolve local RPC settings and use defaults only when absent. |
 | `nodeupgrade` | Verify release identity and checksums, build before downtime, confirm stop and keep matching recovery material. |
 | `orchestrator` | Refuse unsafe hard-reset paths and unavailable services before mutation. |
 | `preflight` | Check resource and time synchronization prerequisites before deployment. |

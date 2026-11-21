@@ -60,7 +60,7 @@ func TestRenderTopUnreachableAndStalled(t *testing.T) {
 	s := fixedSample()
 	s.Node = metrics.NodeSample{URL: node.DefaultURL, Error: "connection refused"}
 	out := stripANSI(renderTop(s, nil, 80, s.Taken))
-	if !strings.Contains(out, "unreachable") || !strings.Contains(out, "connection refused") {
+	if !strings.Contains(out, "node rpc check failed") || !strings.Contains(out, "connection refused") {
 		t.Errorf("unreachable node not shown:\n%s", out)
 	}
 	s = fixedSample()
@@ -72,6 +72,20 @@ func TestRenderTopUnreachableAndStalled(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+func TestRenderTopHTTPRejection(t *testing.T) {
+	s := fixedSample()
+	s.Node = metrics.NodeSample{URL: node.DefaultURL, Error: `rpc stats.processInfo: HTTP 400: "HTTPS required"`}
+	out := stripANSI(renderTop(s, nil, 160, s.Taken))
+	for _, want := range []string{"node rpc check failed", "HTTP 400", "HTTPS required", "go-zenon active (running)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in %s", want, out)
+		}
+	}
+	if strings.Contains(out, "unreachable") {
+		t.Fatal("an HTTP response must not be described as unreachable")
 	}
 }
 

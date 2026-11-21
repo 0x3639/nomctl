@@ -125,6 +125,32 @@ func TestRPCError(t *testing.T) {
 	}
 }
 
+func TestHTTPErrorDetails(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"HTTPS listener", "Client sent an HTTP request to an HTTPS server.\n", `"Client sent an HTTP request to an HTTPS server."`},
+		{"empty", "", "rpc stats.processInfo: HTTP 400"},
+		{"controls", "reject\n\x1b[2J\u202e", `"reject\n\x1b[2J\u202e"`},
+		{"bounded", strings.Repeat("x", 512) + "SHOULD_NOT_APPEAR", "(truncated)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			_, err := New(srv.URL).ProcessInfo(t.Context())
+			if err == nil || !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v", err)
+			}
+			if strings.ContainsAny(err.Error(), "\n\r\x1b\u202e") || strings.Contains(err.Error(), "SHOULD_NOT_APPEAR") {
+				t.Fatalf("unsafe or unbounded detail: %q", err)
+			}
+		})
+	}
+}
+
 func TestSnapshot(t *testing.T) {
 	srv := rpcServer(t)
 	defer srv.Close()

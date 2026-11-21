@@ -13,5 +13,6 @@ description: "Common failure signatures in the journal and status output, their 
 | service running, height not moving, sync state anything | node stopped syncing momentums | `sudo nomctl restart`; the `momentums_stalled` alert covers this |
 | `leveldb` or `corrupt` errors after an unclean shutdown | damaged chain database | `sudo nomctl restore` from a backup, or `sudo nomctl resync` |
 | restarts climbing, nothing obvious in the journal | crash loop | `sudo nomctl support-bundle --watch` and share the bundle |
-| `node rpc unreachable ... context deadline exceeded` | RPC accepted the connection but did not answer in 3 seconds | the node is alive but overloaded (heavy initial sync, disk pressure) or wedged; check `top` for IO pressure, then `logs` |
-| `node rpc unreachable ... connection refused` | nothing listening on 35997 | the process is down, or `config.json` disabled HTTP RPC |
+| `node rpc check failed ... context deadline exceeded` | the RPC check exceeded its timeout (3 seconds by default) | check service state, IO pressure in `top`, and `logs` |
+| `node rpc check failed ... connection refused` | nothing accepted the connection at the displayed endpoint | check the process and `RPC.HTTPHost` / `RPC.HTTPPort` in `config.json`; restart the node if its listener settings changed |
+| `HTTP 400: ... HTTP request to an HTTPS server` | plain HTTP reached a TLS listener, often Caddy on the public port | upgrade nomctl to a version that reads the internal HTTP endpoint from `config.json`; the public wallet endpoint can still work |

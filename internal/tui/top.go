@@ -140,7 +140,7 @@ func renderTop(s metrics.Sample, history []float64, width int, now time.Time, no
 
 func nodeLines(n metrics.NodeSample, history []float64, inner int) []string {
 	if !n.Reachable {
-		return []string{styleBad.Render("node rpc unreachable") + " at " + strings.TrimPrefix(n.URL, "http://") + ": " + n.Error}
+		return []string{styleBad.Render(n.RPCFailure())}
 	}
 	state := n.StateText
 	if n.Stalled {

@@ -437,11 +437,13 @@
       "paths": [
         "internal/metrics/**"
       ],
-      "contract": "Report only current snapshot identity; do not mistake busy ledgers for unreachable nodes; bound sample history.",
+      "contract": "Use configured internal RPC or fresh probe settings; report current snapshot identity and preserve RPC errors; bound sample history.",
       "laws": [
+        "absent_value_uses_default",
         "bounded_output_empty",
         "bounded_output_exact_budget",
         "bounded_output_zero_budget",
+        "configured_value_wins",
         "progress_accepts_valid",
         "progress_requires_identified",
         "progress_requires_increasing",
@@ -462,6 +464,16 @@
         {
           "file": "internal/metrics/sample_test.go",
           "test": "TestRateAndETA",
+          "module": "main"
+        },
+        {
+          "file": "internal/metrics/rpc_test.go",
+          "test": "TestSamplerUsesConfiguredHTTP",
+          "module": "main"
+        },
+        {
+          "file": "internal/metrics/rpc_test.go",
+          "test": "TestSamplerUsesProbeRPCSettings",
           "module": "main"
         }
       ],
@@ -514,11 +526,13 @@
       "paths": [
         "internal/node/**"
       ],
-      "contract": "Preserve RPC errors and partial snapshots; bound request durations.",
+      "contract": "Use configured internal HTTP; preserve bounded RPC error details and partial snapshots; bound request durations.",
       "laws": [
+        "absent_value_uses_default",
         "bounded_output_empty",
         "bounded_output_exact_budget",
         "bounded_output_zero_budget",
+        "configured_value_wins",
         "progress_requires_reachable"
       ],
       "evidence": [
@@ -536,6 +550,11 @@
           "file": "internal/node/client_test.go",
           "test": "TestNewWithTimeout",
           "module": "main"
+        },
+        {
+          "file": "internal/node/client_test.go",
+          "test": "TestHTTPErrorDetails",
+          "module": "main"
         }
       ],
       "go_packages": [
@@ -547,7 +566,7 @@
       "paths": [
         "internal/nodeconfig/**"
       ],
-      "contract": "Validate edits before atomic save; preserve unrelated configuration and resolve defaults only when absent.",
+      "contract": "Validate edits before atomic save; preserve unrelated configuration; resolve local RPC settings and use defaults only when absent.",
       "laws": [
         "absent_value_uses_default",
         "configured_value_wins",
@@ -569,6 +588,16 @@
         {
           "file": "internal/nodeconfig/edit_test.go",
           "test": "TestEditFlow",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeconfig/rpc_test.go",
+          "test": "TestLocalHTTPURL",
+          "module": "main"
+        },
+        {
+          "file": "internal/nodeconfig/rpc_test.go",
+          "test": "TestLocalHTTPURLRejectsUnsafeFiles",
           "module": "main"
         }
       ],
@@ -958,6 +987,11 @@
         {
           "file": "internal/tui/changehealth_test.go",
           "test": "TestRecoverChangeOnlyOffersCompletePointsAndPreservesErrors",
+          "module": "main"
+        },
+        {
+          "file": "internal/tui/top_test.go",
+          "test": "TestRenderTopHTTPRejection",
           "module": "main"
         }
       ],
