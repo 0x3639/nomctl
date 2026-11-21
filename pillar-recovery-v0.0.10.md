@@ -42,13 +42,19 @@ Reference: [Wallet backup guide](https://nomctl.0x3639.com/guide/backups#wallet-
 2. Verify the exact v0.0.10 release and preserve recoverable chain data and
    binary material before changing them. Keep production disabled during the
    upgrade and empty-database resynchronization.
-3. After synchronization, compare a momentum hash after the fork point against
-   a known healthy v0.0.10 node at the same height. Matching heights or a
-   `synced` status alone do not establish the correct branch. If verification
-   fails or remains uncertain, leave production disabled.
-4. Resume production only after branch verification and an explicit operator
-   action. Confirm that the intended pillar identity is used and that no other
-   instance is producing with it.
+3. After synchronization, keep production disabled and record the recovered
+   node's current tip height and momentum hash. Require that height to be after
+   the fork point, and compare the hash with a fresh observation from a known
+   healthy v0.0.10 node at that exact height. Agreement at an older height,
+   matching heights alone, or a `synced` status does not verify the current tip.
+   If the healthy node cannot supply that height, the hashes differ, or the
+   result remains uncertain, leave production disabled.
+4. Immediately before resuming production, recheck the recovered tip and bind
+   enablement to the verified height and hash. If either changes before
+   enablement, invalidate the earlier check and repeat step 3 for the new tip
+   while production remains disabled. Resume only with fresh verification and
+   an explicit operator action. Confirm that the intended pillar identity is
+   used and that no other instance is producing with it.
 
 This checklist specifies acceptance criteria, not commands that currently
 guarantee them. Do not proceed with fork recovery using this document until the
