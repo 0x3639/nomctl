@@ -1,0 +1,13 @@
+FROM golang:1.26-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends rsync openssh-client python3 \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /deps/main
+COPY go.mod go.sum ./
+RUN go mod download
+WORKDIR /deps/scheduleproof
+COPY experiments/scheduleproof/go.mod experiments/scheduleproof/go.sum ./
+RUN go mod download
+ENV GOWORK=off GOCACHE=/tmp/go-build
+RUN useradd -m -u 10001 checks && mkdir /cache && chown checks:checks /cache
+USER checks
+WORKDIR /work

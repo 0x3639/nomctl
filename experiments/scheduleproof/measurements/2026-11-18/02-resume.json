@@ -1,0 +1,39 @@
+{
+  "engine": "v0.0.10-alphanet/e8986a63f164259053e0342ceaf9a68cb85d649e",
+  "platform": "linux/arm64",
+  "startedAt": "2026-11-18T08:59:31.836082483Z",
+  "finishedAt": "2026-11-18T09:00:18.734821508Z",
+  "elapsedSeconds": 46.898739108,
+  "reason": "block-limit",
+  "initialHeight": 1701,
+  "batch": 100,
+  "pollSeconds": 0.3,
+  "rpcPayloadBytes": 61017684,
+  "rpcCalls": 180,
+  "resources": {
+    "processCPUSeconds": 6.274899,
+    "peakRSSBytes": 543981568,
+    "heapAllocatedBytes": 50873456,
+    "replicaLogicalFileBytes": 16239279
+  },
+  "lastSyncStatus": {
+    "state": "catching-up",
+    "engine": "v0.0.10-alphanet/e8986a63f164259053e0342ceaf9a68cb85d649e",
+    "source": "wss://node.zenonhub.io:35998",
+    "generatedAt": "2026-11-18T09:00:18.419992533Z",
+    "validUntil": "0001-01-01T00:00:00Z",
+    "frontier": {
+      "hash": "39c01c64e99f7b98c766c2d04bebc1b985e64c98daef2174608a0c398d617b10",
+      "height": 4701
+    },
+    "remote": {
+      "hash": "dc6e4dd9df5be9a1846ce88d2fc58120385918968495995fc5d8ea6f598c11b7",
+      "height": 14686003
+    },
+    "appliedThisRun": 3000,
+    "preApplySchedulesCompared": 3000,
+    "preApplySchedulesMatched": 3000,
+    "forksThisRun": 0,
+    "rewoundMomentums": 0
+  }
+}

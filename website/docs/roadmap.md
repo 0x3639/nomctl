@@ -55,10 +55,14 @@ Effort is relative: **S** means a focused change, **M** spans several components
 | 3 — Controlled maintenance | R10 | Opt-in maintenance windows and update policy | L | R3, R4, R9 |
 | 3 — Controlled maintenance | R11 | Migrate the entire `.znn` folder to a new device with rsync | L | R3, R4; SSH and rsync on both devices |
 | 3 — Controlled maintenance | R12 | Configuration review and change history | M | Existing schema validation and config backups |
+| 3 — Controlled maintenance | R13 | Recover a stalled or forked node by upgrading, rewinding and replaying | L | R1, R3, R4; supported offline rewind and production controls in znnd |
+| 3 — Controlled maintenance | R14 | Delay pillar backups and restore-point creation around production slots | L | R1/R2/R4; verified replica bootstrap/catch-up, standalone calculator, producer identity |
 
 Start with **R1, R2, and R3**. R2 is a useful smaller delivery while diagnostics and verification are developed. Complete R4 before adding unattended update policies.
 
-**[v0.16.0](https://github.com/0x3639/nomctl/releases/tag/v0.16.0) delivery: R1 diagnostics and R2 backup controls.** R3 recovery-file verification, R4 post-change health checks, and R11 device migration are implemented locally, pending release. Device migration (R11) transfers the entire `.znn` folder directly with rsync over SSH; it does not depend on the off-machine archive-upload feature (R8).
+**[v0.16.0](https://github.com/0x3639/nomctl/releases/tag/v0.16.0) delivery: R1 diagnostics and R2 backup controls.** R3 recovery-file verification, R4 post-change health checks, and R11 device migration are available for testing in **[v0.17.0-rc.1](https://github.com/0x3639/nomctl/releases/tag/v0.17.0-rc.1)**. Stable v0.17.0 awaits real-server migration and reboot acceptance. Device migration (R11) transfers the entire `.znn` folder directly with rsync over SSH; it does not depend on the off-machine archive-upload feature (R8).
+
+**Current priority adjustment:** validate R11 on two servers, then design and implement R14 pillar-aware backup timing, followed by R13 stalled-node/fork recovery. R5 metrics remains next in the original phase sequence. R13 and R14 are design work and are not part of v0.17.0-rc.1.
 
 ## Phase 1: reliable operation
 
@@ -80,7 +84,7 @@ Completion means status survives restarts and distinguishes success, failure, sk
 
 ### R3 — Verify backups and restore points
 
-**Implemented locally; not yet released.** `nomctl verify` and **Backups & recovery → Verify recovery files** check archive integrity and saved znnd, persist results tied to file identities, support optional extraction rehearsal, and provide daily verification with pause/resume. [Usage and limits](./guide/backups.md#verify-recovery-files). Design: `docs/superpowers/specs/2026-11-17-recovery-verification-design.md`.
+**Available for testing in v0.17.0-rc.1.** `nomctl verify` and **Backups & recovery → Verify recovery files** check archive integrity and saved znnd, persist results tied to file identities, support optional extraction rehearsal, and provide daily verification with pause/resume. [Usage and limits](./guide/backups.md#verify-recovery-files). Design: `docs/superpowers/specs/2026-11-17-recovery-verification-design.md`.
 
 Add **Verify recovery files**, with an optional schedule. Reuse checksum and archive-entry validation; verify the saved znnd checksum for full restore points. Record the result, time, and exact artifact identity so an old verification result cannot be shown for a changed file.
 
@@ -88,7 +92,7 @@ Completion means truncation, bad checksums, unsafe archive entries, and missing 
 
 ### R4 — Confirm health after changes
 
-**Implemented locally, pending release.** [Health reports and recovery behavior](./guide/health.md).
+**Available for testing in v0.17.0-rc.1.** [Health reports and recovery behavior](./guide/health.md).
 
 Extend upgrade and restore completion beyond “systemd is active.” Observe RPC responsiveness, chain-height movement, peer state, repeated restarts, and the reported znnd identity over a bounded window.
 
@@ -136,7 +140,7 @@ Completion means pinned versions can be respected, pending changes and expected 
 
 ### R11 — Migrate to a new device with rsync
 
-**Implemented locally, pending release.** [Migration workflow and supported installations](./guide/migration.md). Container rehearsals exercise rsync and controlled service failures; real-server deployment and reboot acceptance remain a release check.
+**Available for testing in v0.17.0-rc.1.** [Migration workflow and supported installations](./guide/migration.md). Container rehearsals exercise rsync and controlled service failures; real-server deployment and reboot acceptance remain a stable-release check.
 
 Add a **Migrate to a new device** menu action and a matching command-line workflow. Transfer the **entire `.znn` directory using rsync over SSH**, including chain databases, wallet/producer keys, `config.json`, hidden files, and any other contents. Use the configured node data directory (`NOMCTL_ZNN_DIR`, default `/root/.znn`) and an explicitly selected destination. This must not reuse the chain-backup folder allowlist, which would omit wallet/config and other files.
 
@@ -157,6 +161,34 @@ Rehearse the workflow on a second machine, including transfer interruption/resum
 Extend the existing config editor with a readable before/after comparison, effective values versus defaults, and a browsable history of validated changes. Show which changes require a restart.
 
 Completion means secrets are redacted, malformed changes are refused, and reverting a previous configuration is validated against the installed znnd schema. Configuration changes remain distinct from data/znnd restore points, with an explicit restart choice.
+
+### R13 — Recover a stalled or forked node
+
+**Designing; not implemented.** Support replaying 5, 10 or a checked custom number of recent momentums, and fork recovery to a known-good common ancestor height/hash. The intended workflow is: verify the updated go-zenon/znnd build, stop production, preserve a verified recovery point, rewind offline, replay on the intended branch, then explicitly resume production after branch and health checks pass.
+
+The update and rewind share one maintenance window; the producer must not start between them. Fork recovery also needs an expected checkpoint and a reviewed reconnection plan so advancing on the wrong branch cannot be reported as success. This changes local node state, not network history.
+
+Current znnd has internal rollback machinery but the examined release does not expose an administrative rewind command. A supported, version-matched engine interface and a persistent non-producing replay mode are prerequisites. Available history and tested engine limits bound custom depth; there is no promise of unlimited rollback. Design: `docs/superpowers/specs/2026-11-17-chain-recovery-design.md`.
+
+The next implementation slice is an offline inspector in go-zenon, followed by candidate rewind and controlled replay. The proposed engine contract also requires production to be disabled before key loading and peer/checkpoint restrictions during fork recovery; changing seed nodes alone does not restrict discovery. Interface and acceptance details: `docs/superpowers/specs/2026-11-17-rewind-engine-contract.md`.
+
+### R14 — Protect pillar production during backups
+
+**Read-only validation stage; next priority after migration acceptance. Not included in v0.17.0-rc.1.** Delay chain backups and restore-point creation until this pillar has a sufficiently long gap in its upcoming production schedule. Confirmed non-pillar nodes keep their existing behavior.
+
+Identify the running producer address and resolve its pillar name from authoritative node/chain evidence; do not rely on the alerts label or a wallet owner's address. Show upcoming timestamped production slots, the next assignment, the required stopped interval, and the reason a backup is waiting. The interval must include stop, copy, restart, peer reconnection/catch-up, and timing headroom. Compression continues after restart.
+
+Calculate the schedule in a standalone runtime service using existing detailed-ledger RPCs and a pinned go-zenon implementation. No new go-zenon endpoint or engine modification is planned. The examined engine computes 30 ten-second slots per election round. The [Zenon Observatory backend](https://github.com/0x3639/go-zenon-version/blob/7ade222f04da480167f704833607d5c74abebafc/backend/schedule.go) demonstrates standalone projection, but its current cached weights are insufficient for exact historical inputs: controlled transitions produce incorrect assignments.
+
+**Historical inputs and read-only sync validated.** A separate verified replica matches the validator's complete inputs and all slots across registration/revocation, producer changes, delegation/ranking and balance changes, proof boundaries, and forks. The standalone runner now has atomic commits, resumable synchronization, bounded fork reconciliation, expiration of schedule output, and resource reports. Tests cover process kills around commits, source interruption/changes, 35 candidates, cache refresh, incomplete history, and restart. Container packaging and a separate CI job are included.
+
+Bounded mainnet runs reached height 10,701 with 10,699/10,699 pre-apply schedule comparisons matching. The final 3,000-momentum run took 22.7 seconds, peaked at 524.6 MiB RSS, and left an 18.65 MiB database. These are early-history samples, not full-chain capacity or current-tip qualification. Full synchronization and live schedule checks remain before backup integration. The watcher may run continuously or start ahead of a backup while retaining its database; on-demand starts must finish catch-up before a future coordinator accepts a window. Automatic backup-triggered startup is not implemented. Validation: `docs/superpowers/specs/2026-11-17-schedule-proof-validation.md`; measurements: `experiments/scheduleproof/measurements/2026-11-18/README.md`.
+
+The implemented runner publishes a read-only schedule/status file. The planned backup integration will add an eligible/wait/unknown window decision for nomctl's producer and full outage budget. Nomctl retains service control and validates identity, schedule coverage, chain/proof agreement, freshness, and clock evidence immediately before stopping. A fresh feed or perfect recent match count alone is insufficient; unverified inputs or mismatches mean defer. Producer identity comes from reconciled local service/configuration and on-chain evidence; do not assume an existing RPC reports the loaded identity.
+
+Waiting must leave the node running, allow cancellation and schedule pause/edit, and avoid holding the global operation lock for an entire round. Revalidate the producer and schedule under the lock immediately before stopping. Abort a late copy early enough to reserve time for restart and production readiness, and never mark an incomplete backup complete. If the data cannot fit any known gap, keep deferring and explain the required capacity or snapshot-method change.
+
+This prevents knowingly scheduling a backup over an assigned production slot; it cannot guarantee zero missed momentums during arbitrary disk stalls, node failures, clock changes, or forks. Report actual readiness and production outcomes. Automatic restore points taken inside longer upgrades/restores need their entire maintenance interval accounted for; the guard must not imply that a copy-only window protects a longer operation. Design and acceptance cases: `docs/superpowers/specs/2026-11-17-pillar-backup-protection-design.md`.
 
 ## Rules carried forward
 

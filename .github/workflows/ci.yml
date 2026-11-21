@@ -35,3 +35,17 @@ jobs:
         working-directory: website
       - name: Cross-compile
         run: make cross
+
+  scheduleproof:
+    runs-on: ubuntu-latest
+    container: golang:1.26-bookworm
+    defaults:
+      run:
+        working-directory: experiments/scheduleproof
+    steps:
+      - uses: actions/checkout@v4
+      - name: Standalone schedule sync, restart, and fork checks
+        run: |
+          go test -race -count=1 ./...
+          go vet ./...
+          go build -buildvcs=false ./cmd/scheduleproof

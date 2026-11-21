@@ -1,0 +1,39 @@
+{
+  "engine": "v0.0.10-alphanet/e8986a63f164259053e0342ceaf9a68cb85d649e",
+  "platform": "linux/arm64",
+  "startedAt": "2026-11-18T09:01:48.618271653Z",
+  "finishedAt": "2026-11-18T09:02:13.948840734Z",
+  "elapsedSeconds": 25.330569164,
+  "reason": "block-limit",
+  "initialHeight": 4701,
+  "batch": 100,
+  "pollSeconds": 0.3,
+  "rpcPayloadBytes": 61023224,
+  "rpcCalls": 180,
+  "resources": {
+    "processCPUSeconds": 8.303071,
+    "peakRSSBytes": 610562048,
+    "heapAllocatedBytes": 50128344,
+    "replicaLogicalFileBytes": 18203658
+  },
+  "lastSyncStatus": {
+    "state": "catching-up",
+    "engine": "v0.0.10-alphanet/e8986a63f164259053e0342ceaf9a68cb85d649e",
+    "source": "wss://my.hc1node.com:35998",
+    "generatedAt": "2026-11-18T09:02:13.639336115Z",
+    "validUntil": "0001-01-01T00:00:00Z",
+    "frontier": {
+      "hash": "3f7b22bb18232cdaf8d9f36abc489cf6589d042bcec08db335f402efc97db945",
+      "height": 7701
+    },
+    "remote": {
+      "hash": "e0e3d77f1b55b709db27d9aec2a1f54dd42ec569d282391ed445a22388e21e49",
+      "height": 14686014
+    },
+    "appliedThisRun": 3000,
+    "preApplySchedulesCompared": 3000,
+    "preApplySchedulesMatched": 3000,
+    "forksThisRun": 0,
+    "rewoundMomentums": 0
+  }
+}

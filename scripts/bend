@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Host launcher only; Bend and its runtime always execute inside Docker.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+image=${BEND_IMAGE:-nomctl-bend:2.0.40}
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "Bend image unavailable. Start Docker and run: make bend-image" >&2
+  exit 1
+fi
+exec docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --pids-limit 256 --memory 2g \
+  --tmpfs /tmp:rw,nosuid,size=256m \
+  --mount "type=bind,source=$root,target=/work,readonly" \
+  "$image" "$@"

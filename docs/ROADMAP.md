@@ -3,15 +3,48 @@
 The [phased roadmap](../website/docs/roadmap.md) is the current delivery plan.
 **R1: Check my node** and **R2: backup status and schedule controls** are
 implemented for **v0.16.0**. R1 includes znnd version/commit and installed/running
-executable SHA-256. **R3: recovery-file verification** is implemented locally
-(not released): `nomctl verify`, saved results, optional extraction rehearsal,
-and daily verification with pause/resume. **R4: health checks after changes** and
-**R11: device migration** are also implemented locally (not released). R4 checks
+executable SHA-256. **R3: recovery-file verification** is available in
+**[v0.17.0-rc.1](https://github.com/0x3639/nomctl/releases/tag/v0.17.0-rc.1)**:
+`nomctl verify`, saved results, optional extraction rehearsal, and daily
+verification with pause/resume. **R4: health checks after changes** and
+**R11: device migration** are also in this prerelease. R4 checks
 observed progress and intended znnd identity after upgrades/restores and offers
 confirmed recovery. R11 copies the entire configured `.znn` using rsync over
 SSH, with persistent start blocks, verification, resume, and explicit handoff or
 return. The original data is retained. Container rehearsals cover failure paths;
-real-server deployment/reboot acceptance remains a release check.
+real-server deployment/reboot acceptance remains a stable-release check.
+
+**Next priority: R14, pillar-aware backup and restore-point timing** (read-only
+validation stage). Identify the running producer address and pillar name, calculate
+upcoming production slots in a standalone service, and delay a backup until its
+complete stop/copy/restart interval fits a known gap. Confirmed non-pillar nodes
+keep their current behavior. Unknown or stale schedules defer the operation. An early copy-abort
+deadline reserves time to restore production; arbitrary failures still prevent
+an absolute zero-missed-momentum guarantee. Use existing go-zenon RPCs and a
+pinned election implementation; no new node endpoint is required or planned.
+The historical-input prototype now reproduces exact inputs and slots by replaying
+existing detailed-ledger RPC data into a separate verified replica. Transition,
+fork, and cache tests pass; current-weight projection has confirmed counterexamples.
+The standalone runner now supports atomic resumable sync, bounded fork recovery,
+expiring schedule output, resource reports, and continuous or on-demand operation.
+Bounded mainnet runs reached height 10,701 with 10,699/10,699 pre-apply schedule
+comparisons matching. The final 3,000-momentum sample took 22.7 seconds, peaked at
+524.6 MiB RSS, and left an 18.65 MiB replica. These early-history samples do not
+establish full-chain capacity or current-tip readiness. Full synchronization and
+live-tip qualification remain next, before backup integration. See
+[the measurements](../experiments/scheduleproof/measurements/2026-11-18/README.md),
+[the validation](superpowers/specs/2026-11-17-schedule-proof-validation.md), and
+[the R14 design](superpowers/specs/2026-11-17-pillar-backup-protection-design.md).
+Delivery order after migration acceptance: R14, then R13 recovery; R5 metrics
+remains the next item in the original phase sequence.
+
+**R13: stalled-node and fork recovery** remains in design: verified znnd
+upgrade, rewind to a checked momentum height/hash, replay with production
+disabled, then explicitly resume production. This requires a supported offline
+rewind capability in go-zenon as well as nomctl controls. See
+[the investigation and design](superpowers/specs/2026-11-17-chain-recovery-design.md)
+and [the proposed engine contract](superpowers/specs/2026-11-17-rewind-engine-contract.md).
+The next implementation slice is a read-only offline inspector in go-zenon.
 
 The list below retains the earlier feature history and backlog beyond v0.2.0;
 use the phased roadmap for current priority order. Each feature gets a design

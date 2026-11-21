@@ -1,0 +1,40 @@
+{
+  "engine": "v0.0.10-alphanet/e8986a63f164259053e0342ceaf9a68cb85d649e",
+  "platform": "linux/arm64",
+  "startedAt": "2026-11-18T08:56:53.749642419Z",
+  "finishedAt": "2026-11-18T08:57:26.833654436Z",
+  "elapsedSeconds": 33.084012183,
+  "reason": "consecutive-errors",
+  "initialHeight": 1,
+  "batch": 100,
+  "pollSeconds": 0.3,
+  "rpcPayloadBytes": 36638297,
+  "rpcCalls": 102,
+  "resources": {
+    "processCPUSeconds": 8.301173,
+    "peakRSSBytes": 558211072,
+    "heapAllocatedBytes": 27260824,
+    "replicaLogicalFileBytes": 13614985
+  },
+  "lastSyncStatus": {
+    "state": "unavailable",
+    "engine": "v0.0.10-alphanet/e8986a63f164259053e0342ceaf9a68cb85d649e",
+    "source": "wss://my.hc1node.com:35998",
+    "generatedAt": "2026-11-18T08:57:26.831855656Z",
+    "validUntil": "0001-01-01T00:00:00Z",
+    "frontier": {
+      "hash": "786b8642a5de2996d0dcb85b8e0f24bcf8485c668a9c12b5c1057c2e9f93b12d",
+      "height": 1701
+    },
+    "remote": {
+      "hash": "f328114090ec2105b81c61bf463ab47efbefd89abcad23070ac0c1d2c3daf130",
+      "height": 14685991
+    },
+    "error": "cannot save status: write /home/app/scheduleproof-mainnet-20261118/.write-35812904: no space left on device",
+    "appliedThisRun": 1700,
+    "preApplySchedulesCompared": 1699,
+    "preApplySchedulesMatched": 1699,
+    "forksThisRun": 0,
+    "rewoundMomentums": 0
+  }
+}

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Minimal nodebox for the disposable Linux CI runner. Local development uses
+# the user's installed nodebox; this helper is never a local fallback.
+set -euo pipefail
+[[ ${GITHUB_ACTIONS:-} == true ]] || { echo "CI-only helper" >&2; exit 1; }
+network=bridge
+if [[ ${1:-} == --offline ]]; then network=none; shift; fi
+exec docker run --rm -i --network "$network" --user "$(id -u):$(id -g)" \
+  --cap-drop ALL --security-opt no-new-privileges --pids-limit 512 --memory 4g \
+  --tmpfs /tmp:rw,nosuid,size=1g -e HOME=/tmp -e npm_config_update_notifier=false \
+  --mount "type=bind,source=$PWD,target=/app" -w /app node:24-slim "$@"
