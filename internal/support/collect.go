@@ -103,9 +103,6 @@ func Collect(ctx context.Context, cfg config.Config, opts Options) (Result, erro
 	if opts.Since == "" {
 		opts.Since = DefaultSince
 	}
-	if opts.NodeURL == "" {
-		opts.NodeURL = node.DefaultURL
-	}
 	// A collection never reuses an existing directory or archive. Files are
 	// staged privately here, and only a complete archive is published.
 	opts.OutputDir = filepath.Clean(opts.OutputDir)
@@ -132,7 +129,10 @@ func Collect(ctx context.Context, cfg config.Config, opts Options) (Result, erro
 	b := &bundle{dir: opts.OutputDir, ctx: ctx, cfg: cfg, opts: opts, unit: cfg.ServiceUnit()}
 
 	sampler := metrics.NewSampler(cfg)
-	sampler.Node = node.New(opts.NodeURL)
+	sampler.Node = node.NewLocal(cfg.ZnnDir, cfg.RPCTimeout)
+	if opts.NodeURL != "" {
+		sampler.Node = node.NewWithTimeout(opts.NodeURL, cfg.RPCTimeout)
+	}
 	sample := sampler.Take(ctx)
 
 	b.summary(sample)
@@ -145,7 +145,7 @@ func Collect(ctx context.Context, cfg config.Config, opts Options) (Result, erro
 	b.coredumps()
 	b.binary(sample)
 	b.oomAndBoots()
-	b.nodeRPC(ctx, opts.NodeURL)
+	b.nodeRPC(ctx, sampler.Node)
 	b.nomctl()
 	b.write("20-status.txt", metrics.Format(sample))
 
@@ -343,9 +343,8 @@ func (b *bundle) oomAndBoots() {
 	b.write("17-oom-and-boots.txt", sb.String())
 }
 
-func (b *bundle) nodeRPC(ctx context.Context, url string) {
-	c := node.New(url)
-	doc := map[string]any{"url": url, "collected": time.Now().UTC().Format(time.RFC3339)}
+func (b *bundle) nodeRPC(ctx context.Context, c *node.Client) {
+	doc := map[string]any{"url": c.URL, "collected": time.Now().UTC().Format(time.RFC3339)}
 	call := func(key string, fn func() (any, error)) {
 		v, err := fn()
 		if err != nil {

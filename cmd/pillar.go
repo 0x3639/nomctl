@@ -160,7 +160,7 @@ var pillarStatusCmd = &cobra.Command{
 		if name := pillarName(); name != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			switch p, err := node.New(node.DefaultURL).PillarByName(ctx, name); {
+			switch p, err := node.NewLocal(cfg.ZnnDir, cfg.RPCTimeout).PillarByName(ctx, name); {
 			case err != nil:
 				fmt.Fprintf(out, "%-18s %s: %v\n", "Pillar", name, err)
 			case p == nil:

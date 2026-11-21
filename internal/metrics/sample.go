@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -130,6 +131,8 @@ type Sampler struct {
 	// holding the data directory, which needs no access to the directory.
 	MountInfo  string
 	CgroupRoot string
+	// Node overrides config-based discovery, for bounded diagnostic snapshots.
+	// When nil, each sample reads the local settings or the root probe.
 	Node       *node.Client
 	Now        func() time.Time
 	ClockTicks float64
@@ -146,10 +149,12 @@ type Sampler struct {
 	probeCache  Probe
 	probeOK     bool
 
-	prevTicks uint64
-	prevTime  time.Time
-	prevPID   int
-	heights   []heightPoint
+	prevTicks  uint64
+	prevTime   time.Time
+	prevPID    int
+	heights    []heightPoint
+	rpcTimeout time.Duration
+	lastRPCURL string
 }
 
 // SetPillarName changes the pillar whose stats are sampled ("" for none).
@@ -162,7 +167,7 @@ func NewSampler(cfg config.Config) *Sampler {
 		ProcRoot:   DefaultProcRoot,
 		MountInfo:  DefaultProcRoot + "/self/mountinfo",
 		CgroupRoot: DefaultCgroupRoot,
-		Node:       node.NewWithTimeout(node.DefaultURL, cfg.RPCTimeout),
+		rpcTimeout: cfg.RPCTimeout,
 		Now:        time.Now,
 		ClockTicks: 100,
 		unit:       cfg.ServiceName,
@@ -280,9 +285,20 @@ func (s *Sampler) takeHost(now time.Time) HostSample {
 }
 
 func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
-	n := NodeSample{URL: s.Node.URL, Pillar: PillarSample{Configured: s.PillarName != "", Name: s.PillarName}}
-	s.Node.PillarName = s.PillarName
-	snap := s.Node.Snapshot(ctx)
+	n := NodeSample{Pillar: PillarSample{Configured: s.PillarName != "", Name: s.PillarName}}
+	client, err := s.nodeClient(now)
+	if err != nil {
+		n.Error = err.Error()
+		s.heights = nil
+		return n
+	}
+	n.URL = client.URL
+	if n.URL != s.lastRPCURL {
+		s.heights = nil
+		s.lastRPCURL = n.URL
+	}
+	client.PillarName = s.PillarName
+	snap := client.Snapshot(ctx)
 	// A failed stats method does not erase independently returned identity.
 	// Keep it from this same RPC snapshot so diagnostics can bracket all of
 	// its observations with service-identity checks, without a later query.
@@ -336,6 +352,28 @@ func (s *Sampler) takeNode(ctx context.Context, now time.Time) NodeSample {
 		n.ETAKnown = true
 	}
 	return n
+}
+
+func (s *Sampler) nodeClient(now time.Time) (*node.Client, error) {
+	if s.Node != nil {
+		return s.Node, nil
+	}
+	if s.ProbePath == "" {
+		return node.NewLocal(s.dataDir, s.rpcTimeout), nil
+	}
+	// ProtectHome hides config.json from the alerts daemon. Only use settings
+	// published by its fresh root-owned probe for this same data directory.
+	p, ok := s.probe(now)
+	if !ok || p.RPCDataDir == "" || p.RPCDataDir != filepath.Clean(s.dataDir) {
+		return nil, fmt.Errorf("local RPC settings unavailable from the root probe")
+	}
+	if p.RPCError != "" {
+		return nil, fmt.Errorf("local RPC settings: %s", p.RPCError)
+	}
+	if p.RPCURL == "" {
+		return nil, fmt.Errorf("HTTP RPC is disabled in config.json (RPC.EnableHTTP=false)")
+	}
+	return node.NewWithTimeout(p.RPCURL, s.rpcTimeout), nil
 }
 
 // dataDirDisk measures free and total bytes for the data directory.
@@ -404,7 +442,7 @@ func Format(s Sample) string {
 	}
 
 	if !s.Node.Reachable {
-		line("Node", fmt.Sprintf("node rpc unreachable at %s: %s", strings.TrimPrefix(s.Node.URL, "http://"), s.Node.Error))
+		line("Node", s.Node.RPCFailure())
 	} else {
 		n := s.Node
 		sync := n.StateText
@@ -450,6 +488,16 @@ func Format(s Sample) string {
 	line("Host", fmt.Sprintf("load %.2f %.2f %.2f, mem %s / %s available, %s", h.Load1, h.Load5, h.Load15, HumanBytes(h.MemAvailable), HumanBytes(h.MemTotal), disk))
 	line("Pressure", fmt.Sprintf("cpu %.1f%%, io %.1f%%, mem %.1f%%", h.Pressure.CPU, h.Pressure.IO, h.Pressure.Memory))
 	return b.String()
+}
+
+// RPCFailure describes an unsuccessful check without claiming a connection
+// failure: an HTTP rejection means a listener answered.
+func (n NodeSample) RPCFailure() string {
+	message := "node rpc check failed"
+	if n.URL != "" {
+		message += " at " + strings.TrimPrefix(n.URL, "http://")
+	}
+	return message + ": " + n.Error
 }
 
 // firstLine trims a multi-line error to its first line for one-line output.

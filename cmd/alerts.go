@@ -8,6 +8,7 @@ import (
 	neturl "net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -236,7 +237,7 @@ var alertsRunCmd = &cobra.Command{
 
 // lookupPillar asks the local node whether a pillar with this name exists.
 func lookupPillar(ctx context.Context, name string) (*node.PillarInfo, error) {
-	return node.New(node.DefaultURL).PillarByName(ctx, name)
+	return node.NewLocal(cfg.ZnnDir, cfg.RPCTimeout).PillarByName(ctx, name)
 }
 
 // updateChecker feeds the update_available rule from the cached check.
@@ -246,7 +247,17 @@ func updateChecker() alerts.UpdateInfo {
 	c := update.Run(ctx, update.Options{Repo: cfg.ReleaseRepo, NodeRepo: cfg.RepoURL, NodeBranch: cfg.BranchName})
 	info := alerts.UpdateInfo{NomctlLatest: c.NomctlLatest, NomctlRunning: version, NodeBranch: c.NodeBranch}
 	if c.NodeRemote != "" {
-		if commit, err := node.New(node.DefaultURL).ProcessInfo(ctx); err == nil && commit.Commit != "" {
+		client := node.NewLocal(cfg.ZnnDir, cfg.RPCTimeout)
+		// The unprivileged daemon cannot read config.json. An unavailable probe
+		// must not make it query the default port or an old configured endpoint.
+		if os.Geteuid() != 0 {
+			p, err := metrics.ReadProbe(metrics.DefaultProbePath, time.Now())
+			if err != nil || p.RPCDataDir != filepath.Clean(cfg.ZnnDir) || p.RPCError != "" || p.RPCURL == "" {
+				return info
+			}
+			client = node.NewWithTimeout(p.RPCURL, cfg.RPCTimeout)
+		}
+		if commit, err := client.ProcessInfo(ctx); err == nil && commit.Commit != "" {
 			info.NodeBehind = !update.SameCommit(commit.Commit, c.NodeRemote)
 		}
 	}

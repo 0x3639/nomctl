@@ -1,13 +1,12 @@
 package doctor
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -27,12 +26,19 @@ func readSettings(dir string) (settings, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return settings{}, err
 	}
+	if err == nil && len(bytes.TrimSpace(data)) == 0 {
+		return settings{}, errors.New("config.json is empty")
+	}
 	d, err := nodeconfig.Parse(data)
 	if err != nil {
 		return settings{}, err
 	}
+	rpcURL, err := d.LocalHTTPURL()
+	if err != nil {
+		return settings{}, err
+	}
 	values := map[string]any{}
-	for _, key := range []string{"RPC.EnableHTTP", "RPC.HTTPHost", "RPC.HTTPPort", "Net.ListenHost", "Net.ListenPort", "Net.MinPeers"} {
+	for _, key := range []string{"Net.ListenHost", "Net.ListenPort", "Net.MinPeers"} {
 		schema, _ := nodeconfig.Lookup(key)
 		value, present, err := d.Get(key)
 		if err != nil {
@@ -42,19 +48,10 @@ func readSettings(dir string) (settings, error) {
 			value = schema.Default
 		}
 		switch schema.Kind {
-		case nodeconfig.Bool:
-			if _, ok := value.(bool); !ok {
-				return settings{}, fmt.Errorf("invalid %s", key)
-			}
 		case nodeconfig.String:
 			host, ok := value.(string)
 			if !ok || strings.TrimSpace(host) == "" {
 				return settings{}, fmt.Errorf("%s must be a nonempty host", key)
-			}
-			// Only HTTP is contacted by this diagnostic. P2P hostnames are
-			// supported by znnd; listener inspection needs no DNS lookup.
-			if key == "RPC.HTTPHost" && host != "localhost" && net.ParseIP(host) == nil {
-				return settings{}, fmt.Errorf("%s must be an IP address or localhost", key)
 			}
 		case nodeconfig.Int:
 			n, ok := value.(int)
@@ -72,17 +69,7 @@ func readSettings(dir string) (settings, error) {
 		}
 		values[key] = value
 	}
-	host := values["RPC.HTTPHost"].(string)
-	if host == "0.0.0.0" || host == "localhost" {
-		host = "127.0.0.1"
-	}
-	if host == "::" {
-		host = "::1"
-	}
-	s := settings{p2pHost: values["Net.ListenHost"].(string), rpcEnabled: values["RPC.EnableHTTP"].(bool), port: values["Net.ListenPort"].(int), minPeers: values["Net.MinPeers"].(int)}
-	if s.rpcEnabled {
-		s.rpcURL = "http://" + net.JoinHostPort(host, strconv.Itoa(values["RPC.HTTPPort"].(int)))
-	}
+	s := settings{rpcURL: rpcURL, p2pHost: values["Net.ListenHost"].(string), rpcEnabled: rpcURL != "", port: values["Net.ListenPort"].(int), minPeers: values["Net.MinPeers"].(int)}
 	return s, nil
 }
 

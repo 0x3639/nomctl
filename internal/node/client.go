@@ -6,15 +6,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/0x3639/nomctl/internal/nodeconfig"
 )
 
 // DefaultURL is znnd's default HTTP RPC endpoint on the local host.
 const DefaultURL = "http://127.0.0.1:35997"
+
+// Keep server rejection details useful without flooding the dashboard.
+const maxHTTPErrorBytes = 512
 
 // Client talks to one znnd RPC endpoint.
 type Client struct {
@@ -22,6 +30,19 @@ type Client struct {
 	HTTP *http.Client
 	// PillarName, when set, makes Snapshot also look up that pillar.
 	PillarName string
+	configErr  error
+}
+
+// NewLocal uses the node's internal HTTP listener from config.json. A settings
+// error is preserved for callers without contacting an assumed default port.
+func NewLocal(dir string, timeout time.Duration) *Client {
+	url, err := nodeconfig.ReadLocalHTTPURL(dir)
+	if err == nil && url == "" {
+		err = errors.New("HTTP RPC is disabled in config.json (RPC.EnableHTTP=false)")
+	}
+	c := NewWithTimeout(url, timeout)
+	c.configErr = err
+	return c
 }
 
 // New returns a client with a 3 s per-call timeout.
@@ -140,6 +161,9 @@ type rpcResponse struct {
 }
 
 func (c *Client) call(ctx context.Context, method string, out any, params ...any) error {
+	if c.configErr != nil {
+		return fmt.Errorf("rpc %s: %w", method, c.configErr)
+	}
 	if params == nil {
 		params = []any{}
 	}
@@ -157,12 +181,12 @@ func (c *Client) call(ctx context.Context, method string, out any, params ...any
 		return fmt.Errorf("rpc %s: %w", method, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return httpResponseError(method, resp)
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return fmt.Errorf("rpc %s: %w", method, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("rpc %s: HTTP %d", method, resp.StatusCode)
 	}
 	var r rpcResponse
 	if err := json.Unmarshal(data, &r); err != nil {
@@ -178,6 +202,26 @@ func (c *Client) call(ctx context.Context, method string, out any, params ...any
 		return fmt.Errorf("rpc %s: bad result: %w", method, err)
 	}
 	return nil
+}
+
+func httpResponseError(method string, resp *http.Response) error {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPErrorBytes+1))
+	truncated := len(data) > maxHTTPErrorBytes
+	if truncated {
+		data = data[:maxHTTPErrorBytes]
+	}
+	message := fmt.Sprintf("rpc %s: HTTP %d", method, resp.StatusCode)
+	if detail := strings.TrimSpace(string(data)); detail != "" {
+		// The body is untrusted text: escape terminal controls and newlines.
+		message += ": " + strconv.QuoteToASCII(detail)
+	}
+	if truncated {
+		message += " (truncated)"
+	}
+	if err != nil {
+		return fmt.Errorf("%s (reading response: %w)", message, err)
+	}
+	return errors.New(message)
 }
 
 var errNullResult = fmt.Errorf("null result")

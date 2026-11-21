@@ -3,9 +3,11 @@ package metrics
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"time"
 
 	"github.com/0x3639/nomctl/internal/fsx"
+	"github.com/0x3639/nomctl/internal/nodeconfig"
 )
 
 // Probe is what the root-run `nomctl alerts probe` records for the daemon:
@@ -28,6 +30,11 @@ type Probe struct {
 	DiskOK    bool   `json:"disk_ok"`
 	DiskFree  uint64 `json:"disk_free"`
 	DiskTotal uint64 `json:"disk_total"`
+	// Only the resolved internal endpoint is published, never config.json or
+	// producer keys. The data directory binds it to the intended node.
+	RPCDataDir string `json:"rpc_data_dir,omitempty"`
+	RPCURL     string `json:"rpc_url,omitempty"`
+	RPCError   string `json:"rpc_error,omitempty"`
 }
 
 // DefaultProbePath is where the probe timer writes and the daemon reads.
@@ -40,7 +47,12 @@ const ProbeMaxAge = 2 * time.Minute
 // TakeProbe reads the per-process figures for pid (0 = not running) from
 // /proc and the disk figures for dataDir.
 func TakeProbe(procRoot string, pid int, dataDir string, now time.Time) (Probe, error) {
-	p := Probe{At: now, PID: pid}
+	p := Probe{At: now, PID: pid, RPCDataDir: filepath.Clean(dataDir)}
+	if url, err := nodeconfig.ReadLocalHTTPURL(dataDir); err != nil {
+		p.RPCError = err.Error()
+	} else {
+		p.RPCURL = url
+	}
 	if free, total, err := diskFree(dataDir); err == nil && total > 0 {
 		p.DiskOK, p.DiskFree, p.DiskTotal = true, free, total
 	}
