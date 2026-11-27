@@ -97,7 +97,7 @@ func TestOrchestratorTemplateFlagsAndList(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"dRPC (drpc.org)", "Alchemy", "BNB Chain", "Ethereum", "2000", "500", "0.5"} {
+	for _, want := range []string{"dRPC (drpc.org)", "Alchemy", "BNB Chain", "Ethereum", "100", "0.5"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("template list missing %q:\n%s", want, text)
 		}

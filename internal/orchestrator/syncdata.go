@@ -535,7 +535,7 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 	if err != nil {
 		return res, fmt.Errorf("remote preflight on %s failed (ensure SSH key auth and known_hosts are configured): %w", opts.Host, err)
 	}
-	remoteUnitFound, remoteWasActive := parseRemoteProbe(probeOut)
+	remoteUnitFound := parseRemoteProbe(probeOut)
 
 	localState, err := serviceStatus(cfg.OrchestratorService)
 	if err != nil {
@@ -545,6 +545,9 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 
 	slog.Info("Stopping local " + cfg.OrchestratorService + "…")
 	if err := stopService(cfg.OrchestratorService); err != nil {
+		if localWasActive {
+			err = errors.Join(err, startService(cfg.OrchestratorService))
+		}
 		return res, err
 	}
 	localRestarted := false
@@ -578,9 +581,15 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 	}
 
 	slog.Info("Installing staged sync data on " + opts.Host + " (keeping safety backup at " + remoteBackup + ")…")
-	if _, err := sshRun(ctx, opts, remoteCutoverScript(opts, remoteStage, remoteBackup, present, remoteUnitFound, remoteWasActive)); err != nil {
+	cutoverOut, err := sshRun(ctx, opts, remoteCutoverScript(opts, remoteStage, remoteBackup, present, remoteUnitFound))
+	if err != nil {
 		return res, errors.Join(fmt.Errorf("remote cutover on %s failed: %w", opts.Host, err), restartLocal())
 	}
+	remoteRestarted, err := parseRemoteCutoverRestarted(cutoverOut)
+	if err != nil {
+		return res, errors.Join(fmt.Errorf("remote cutover on %s did not confirm completion: %w", opts.Host, err), restartLocal())
+	}
+	remoteRestarted = remoteUnitFound && remoteRestarted
 
 	if err := restartLocal(); err != nil {
 		return res, fmt.Errorf("sync data copied to %s, but restarting local %s failed: %w", opts.Host, cfg.OrchestratorService, err)
@@ -593,7 +602,7 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 		CopiedDirs:      present,
 		RemoteBackup:    remoteBackup,
 		LocalRestarted:  localRestarted,
-		RemoteRestarted: remoteUnitFound && remoteWasActive,
+		RemoteRestarted: remoteRestarted,
 		RemoteUnitFound: remoteUnitFound,
 	}
 	logx.Success(fmt.Sprintf("Copied orchestrator sync data (%s) to %s:%s", strings.Join(present, ", "), opts.Host, opts.RemoteDir))
@@ -660,20 +669,27 @@ else
 fi`, dirQ, svcQ)
 }
 
-func parseRemoteProbe(out string) (unitFound, wasActive bool) {
-	var load, active string
+func parseRemoteProbe(out string) (unitFound bool) {
+	var load string
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if v, ok := strings.CutPrefix(line, "LOAD="); ok {
 			load = v
 		}
-		if v, ok := strings.CutPrefix(line, "ACTIVE="); ok {
-			active = v
+	}
+	return load != "" && load != "not-found"
+}
+
+func parseRemoteCutoverRestarted(out string) (bool, error) {
+	for _, line := range strings.Split(out, "\n") {
+		switch strings.TrimSpace(line) {
+		case "REMOTE_RESTARTED=1":
+			return true, nil
+		case "REMOTE_RESTARTED=0":
+			return false, nil
 		}
 	}
-	unitFound = load != "" && load != "not-found"
-	wasActive = active == "active" || active == "activating" || active == "reloading" || active == "refreshing"
-	return unitFound, wasActive
+	return false, errors.New("missing REMOTE_RESTARTED status line from remote cutover")
 }
 
 func remoteStageCreateScript(o SyncCopyOptions, stageDir string) string {
@@ -686,15 +702,104 @@ func remoteCleanupScript(stageDir string) string {
 	return fmt.Sprintf(`rm -rf %s`, sshQuote(stageDir))
 }
 
-func remoteCutoverScript(o SyncCopyOptions, stageDir, backupDir string, dirs []string, unitFound, restartRemote bool) string {
+func remoteCutoverScript(o SyncCopyOptions, stageDir, backupDir string, dirs []string, unitFound bool) string {
 	dirQ := sshQuote(o.RemoteDir)
 	stageQ := sshQuote(stageDir)
 	backupQ := sshQuote(backupDir)
 	svcQ := sshQuote(o.RemoteService)
 
 	var b strings.Builder
+	// Install cleanup/recovery traps before touching any remote state.
+	// Signal traps call exit with 128+sig so EXIT runs with a non-zero rc under dash.
+	fmt.Fprintf(&b, `restart_remote=0
+need_restart=0
+swapped=0
+backup_created=0
+installed_dirs=""
+rollback() {
+  for d in $installed_dirs; do
+    if [ -e %[2]s/"$d" ]; then
+      rm -rf %[1]s/"$d"
+      mv %[2]s/"$d" %[1]s/"$d"
+    else
+      rm -rf %[1]s/"$d"
+    fi
+  done
+  for d in %[3]s; do
+    if [ -e %[2]s/"$d" ]; then
+      rm -rf %[1]s/"$d"
+      mv %[2]s/"$d" %[1]s/"$d"
+    fi
+  done
+  rm -rf %[4]s
+  if [ "$backup_created" -eq 1 ]; then
+    rmdir %[2]s 2>/dev/null || true
+  fi
+}
+`, dirQ, backupQ, strings.Join(dirs, " "), stageQ)
+
 	if unitFound {
-		fmt.Fprintf(&b, `systemctl stop %[1]s
+		fmt.Fprintf(&b, `on_exit() {
+  rc=$?
+  trap - EXIT HUP INT TERM
+  if [ "$swapped" -eq 1 ]; then
+    rollback || true
+  elif [ "$rc" -ne 0 ]; then
+    rm -rf %[1]s || true
+    if [ "$backup_created" -eq 1 ]; then
+      rmdir %[2]s 2>/dev/null || true
+    fi
+  fi
+  if [ "$need_restart" -eq 1 ]; then
+    systemctl start %[3]s >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+`, stageQ, backupQ, svcQ)
+	} else {
+		fmt.Fprintf(&b, `on_exit() {
+  rc=$?
+  trap - EXIT HUP INT TERM
+  if [ "$swapped" -eq 1 ]; then
+    rollback || true
+  elif [ "$rc" -ne 0 ]; then
+    rm -rf %[1]s || true
+    if [ "$backup_created" -eq 1 ]; then
+      rmdir %[2]s 2>/dev/null || true
+    fi
+  fi
+  exit "$rc"
+}
+`, stageQ, backupQ)
+	}
+
+	b.WriteString(`trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+`)
+
+	// Prepare directories and reject symlink targets BEFORE stopping a running service.
+	fmt.Fprintf(&b, `mkdir -p -m 0700 %[1]s
+mkdir -m 0700 %[2]s
+backup_created=1
+for d in %[3]s; do
+  if [ -L %[1]s/"$d" ]; then
+    echo "remote sync path %[1]s/$d is a symlink" >&2
+    exit 1
+  fi
+done
+`, dirQ, backupQ, strings.Join(dirs, " "))
+
+	if unitFound {
+		fmt.Fprintf(&b, `active_before=$(systemctl show -p ActiveState --value %[1]s 2>/dev/null || echo inactive)
+case "$active_before" in
+  active|activating|reloading|refreshing)
+    restart_remote=1
+    need_restart=1
+    ;;
+esac
+systemctl stop %[1]s
 state=$(systemctl show -p ActiveState --value %[1]s)
 case "$state" in
   inactive|failed) ;;
@@ -702,37 +807,31 @@ case "$state" in
 esac
 `, svcQ)
 	}
-	rollbackStart := ""
-	if unitFound && restartRemote {
-		rollbackStart = fmt.Sprintf("  systemctl start %s >/dev/null 2>&1 || true\n", svcQ)
-	}
-	fmt.Fprintf(&b, `mkdir -p -m 0700 %[1]s
-mkdir -m 0700 %[2]s
-rollback() {
-  for d in %[3]s; do
-    if [ -d %[2]s/"$d" ]; then
-      rm -rf %[1]s/"$d"
-      mv %[2]s/"$d" %[1]s/"$d"
-    fi
-  done
-  rm -rf %[4]s
-%[5]s}
+
+	fmt.Fprintf(&b, `swapped=1
 for d in %[3]s; do
   if [ -L %[1]s/"$d" ]; then
     echo "remote sync path %[1]s/$d is a symlink" >&2
-    rollback
     exit 1
   fi
   if [ -e %[1]s/"$d" ]; then
-    mv %[1]s/"$d" %[2]s/"$d" || { rollback; exit 1; }
+    mv %[1]s/"$d" %[2]s/"$d"
   fi
-  mv %[4]s/"$d" %[1]s/"$d" || { rollback; exit 1; }
+  mv %[4]s/"$d" %[1]s/"$d"
+  installed_dirs="$installed_dirs $d"
 done
 rm -rf %[4]s
-`, dirQ, backupQ, strings.Join(dirs, " "), stageQ, rollbackStart)
-	if unitFound && restartRemote {
-		fmt.Fprintf(&b, "systemctl start %s\n", svcQ)
+swapped=0
+`, dirQ, backupQ, strings.Join(dirs, " "), stageQ)
+
+	if unitFound {
+		fmt.Fprintf(&b, `if [ "$restart_remote" -eq 1 ]; then
+  systemctl start %[1]s
+  need_restart=0
+fi
+`, svcQ)
 	}
+	b.WriteString("echo \"REMOTE_RESTARTED=$restart_remote\"\n")
 	return b.String()
 }
 

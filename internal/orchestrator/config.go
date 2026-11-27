@@ -21,10 +21,9 @@ const (
 	MaxConfigBytes = 1 << 20
 
 	// Canonical network names used in orchestrator config.json.
-	NetworkBNBChain  = "BNB Chain"
-	NetworkEthereum  = "Ethereum"
-	NetworkSupernova = "Supernova"
-	NetworkZenon     = "Zenon"
+	NetworkBNBChain = "BNB Chain"
+	NetworkEthereum = "Ethereum"
+	NetworkZenon    = "Zenon"
 
 	// Provider identifiers for built-in sync templates.
 	ProviderAlchemy = "alchemy"
@@ -53,22 +52,22 @@ var builtInTemplates = []SyncTemplate{
 		DisplayName: "dRPC (drpc.org)",
 		Network:     NetworkBNBChain,
 		Settings: SyncSettings{
-			FilterQuerySize:      2000,
-			RpcRequestsPerSecond: 0,
-			RpcBurst:             0,
+			FilterQuerySize:      100,
+			RpcRequestsPerSecond: 2,
+			RpcBurst:             3,
 		},
-		Description: "dRPC BNB Chain sync settings (FilterQuerySize 2000, uncapped)",
+		Description: "dRPC free-tier BNB Chain sync settings (FilterQuerySize 100, 2 req/s, burst 3)",
 	},
 	{
 		Provider:    ProviderDRPC,
 		DisplayName: "dRPC (drpc.org)",
 		Network:     NetworkEthereum,
 		Settings: SyncSettings{
-			FilterQuerySize:      500,
-			RpcRequestsPerSecond: 0,
-			RpcBurst:             0,
+			FilterQuerySize:      100,
+			RpcRequestsPerSecond: 2,
+			RpcBurst:             3,
 		},
-		Description: "dRPC Ethereum sync settings (FilterQuerySize 500, uncapped)",
+		Description: "dRPC free-tier Ethereum sync settings (FilterQuerySize 100, 2 req/s, burst 3)",
 	},
 	{
 		Provider:    ProviderAlchemy,
@@ -165,21 +164,15 @@ func DefaultConfigJSON(dir string) ([]byte, error) {
 			},
 			NetworkBNBChain: map[string]any{
 				"Urls":                 []string{"ws://127.0.0.1:8545"},
-				"FilterQuerySize":      2000,
-				"RpcRequestsPerSecond": 3,
-				"RpcBurst":             5,
+				"FilterQuerySize":      100,
+				"RpcRequestsPerSecond": 2,
+				"RpcBurst":             3,
 			},
 			NetworkEthereum: map[string]any{
 				"Urls":                 []string{"ws://127.0.0.1:8545"},
-				"FilterQuerySize":      2000,
-				"RpcRequestsPerSecond": 3,
-				"RpcBurst":             5,
-			},
-			NetworkSupernova: map[string]any{
-				"Urls":                 []string{},
-				"FilterQuerySize":      2000,
-				"RpcRequestsPerSecond": 3,
-				"RpcBurst":             5,
+				"FilterQuerySize":      100,
+				"RpcRequestsPerSecond": 2,
+				"RpcBurst":             3,
 			},
 		},
 		"TssConfig": map[string]any{
@@ -694,9 +687,12 @@ func RedactConfigJSON(raw []byte) ([]byte, error) {
 }
 
 func redactRPCURL(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return raw
+		return "***"
 	}
 	if u.User != nil {
 		u.User = url.User("***")
@@ -707,6 +703,9 @@ func redactRPCURL(raw string) string {
 	}
 	if u.RawQuery != "" {
 		u.RawQuery = "***"
+	}
+	if u.Fragment != "" {
+		u.Fragment = "***"
 	}
 	return u.String()
 }

@@ -160,7 +160,7 @@ func (m *mockReleaseServer) client(t *testing.T, repo string) *Client {
 func stubDeployHost(t *testing.T, installed bool, status service.State, unitPath string) *[]string {
 	t.Helper()
 	calls := &[]string{}
-	oldStop, oldStart, oldExists, oldStatus := stopService, startService, unitExists, serviceStatus
+	oldStop, oldStart, oldExists, oldLoaded, oldStatus, oldExecPath := stopService, startService, unitExists, unitLoaded, serviceStatus, unitExecPath
 	oldWrite, oldReload, oldEnable, oldUnitPath := writeUnit, daemonReload, enableUnit, unitPathFor
 	oldGOOS, oldGOARCH := hostGOOS, hostGOARCH
 
@@ -169,7 +169,9 @@ func stubDeployHost(t *testing.T, installed bool, status service.State, unitPath
 	curStatus := status
 
 	unitExists = func(string) (bool, error) { return curInstalled, nil }
+	unitLoaded = func(string) (bool, error) { return curInstalled, nil }
 	serviceStatus = func(string) (service.State, error) { return curStatus, nil }
+	unitExecPath = func(string) (string, error) { return "", nil }
 	stopService = func(name string) error {
 		*calls = append(*calls, "stop "+name)
 		curStatus = service.Inactive
@@ -196,7 +198,7 @@ func stubDeployHost(t *testing.T, installed bool, status service.State, unitPath
 	unitPathFor = func(config.Config) string { return unitPath }
 
 	t.Cleanup(func() {
-		stopService, startService, unitExists, serviceStatus = oldStop, oldStart, oldExists, oldStatus
+		stopService, startService, unitExists, unitLoaded, serviceStatus, unitExecPath = oldStop, oldStart, oldExists, oldLoaded, oldStatus, oldExecPath
 		writeUnit, daemonReload, enableUnit, unitPathFor = oldWrite, oldReload, oldEnable, oldUnitPath
 		hostGOOS, hostGOARCH = oldGOOS, oldGOARCH
 	})
@@ -238,7 +240,7 @@ func TestListAndSelectReleasesDefaultsToMostRecent(t *testing.T) {
 func TestInstallFreshCreatesBinaryConfigAndUnit(t *testing.T) {
 	tmp := t.TempDir()
 	binDir := filepath.Join(tmp, "bin")
-	orchDir := filepath.Join(tmp, "orchestrator")
+	orchDir := filepath.Join(tmp, ".orchestrator")
 	unitPath := filepath.Join(tmp, "systemd", "orchestrator.service")
 
 	binPayload := []byte("#!/bin/sh\necho v0.0.10-rc1\n")
@@ -275,7 +277,7 @@ func TestInstallFreshCreatesBinaryConfigAndUnit(t *testing.T) {
 		t.Fatalf("installed binary mismatch: %v", err)
 	}
 	unitBytes, err := os.ReadFile(unitPath)
-	if err != nil || !strings.Contains(string(unitBytes), "ExecStart=:\""+filepath.Join(binDir, "orchestrator")+"\"") {
+	if err != nil || !strings.Contains(string(unitBytes), "ExecStart=:\""+filepath.Join(binDir, "orchestrator")+"\"") || !strings.Contains(string(unitBytes), "Environment=\"HOME="+tmp+"\"") {
 		t.Fatalf("unit content unexpected: %s (%v)", string(unitBytes), err)
 	}
 	cfgInfo, err := os.Stat(ConfigPath(orchDir))
@@ -441,5 +443,179 @@ func TestUpgradeRefusesWhenNotInstalled(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("unexpected service calls: %v", *calls)
+	}
+}
+
+func TestUpgradeRejectsMismatchedUnitBinaryBeforeStopping(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(binDir, "orchestrator")
+	if err := os.WriteFile(binPath, []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv := newMockReleaseServer(t, nil, nil)
+	calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+	unitExecPath = func(string) (string, error) { return "/opt/custom/orchestrator", nil }
+
+	cfg := config.Default()
+	cfg.InstallDir = binDir
+	cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+	if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), Release{Tag: "v2"}); err == nil || !strings.Contains(err.Error(), "/opt/custom/orchestrator") {
+		t.Fatalf("expected ExecStart mismatch error, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("service must not be touched on binary mismatch: %v", *calls)
+	}
+}
+
+func TestUpgradeStartFailureRestoresBinaryAndPreservesPreviousOnRetry(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(binDir, "orchestrator")
+	prevPath := binPath + ".previous"
+	if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(prevPath, []byte("v0-backup"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	zipBytes := makeZip(t, map[string]struct {
+		body []byte
+		mode os.FileMode
+	}{
+		"orchestrator-linux-amd64": {body: []byte("v2-broken"), mode: 0o755},
+	})
+	sums := shaHex(zipBytes) + "  orchestrator-linux-amd64.zip\n"
+	rel := Release{
+		Tag: "v2",
+		Assets: []Asset{
+			{ID: 40, Name: "orchestrator-linux-amd64.zip"},
+			{ID: 41, Name: "SHA256CHECKSUMS.txt"},
+		},
+	}
+	srv := newMockReleaseServer(t, []Release{rel}, map[int64][]byte{40: zipBytes, 41: []byte(sums)})
+	calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+	startAttempts := 0
+	startService = func(name string) error {
+		startAttempts++
+		*calls = append(*calls, "start "+name)
+		if startAttempts == 1 {
+			return errors.New("v2 crashed on start")
+		}
+		return nil
+	}
+
+	cfg := config.Default()
+	cfg.InstallDir = binDir
+	cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+	if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+		t.Fatal("expected start failure")
+	}
+	if got, _ := os.ReadFile(binPath); string(got) != "v1-live" {
+		t.Fatalf("live binary = %q, want v1-live restored", string(got))
+	}
+	if prev, _ := os.ReadFile(prevPath); string(prev) != "v0-backup" {
+		t.Fatalf(".previous = %q, want v0-backup preserved", string(prev))
+	}
+	if strings.Join(*calls, ",") != "stop orchestrator,start orchestrator,stop orchestrator,start orchestrator" {
+		t.Fatalf("calls = %v, want stop, failed start, stop before rollback, recovery start", *calls)
+	}
+}
+
+func TestUpgradeStopErrorRecoversActiveServiceOnly(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "orchestrator"), []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	zipBytes := makeZip(t, map[string]struct {
+		body []byte
+		mode os.FileMode
+	}{
+		"orchestrator-linux-amd64": {body: []byte("v2"), mode: 0o755},
+	})
+	sums := shaHex(zipBytes) + "  orchestrator-linux-amd64.zip\n"
+	rel := Release{
+		Tag: "v2",
+		Assets: []Asset{
+			{ID: 50, Name: "orchestrator-linux-amd64.zip"},
+			{ID: 51, Name: "SHA256CHECKSUMS.txt"},
+		},
+	}
+	srv := newMockReleaseServer(t, []Release{rel}, map[int64][]byte{50: zipBytes, 51: []byte(sums)})
+
+	cfg := config.Default()
+	cfg.InstallDir = binDir
+	cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+
+	// Previously active: stop failure triggers recovery start.
+	calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+	stopService = func(name string) error {
+		*calls = append(*calls, "stop "+name)
+		return errors.New("status query failed after stop")
+	}
+	if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+		t.Fatal("expected stop error")
+	}
+	if strings.Join(*calls, ",") != "stop orchestrator,start orchestrator" {
+		t.Fatalf("active unit must recover on stop error: %v", *calls)
+	}
+
+	// Previously stopped: stop failure must NOT start the unit.
+	calls = stubDeployHost(t, true, service.Inactive, filepath.Join(tmp, "orchestrator.service"))
+	stopService = func(name string) error {
+		*calls = append(*calls, "stop "+name)
+		return errors.New("status query failed")
+	}
+	if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+		t.Fatal("expected stop error")
+	}
+	if strings.Join(*calls, ",") != "stop orchestrator" {
+		t.Fatalf("stopped unit must not be started on stop error: %v", *calls)
+	}
+}
+
+func TestInstallPreflightsConfigSymlinkBeforeStoppingActiveService(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	orchDir := filepath.Join(tmp, ".orchestrator")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(orchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "orchestrator"), []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(tmp, "other.json")
+	if err := os.WriteFile(other, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, ConfigPath(orchDir)); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newMockReleaseServer(t, nil, nil)
+	calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+
+	cfg := config.Default()
+	cfg.InstallDir = binDir
+	cfg.OrchestratorDir = orchDir
+	if _, err := Install(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), Release{Tag: "v2"}); err == nil {
+		t.Fatal("expected symlinked config.json to be rejected")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("service must not be stopped when config.json is a symlink: %v", *calls)
 	}
 }

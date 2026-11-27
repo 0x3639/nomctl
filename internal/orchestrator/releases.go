@@ -537,6 +537,21 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	if upgradeOnly && !installed {
 		return res, ErrNotInstalled
 	}
+	if installed {
+		execPath, err := unitExecPath(cfg.OrchestratorService)
+		if err != nil {
+			return res, err
+		}
+		if execPath != "" && !sameExecutablePath(execPath, binPath) {
+			return res, fmt.Errorf("existing %s unit executes %s, not configured install target %s; update the unit or set NOMCTL_INSTALL_DIR/NOMCTL_ORCHESTRATOR_BINARY", cfg.OrchestratorService, execPath, binPath)
+		}
+	}
+
+	if !upgradeOnly {
+		if err := preflightInstallSetup(cfg, dir, installed); err != nil {
+			return res, err
+		}
+	}
 
 	hasExistingBin := false
 	if st, err := os.Lstat(binPath); err == nil {
@@ -584,11 +599,24 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 		}
 		defer func() { _ = os.Remove(previousStaged) }()
 	}
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
 
 	finishSignals := protectTransaction()
 	defer finishSignals()
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
 
 	var wasRunning bool
+	recoverService := func(cause error) error {
+		if installed && wasRunning {
+			slog.Info("Restarting previous " + cfg.OrchestratorService + " after failure…")
+			cause = errors.Join(cause, startService(cfg.OrchestratorService))
+		}
+		return cause
+	}
 	if installed {
 		st, err := serviceStatus(cfg.OrchestratorService)
 		if err != nil {
@@ -597,23 +625,7 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 		wasRunning = st.Running()
 		slog.Info("Stopping " + cfg.OrchestratorService + "…")
 		if err := stopService(cfg.OrchestratorService); err != nil {
-			return res, err
-		}
-	}
-
-	recoverService := func(cause error) error {
-		if installed && wasRunning {
-			slog.Info("Restarting previous " + cfg.OrchestratorService + " after failure…")
-			cause = errors.Join(cause, startService(cfg.OrchestratorService))
-		}
-		return cause
-	}
-
-	previousPath := ""
-	if previousStaged != "" {
-		previousPath = binPath + ".previous"
-		if err := os.Rename(previousStaged, previousPath); err != nil {
-			return res, recoverService(fmt.Errorf("save previous orchestrator binary: %w", err))
+			return res, recoverService(err)
 		}
 	}
 
@@ -625,34 +637,52 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	unitCreated := false
 	unitPath := unitPathFor(cfg)
 	configCreated := false
+	rollbackBinary := func(cause error, stopFirst bool) error {
+		if stopFirst && (installed || unitCreated) {
+			_ = stopService(cfg.OrchestratorService)
+		}
+		if previousStaged != "" {
+			if restoreErr := os.Rename(previousStaged, binPath); restoreErr != nil {
+				cause = errors.Join(cause, fmt.Errorf("restore previous orchestrator binary at %s: %w", binPath, restoreErr))
+			} else {
+				previousStaged = ""
+			}
+		}
+		return recoverService(cause)
+	}
+
 	if !upgradeOnly {
 		if _, err := EnsureDataDir(dir); err != nil {
-			return res, err
+			return res, rollbackBinary(err, false)
 		}
 		configCreated, _, err = EnsureDefaultConfig(dir)
 		if err != nil {
-			return res, err
+			return res, rollbackBinary(err, false)
 		}
 		unitCreated, unitPath, err = EnsureService(cfg)
 		if err != nil {
-			return res, err
+			return res, rollbackBinary(err, false)
 		}
 	}
 
 	slog.Info("Starting " + cfg.OrchestratorService + "…")
 	if err := startService(cfg.OrchestratorService); err != nil {
-		if previousPath != "" {
-			return res, fmt.Errorf("failed to start %s after installing %s: %w (previous binary saved at %s)", cfg.OrchestratorService, release.Tag, err, previousPath)
-		}
-		return res, fmt.Errorf("failed to start %s after installing %s: %w", cfg.OrchestratorService, release.Tag, err)
+		return res, rollbackBinary(fmt.Errorf("failed to start %s after installing %s: %w", cfg.OrchestratorService, release.Tag, err), true)
 	}
 	if st, err := serviceStatus(cfg.OrchestratorService); err != nil {
-		return res, fmt.Errorf("cannot verify %s state after start: %w", cfg.OrchestratorService, err)
+		return res, rollbackBinary(fmt.Errorf("cannot verify %s state after start: %w", cfg.OrchestratorService, err), true)
 	} else if st != service.Active {
-		if previousPath != "" {
-			return res, fmt.Errorf("%s is %s after installing %s (previous binary saved at %s)", cfg.OrchestratorService, st, release.Tag, previousPath)
+		return res, rollbackBinary(fmt.Errorf("%s is %s after installing %s", cfg.OrchestratorService, st, release.Tag), true)
+	}
+
+	// Only publish .previous after the candidate passes startup verification, so
+	// an unsuccessful retry can never overwrite a known-good recovery binary.
+	previousPath := ""
+	if previousStaged != "" {
+		previousPath = binPath + ".previous"
+		if err := os.Rename(previousStaged, previousPath); err != nil {
+			return res, fmt.Errorf("orchestrator %s is running, but saving previous binary to %s failed: %w", release.Tag, previousPath, err)
 		}
-		return res, fmt.Errorf("%s is %s after installing %s", cfg.OrchestratorService, st, release.Tag)
 	}
 
 	res = DeployResult{
@@ -667,6 +697,41 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	}
 	logx.Success(fmt.Sprintf("%s %s installed at %s and running", cfg.OrchestratorService, release.Tag, binPath))
 	return res, nil
+}
+
+func preflightInstallSetup(cfg config.Config, dir string, installed bool) error {
+	if st, err := os.Lstat(dir); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+			return fmt.Errorf("orchestrator directory %s must be a real directory", dir)
+		}
+		cfgPath := ConfigPath(dir)
+		if cst, err := os.Lstat(cfgPath); err == nil {
+			if cst.Mode()&os.ModeSymlink != 0 || !cst.Mode().IsRegular() {
+				return fmt.Errorf("orchestrator config %s must be a regular file", cfgPath)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	unitPath := unitPathFor(cfg)
+	unitFilePresent := false
+	if ust, err := os.Lstat(unitPath); err == nil {
+		if ust.Mode()&os.ModeSymlink != 0 || !ust.Mode().IsRegular() {
+			return fmt.Errorf("orchestrator unit %s must be a regular file", unitPath)
+		}
+		unitFilePresent = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if !unitFilePresent && !installed {
+		if _, err := UnitFile(cfg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func stageCopy(src, target string) (string, error) {

@@ -103,17 +103,17 @@ func TestSyncTemplatesApplyPerNetworkAndPreserveConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// dRPC BNB Chain settings.
+	// dRPC BNB Chain free-tier settings.
 	bnb := doc.Networks["BNB Chain"]
-	if bnb.FilterQuerySize != 2000 || bnb.RpcRequestsPerSecond != 0 || bnb.RpcBurst != 0 {
+	if bnb.FilterQuerySize != 100 || bnb.RpcRequestsPerSecond != 2 || bnb.RpcBurst != 3 {
 		t.Fatalf("BNB Chain dRPC settings = %+v", bnb)
 	}
 	if len(bnb.Urls) != 1 || bnb.Urls[0] != "wss://bnb-mainnet.g.alchemy.com/v2/my-bnb-key" {
 		t.Fatalf("BNB Chain Urls were altered: %+v", bnb.Urls)
 	}
-	// dRPC Ethereum settings.
+	// dRPC Ethereum free-tier settings.
 	eth := doc.Networks["Ethereum"]
-	if eth.FilterQuerySize != 500 || eth.RpcRequestsPerSecond != 0 || eth.RpcBurst != 0 {
+	if eth.FilterQuerySize != 100 || eth.RpcRequestsPerSecond != 2 || eth.RpcBurst != 3 {
 		t.Fatalf("Ethereum dRPC settings = %+v", eth)
 	}
 	if len(eth.Urls) != 1 || eth.Urls[0] != "wss://eth-mainnet.g.alchemy.com/v2/my-eth-key" {
@@ -140,7 +140,7 @@ func TestSyncTemplatesApplyPerNetworkAndPreserveConfig(t *testing.T) {
 	if doc.Networks["Ethereum"].FilterQuerySize != 10 || doc.Networks["Ethereum"].RpcRequestsPerSecond != 0.5 || doc.Networks["Ethereum"].RpcBurst != 1 {
 		t.Fatalf("Ethereum Alchemy settings = %+v", doc.Networks["Ethereum"])
 	}
-	if doc.Networks["BNB Chain"].FilterQuerySize != 2000 || doc.Networks["BNB Chain"].RpcRequestsPerSecond != 0 || doc.Networks["BNB Chain"].RpcBurst != 0 {
+	if doc.Networks["BNB Chain"].FilterQuerySize != 100 || doc.Networks["BNB Chain"].RpcRequestsPerSecond != 2 || doc.Networks["BNB Chain"].RpcBurst != 3 {
 		t.Fatalf("BNB Chain settings should stay dRPC: %+v", doc.Networks["BNB Chain"])
 	}
 
@@ -273,5 +273,67 @@ func TestConfigRefusesSymlink(t *testing.T) {
 	}
 	if _, err := SaveConfig(link, []byte("{}\n"), time.Now()); err == nil {
 		t.Fatal("SaveConfig should reject symlink")
+	}
+}
+
+func TestRedactConfigJSONMasksUnparseableURLsAndFragments(t *testing.T) {
+	raw := []byte(`{
+    "Networks": {
+        "Ethereum": {
+            "Urls": [
+                "wss://user:secretpass@example.com/v2/live-key%zz",
+                "wss://example.com/v2/key#frag-secret",
+                "not-a-valid-url-with-secret-token",
+                ""
+            ]
+        }
+    }
+}`)
+	redacted, err := RedactConfigJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(redacted)
+	for _, leak := range []string{"secretpass", "live-key", "frag-secret", "secret-token"} {
+		if strings.Contains(text, leak) {
+			t.Errorf("redacted output leaked %q:\n%s", leak, text)
+		}
+	}
+	if !strings.Contains(text, `"***"`) {
+		t.Errorf("expected *** placeholder for unparseable URL:\n%s", text)
+	}
+	again, err := RedactConfigJSON(redacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != text {
+		t.Fatalf("redaction not idempotent:\nfirst:\n%s\nsecond:\n%s", text, string(again))
+	}
+}
+
+func TestDefaultConfigJSONUsesFreeTierDefaultsWithoutDeprecatedNetworks(t *testing.T) {
+	raw, err := DefaultConfigJSON("/root/.orchestrator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Networks map[string]SyncSettings `json:"Networks"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, deprecated := range []string{"BSC", "Supernova"} {
+		if _, ok := doc.Networks[deprecated]; ok {
+			t.Fatalf("DefaultConfigJSON must not include deprecated network %q", deprecated)
+		}
+	}
+	for _, netName := range []string{NetworkBNBChain, NetworkEthereum} {
+		got, ok := doc.Networks[netName]
+		if !ok {
+			t.Fatalf("missing network %q", netName)
+		}
+		if got.FilterQuerySize != 100 || got.RpcRequestsPerSecond != 2 || got.RpcBurst != 3 {
+			t.Fatalf("%s default settings = %+v, want 100/2/3", netName, got)
+		}
 	}
 }

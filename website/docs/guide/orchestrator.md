@@ -23,11 +23,11 @@ sudo nomctl orchestrator hard-reset                    # stop, delete queues/ an
 
 Both `install` and `upgrade` let you select a GitHub account/repository (defaulting to `https://github.com/0x3639/orchestrator`) and list all published releases from that repository, defaulting to the most recent release. You can pass an account name (`HyperCore-Team`), an `owner/repo` slug, or a full GitHub URL via `--repo`.
 
-1. Download the platform release archive (`orchestrator-linux-amd64.zip` or `orchestrator-linux-arm64.zip`) and verify its SHA-256 checksum before stopping anything.
+1. Download the platform release archive (`orchestrator-linux-amd64.zip` or `orchestrator-linux-arm64.zip`) and verify its SHA-256 checksum before stopping anything. If an existing unit is installed, verify that its `ExecStart` path matches the configured install target (`/usr/local/bin/orchestrator` by default) and refuse on a mismatch.
 2. Stop the orchestrator service (when installed).
-3. Save any existing binary as `/usr/local/bin/orchestrator.previous` and atomically install the verified binary to `/usr/local/bin/orchestrator`.
-4. On `install`, create `/root/.orchestrator` (mode `0700`), a starter `config.json` (mode `0600`), and `/etc/systemd/system/orchestrator.service` (running as `root`, enabled with `Restart=always`) if absent. Existing unit files and configuration are preserved.
-5. Start or restart the orchestrator service and verify it is active.
+3. Atomically install the verified binary to `/usr/local/bin/orchestrator` while keeping a staged copy of the prior binary on the same filesystem.
+4. On `install`, create `NOMCTL_ORCHESTRATOR_DIR` (`/root/.orchestrator` by default, mode `0700` when newly created; existing directory permissions are preserved), a starter `config.json` (mode `0600`), and `/etc/systemd/system/orchestrator.service` (running as `root` with `Environment="HOME=<parent>"`, enabled with `Restart=always`) if absent. Because the orchestrator binary always reads `<HOME>/.orchestrator`, generating a new unit requires `NOMCTL_ORCHESTRATOR_DIR` to end in `/.orchestrator`. Existing units (including vendor units) and configuration are preserved.
+5. Start or restart the orchestrator service and verify it is active. Only after startup succeeds is the prior binary promoted to `/usr/local/bin/orchestrator.previous`; if startup fails, the prior binary is restored and the previous service is restarted if it was running.
 
 Non-interactive automation requires `--yes`:
 
@@ -51,8 +51,8 @@ Orchestrator sync data lives in `events/` and `queues/` under `NOMCTL_ORCHESTRAT
 
 | Provider | Network | `FilterQuerySize` | `RpcRequestsPerSecond` | `RpcBurst` |
 |---|---|---:|---:|---:|
-| dRPC (`drpc.org`) | `BNB Chain` | `2000` | `0` | `0` |
-| dRPC (`drpc.org`) | `Ethereum` | `500` | `0` | `0` |
+| dRPC (`drpc.org`) | `BNB Chain` | `100` | `2` | `3` |
+| dRPC (`drpc.org`) | `Ethereum` | `100` | `2` | `3` |
 | Alchemy | `BNB Chain` | `10` | `0.5` | `1` |
 | Alchemy | `Ethereum` | `10` | `0.5` | `1` |
 

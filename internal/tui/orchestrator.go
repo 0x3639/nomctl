@@ -388,7 +388,7 @@ func OrchestratorSyncTemplates(cfg config.Config) error {
 
 	mode, err := Select("APPLY ORCHESTRATOR SYNC TEMPLATES:", []huh.Option[string]{
 		huh.NewOption("Choose provider per network (BNB Chain and Ethereum independently)", "per-network"),
-		huh.NewOption("Apply dRPC (drpc.org) to both BNB Chain (2000/0/0) and Ethereum (500/0/0)", "both-drpc"),
+		huh.NewOption("Apply dRPC (drpc.org) free tier to both BNB Chain and Ethereum (100/2/3)", "both-drpc"),
 		huh.NewOption("Apply Alchemy to both BNB Chain (10/0.5/1) and Ethereum (10/0.5/1)", "both-alchemy"),
 		huh.NewOption("Back", "back"),
 	})
@@ -407,7 +407,7 @@ func OrchestratorSyncTemplates(cfg config.Config) error {
 		assignments[orchestrator.NetworkEthereum] = orchestrator.ProviderAlchemy
 	case "per-network":
 		bnbProv, err := Select("BNB Chain sync template:", []huh.Option[string]{
-			huh.NewOption("dRPC (drpc.org)  · FilterQuerySize=2000, RpcRequestsPerSecond=0, RpcBurst=0", orchestrator.ProviderDRPC),
+			huh.NewOption("dRPC (drpc.org)  · FilterQuerySize=100,  RpcRequestsPerSecond=2,   RpcBurst=3", orchestrator.ProviderDRPC),
 			huh.NewOption("Alchemy          · FilterQuerySize=10,   RpcRequestsPerSecond=0.5, RpcBurst=1", orchestrator.ProviderAlchemy),
 			huh.NewOption("Skip (keep current BNB Chain settings)", "skip"),
 		})
@@ -418,7 +418,7 @@ func OrchestratorSyncTemplates(cfg config.Config) error {
 			assignments[orchestrator.NetworkBNBChain] = bnbProv
 		}
 		ethProv, err := Select("Ethereum sync template:", []huh.Option[string]{
-			huh.NewOption("dRPC (drpc.org)  · FilterQuerySize=500,  RpcRequestsPerSecond=0, RpcBurst=0", orchestrator.ProviderDRPC),
+			huh.NewOption("dRPC (drpc.org)  · FilterQuerySize=100,  RpcRequestsPerSecond=2,   RpcBurst=3", orchestrator.ProviderDRPC),
 			huh.NewOption("Alchemy          · FilterQuerySize=10,   RpcRequestsPerSecond=0.5, RpcBurst=1", orchestrator.ProviderAlchemy),
 			huh.NewOption("Skip (keep current Ethereum settings)", "skip"),
 		})
