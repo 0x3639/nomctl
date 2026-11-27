@@ -4,6 +4,10 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -361,24 +365,59 @@ func checkSyncLayout(dir string) error {
 	if err != nil {
 		return err
 	}
+	return checkSyncLayoutBytes(dir, raw, SyncDirs, false)
+}
+
+func checkSyncLayoutBytes(dir string, raw []byte, dirs []string, strictJSON bool) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &root); err != nil {
-		return nil // allow backup even if config needs repair
+		if strictJSON {
+			return fmt.Errorf("cannot parse orchestrator config.json under %s to verify protected key paths: %w", dir, err)
+		}
+		return nil // allow local backup even if config needs repair
+	}
+	baseDirs := []string{dir}
+	if dRaw, ok := findKeyCI(root, "DataPath"); ok && !isJSONNull(dRaw) {
+		var dataPath string
+		if err := json.Unmarshal(dRaw, &dataPath); err == nil {
+			dataPath = strings.TrimSpace(dataPath)
+			if filepath.IsAbs(dataPath) {
+				cleanData := filepath.Clean(dataPath)
+				if cleanData != dir {
+					baseDirs = append(baseDirs, cleanData)
+				}
+			}
+		}
 	}
 	var protected []string
+	addProtected := func(rawPath string, joinAbsolute bool) {
+		rawPath = strings.TrimSpace(rawPath)
+		if rawPath == "" {
+			return
+		}
+		if filepath.IsAbs(rawPath) {
+			protected = append(protected, rawPath)
+			if joinAbsolute {
+				for _, base := range baseDirs {
+					protected = append(protected, filepath.Join(base, strings.TrimLeft(rawPath, "/")))
+				}
+			}
+			return
+		}
+		for _, base := range baseDirs {
+			protected = append(protected, filepath.Join(base, rawPath))
+		}
+	}
 	if pRaw, ok := findKeyCI(root, "ProducerKeyFileName"); ok && !isJSONNull(pRaw) {
 		var name string
-		if err := json.Unmarshal(pRaw, &name); err == nil && strings.TrimSpace(name) != "" {
-			protected = append(protected, filepath.Join(dir, strings.TrimLeft(name, "/")))
+		if err := json.Unmarshal(pRaw, &name); err == nil {
+			addProtected(name, true)
 		}
 	}
 	if pRaw, ok := findKeyCI(root, "ProducerKeyFilePassphraseFile"); ok && !isJSONNull(pRaw) {
 		var path string
-		if err := json.Unmarshal(pRaw, &path); err == nil && strings.TrimSpace(path) != "" {
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(dir, path)
-			}
-			protected = append(protected, path)
+		if err := json.Unmarshal(pRaw, &path); err == nil {
+			addProtected(path, false)
 		}
 	}
 	if tRaw, ok := findKeyCI(root, "TssConfig"); ok && !isJSONNull(tRaw) {
@@ -386,18 +425,15 @@ func checkSyncLayout(dir string) error {
 		if err := json.Unmarshal(tRaw, &tss); err == nil {
 			if bRaw, ok := findKeyCI(tss, "BaseDir"); ok && !isJSONNull(bRaw) {
 				var base string
-				if err := json.Unmarshal(bRaw, &base); err == nil && strings.TrimSpace(base) != "" {
-					if !filepath.IsAbs(base) {
-						base = filepath.Join(dir, base)
-					}
-					protected = append(protected, base)
+				if err := json.Unmarshal(bRaw, &base); err == nil {
+					addProtected(base, false)
 				}
 			}
 		}
 	}
 	for _, p := range protected {
 		cleanP := filepath.Clean(p)
-		for _, sd := range SyncDirs {
+		for _, sd := range dirs {
 			rootDir := filepath.Join(dir, sd)
 			if cleanP == rootDir || strings.HasPrefix(cleanP, rootDir+string(filepath.Separator)) {
 				return fmt.Errorf("key or TSS path %s overlaps sync directory %s; refusing to copy sync data", cleanP, rootDir)
@@ -414,10 +450,20 @@ var (
 	reUnsafeHost  = regexp.MustCompile(`[\s'"` + "`" + `;&|$<>\\]`)
 
 	// Injectable hooks for tests.
-	sshRun     = defaultSSHRun
-	rsyncRun   = defaultRsyncRun
-	toolExists = execx.Exists
+	sshRun                       = defaultSSHRun
+	rsyncRun                     = defaultRsyncRun
+	toolExists                   = execx.Exists
+	copyNonce                    = defaultCopyNonce
+	remoteCutoverLockWaitSeconds = 120
 )
+
+func defaultCopyNonce() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
 
 // SyncCopyOptions configures CopySyncData.
 type SyncCopyOptions struct {
@@ -528,14 +574,28 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 		nowFn = time.Now
 	}
 	stamp := nowFn().UTC().Format("20060102-150405")
+	nonce, err := copyNonce()
+	if err != nil {
+		return res, fmt.Errorf("generate sync copy token: %w", err)
+	}
+	token := stamp + "-" + nonce
 
-	// Inspect the remote host BEFORE stopping the local orchestrator.
+	// Inspect the remote host and validate destination layout BEFORE stopping
+	// the local orchestrator.
 	slog.Info("Checking remote host " + opts.Host + "…")
 	probeOut, err := sshRun(ctx, opts, remotePreflightScript(opts))
 	if err != nil {
 		return res, fmt.Errorf("remote preflight on %s failed (ensure SSH key auth and known_hosts are configured): %w", opts.Host, err)
 	}
-	remoteUnitFound := parseRemoteProbe(probeOut)
+	probe, err := parseRemoteProbe(probeOut)
+	if err != nil {
+		return res, fmt.Errorf("remote preflight on %s returned incomplete state: %w", opts.Host, err)
+	}
+	if probe.configPresent {
+		if err := checkSyncLayoutBytes(opts.RemoteDir, probe.configRaw, present, true); err != nil {
+			return res, fmt.Errorf("remote destination %s:%s failed layout check: %w", opts.Host, opts.RemoteDir, err)
+		}
+	}
 
 	localState, err := serviceStatus(cfg.OrchestratorService)
 	if err != nil {
@@ -563,8 +623,8 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 		return nil
 	}
 
-	remoteStage := filepath.Join(opts.RemoteDir, ".sync-copy-stage-"+stamp)
-	remoteBackup := filepath.Join(opts.RemoteDir, "sync-backup-before-copy-"+stamp)
+	remoteStage := filepath.Join(opts.RemoteDir, ".sync-copy-stage-"+token)
+	remoteBackup := filepath.Join(opts.RemoteDir, "sync-backup-before-copy-"+token)
 
 	if _, err := sshRun(ctx, opts, remoteStageCreateScript(opts, remoteStage)); err != nil {
 		return res, errors.Join(fmt.Errorf("prepare remote staging directory: %w", err), restartLocal())
@@ -581,11 +641,11 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 	}
 
 	slog.Info("Installing staged sync data on " + opts.Host + " (keeping safety backup at " + remoteBackup + ")…")
-	cutoverOut, err := sshRun(ctx, opts, remoteCutoverScript(opts, remoteStage, remoteBackup, present, remoteUnitFound))
+	cutoverOut, err := sshRun(ctx, opts, remoteCutoverScript(opts, remoteStage, remoteBackup, present, probe.configSHA256))
 	if err != nil {
 		return res, errors.Join(fmt.Errorf("remote cutover on %s failed: %w", opts.Host, err), restartLocal())
 	}
-	remoteRestarted, err := parseRemoteCutoverRestarted(cutoverOut)
+	remoteUnitFound, remoteRestarted, err := parseRemoteCutoverResult(cutoverOut)
 	if err != nil {
 		return res, errors.Join(fmt.Errorf("remote cutover on %s did not confirm completion: %w", opts.Host, err), restartLocal())
 	}
@@ -655,46 +715,136 @@ func (o SyncCopyOptions) wrapRemote(script string) string {
 func remotePreflightScript(o SyncCopyOptions) string {
 	dirQ := sshQuote(o.RemoteDir)
 	svcQ := sshQuote(o.RemoteService)
+	cfgQ := sshQuote(ConfigPath(o.RemoteDir))
 	return fmt.Sprintf(`command -v rsync >/dev/null 2>&1 || { echo "rsync not found on remote host" >&2; exit 1; }
 if [ -L %[1]s ]; then echo "remote orchestrator dir is a symlink" >&2; exit 1; fi
 if [ -e %[1]s ] && [ ! -d %[1]s ]; then echo "remote orchestrator path is not a directory" >&2; exit 1; fi
+if [ -L %[3]s ]; then echo "remote orchestrator config is a symlink" >&2; exit 1; fi
+if [ -e %[3]s ]; then
+  if [ ! -f %[3]s ]; then echo "remote orchestrator config is not a regular file" >&2; exit 1; fi
+  cfg_size=$(wc -c < %[3]s | tr -d '[:space:]')
+  if [ "$cfg_size" -gt %[4]d ]; then echo "remote orchestrator config exceeds maximum size" >&2; exit 1; fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    cfg_sha=$(sha256sum %[3]s | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    cfg_sha=$(shasum -a 256 %[3]s | awk '{print $1}')
+  else
+    echo "sha256sum or shasum is required on remote host" >&2
+    exit 1
+  fi
+  echo "CONFIG_PRESENT=1"
+  echo "CONFIG_SHA256=$cfg_sha"
+  echo "CONFIG_B64_BEGIN"
+  base64 < %[3]s | tr -d '\r\n'
+  echo ""
+  echo "CONFIG_B64_END"
+else
+  echo "CONFIG_PRESENT=0"
+fi
 if command -v systemctl >/dev/null 2>&1; then
-  load=$(systemctl show -p LoadState --value %[2]s 2>/dev/null || echo not-found)
-  active=$(systemctl show -p ActiveState --value %[2]s 2>/dev/null || echo inactive)
+  load=$(systemctl show -p LoadState --value %[2]s)
+  active=$(systemctl show -p ActiveState --value %[2]s)
+  if [ -z "$load" ] || [ -z "$active" ]; then
+    echo "cannot determine state of remote service %[2]s" >&2
+    exit 1
+  fi
   echo "LOAD=$load"
   echo "ACTIVE=$active"
 else
   echo "LOAD=not-found"
   echo "ACTIVE=inactive"
-fi`, dirQ, svcQ)
+fi`, dirQ, svcQ, cfgQ, MaxConfigBytes)
 }
 
-func parseRemoteProbe(out string) (unitFound bool) {
-	var load string
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if v, ok := strings.CutPrefix(line, "LOAD="); ok {
-			load = v
+type remoteProbe struct {
+	configPresent bool
+	configSHA256  string
+	configRaw     []byte
+}
+
+func parseRemoteProbe(out string) (remoteProbe, error) {
+	var p remoteProbe
+	seenPresent := false
+	inB64 := false
+	seenB64End := false
+	var b64Buf strings.Builder
+
+	for _, rawLine := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if inB64 {
+			if line == "CONFIG_B64_END" {
+				inB64 = false
+				seenB64End = true
+				continue
+			}
+			b64Buf.WriteString(line)
+			continue
+		}
+		switch {
+		case line == "CONFIG_PRESENT=0":
+			seenPresent = true
+			p.configPresent = false
+		case line == "CONFIG_PRESENT=1":
+			seenPresent = true
+			p.configPresent = true
+		case strings.HasPrefix(line, "CONFIG_SHA256="):
+			p.configSHA256 = strings.ToLower(strings.TrimPrefix(line, "CONFIG_SHA256="))
+		case line == "CONFIG_B64_BEGIN":
+			inB64 = true
 		}
 	}
-	return load != "" && load != "not-found"
+	if !seenPresent {
+		return p, errors.New("missing CONFIG_PRESENT status from remote preflight")
+	}
+	if !p.configPresent {
+		p.configSHA256 = ""
+		return p, nil
+	}
+	if len(p.configSHA256) != 64 || !seenB64End {
+		return p, errors.New("incomplete remote config.json payload from preflight")
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64Buf.String())
+	if err != nil {
+		return p, fmt.Errorf("decode remote config.json: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	if hex.EncodeToString(sum[:]) != p.configSHA256 {
+		return p, errors.New("remote config.json checksum mismatch during preflight")
+	}
+	p.configRaw = raw
+	return p, nil
 }
 
-func parseRemoteCutoverRestarted(out string) (bool, error) {
+func parseRemoteCutoverResult(out string) (unitFound, restarted bool, err error) {
+	seenUnit := false
+	seenRestarted := false
 	for _, line := range strings.Split(out, "\n") {
 		switch strings.TrimSpace(line) {
+		case "REMOTE_UNIT_FOUND=1":
+			unitFound = true
+			seenUnit = true
+		case "REMOTE_UNIT_FOUND=0":
+			unitFound = false
+			seenUnit = true
 		case "REMOTE_RESTARTED=1":
-			return true, nil
+			restarted = true
+			seenRestarted = true
 		case "REMOTE_RESTARTED=0":
-			return false, nil
+			restarted = false
+			seenRestarted = true
 		}
 	}
-	return false, errors.New("missing REMOTE_RESTARTED status line from remote cutover")
+	if !seenUnit || !seenRestarted {
+		return false, false, errors.New("missing REMOTE_UNIT_FOUND/REMOTE_RESTARTED status line from remote cutover")
+	}
+	return unitFound, restarted, nil
 }
 
 func remoteStageCreateScript(o SyncCopyOptions, stageDir string) string {
-	return fmt.Sprintf(`mkdir -p -m 0700 %[1]s
-rm -rf %[2]s
+	return fmt.Sprintf(`umask 077
+if [ -L %[1]s ]; then echo "remote orchestrator dir is a symlink" >&2; exit 1; fi
+if [ -e %[1]s ] && [ ! -d %[1]s ]; then echo "remote orchestrator path is not a directory" >&2; exit 1; fi
+mkdir -p -m 0700 %[1]s
 mkdir -m 0700 %[2]s`, sshQuote(o.RemoteDir), sshQuote(stageDir))
 }
 
@@ -702,86 +852,179 @@ func remoteCleanupScript(stageDir string) string {
 	return fmt.Sprintf(`rm -rf %s`, sshQuote(stageDir))
 }
 
-func remoteCutoverScript(o SyncCopyOptions, stageDir, backupDir string, dirs []string, unitFound bool) string {
+func remoteCutoverScript(o SyncCopyOptions, stageDir, backupDir string, dirs []string, expectedConfigSHA string) string {
 	dirQ := sshQuote(o.RemoteDir)
 	stageQ := sshQuote(stageDir)
 	backupQ := sshQuote(backupDir)
 	svcQ := sshQuote(o.RemoteService)
+	cfgQ := sshQuote(ConfigPath(o.RemoteDir))
+	lockFileQ := sshQuote(filepath.Join(o.RemoteDir, ".nomctl-sync-cutover.lock"))
+	lockDirQ := sshQuote(filepath.Join(o.RemoteDir, ".nomctl-sync-cutover.lockdir"))
+	dirsList := strings.Join(dirs, " ")
 
 	var b strings.Builder
 	// Install cleanup/recovery traps before touching any remote state.
 	// Signal traps call exit with 128+sig so EXIT runs with a non-zero rc under dash.
-	fmt.Fprintf(&b, `restart_remote=0
+	fmt.Fprintf(&b, `umask 077
+unit_found=0
+restart_remote=0
 need_restart=0
 swapped=0
+start_attempted=0
 backup_created=0
 installed_dirs=""
+lock_dir_held=0
+
+stop_remote_unit() {
+  systemctl stop %[5]s || return 1
+  state=$(systemctl show -p ActiveState --value %[5]s) || return 1
+  case "$state" in
+    inactive|failed) return 0 ;;
+    *)
+      echo "remote service %[5]s did not stop (state: $state)" >&2
+      return 1
+      ;;
+  esac
+}
+
 rollback() {
-  for d in $installed_dirs; do
-    if [ -e %[2]s/"$d" ]; then
-      rm -rf %[1]s/"$d"
-      mv %[2]s/"$d" %[1]s/"$d"
-    else
-      rm -rf %[1]s/"$d"
-    fi
-  done
+  rb_ok=1
   for d in %[3]s; do
     if [ -e %[2]s/"$d" ]; then
-      rm -rf %[1]s/"$d"
-      mv %[2]s/"$d" %[1]s/"$d"
+      if ! rm -rf %[1]s/"$d"; then
+        echo "rollback failed: could not remove %[1]s/$d (backup preserved at %[2]s)" >&2
+        rb_ok=0
+        continue
+      fi
+      if ! mv %[2]s/"$d" %[1]s/"$d"; then
+        echo "rollback failed: could not restore %[2]s/$d to %[1]s/$d (backup preserved at %[2]s)" >&2
+        rb_ok=0
+      fi
+    else
+      case " $installed_dirs " in
+        *" $d "*)
+          if ! rm -rf %[1]s/"$d"; then
+            echo "rollback failed: could not remove newly installed %[1]s/$d" >&2
+            rb_ok=0
+          fi
+          ;;
+      esac
     fi
   done
-  rm -rf %[4]s
-  if [ "$backup_created" -eq 1 ]; then
-    rmdir %[2]s 2>/dev/null || true
+  if [ "$rb_ok" -eq 1 ]; then
+    rm -rf %[4]s || true
+    if [ "$backup_created" -eq 1 ]; then
+      rmdir %[2]s 2>/dev/null || true
+    fi
+    return 0
   fi
+  echo "rollback incomplete; previous sync data preserved at %[2]s (stage at %[4]s)" >&2
+  return 1
 }
-`, dirQ, backupQ, strings.Join(dirs, " "), stageQ)
 
-	if unitFound {
-		fmt.Fprintf(&b, `on_exit() {
+on_exit() {
   rc=$?
   trap - EXIT HUP INT TERM
+  allow_restart=1
   if [ "$swapped" -eq 1 ]; then
-    rollback || true
+    if [ "$start_attempted" -eq 1 ] && [ "$unit_found" -eq 1 ]; then
+      if ! stop_remote_unit; then
+        echo "rollback aborted: remote service %[5]s could not be confirmed stopped after startup failure; previous sync data preserved at %[2]s" >&2
+        allow_restart=0
+      elif ! rollback; then
+        allow_restart=0
+      fi
+    else
+      if ! rollback; then
+        allow_restart=0
+      fi
+    fi
   elif [ "$rc" -ne 0 ]; then
-    rm -rf %[1]s || true
+    rm -rf %[4]s || true
     if [ "$backup_created" -eq 1 ]; then
       rmdir %[2]s 2>/dev/null || true
     fi
   fi
-  if [ "$need_restart" -eq 1 ]; then
-    systemctl start %[3]s >/dev/null 2>&1 || true
-  fi
-  exit "$rc"
-}
-`, stageQ, backupQ, svcQ)
-	} else {
-		fmt.Fprintf(&b, `on_exit() {
-  rc=$?
-  trap - EXIT HUP INT TERM
-  if [ "$swapped" -eq 1 ]; then
-    rollback || true
-  elif [ "$rc" -ne 0 ]; then
-    rm -rf %[1]s || true
-    if [ "$backup_created" -eq 1 ]; then
-      rmdir %[2]s 2>/dev/null || true
+  if [ "$allow_restart" -eq 1 ] && [ "$unit_found" -eq 1 ] && [ "$need_restart" -eq 1 ]; then
+    if ! systemctl start %[5]s; then
+      echo "failed to restart remote service %[5]s during recovery" >&2
     fi
   fi
+  if [ "$lock_dir_held" -eq 1 ]; then
+    rmdir %[6]s 2>/dev/null || true
+  fi
   exit "$rc"
 }
-`, stageQ, backupQ)
-	}
 
-	b.WriteString(`trap on_exit EXIT
+trap on_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-`)
+`, dirQ, backupQ, dirsList, stageQ, svcQ, lockDirQ)
 
-	// Prepare directories and reject symlink targets BEFORE stopping a running service.
-	fmt.Fprintf(&b, `mkdir -p -m 0700 %[1]s
-mkdir -m 0700 %[2]s
+	// Serialize cutover per destination before validating config, stopping service, or swapping dirs.
+	fmt.Fprintf(&b, `if [ -L %[1]s ]; then
+  echo "remote orchestrator dir is a symlink" >&2
+  exit 1
+fi
+if [ -e %[1]s ] && [ ! -d %[1]s ]; then
+  echo "remote orchestrator path is not a directory" >&2
+  exit 1
+fi
+mkdir -p -m 0700 %[1]s
+if command -v flock >/dev/null 2>&1; then
+  if [ -L %[2]s ]; then
+    echo "remote cutover lock %[2]s is a symlink" >&2
+    exit 1
+  fi
+  exec 9>>%[2]s
+  if ! flock -w %[4]d 9; then
+    echo "timed out waiting for remote cutover lock %[2]s" >&2
+    exit 1
+  fi
+else
+  lock_waited=0
+  while ! mkdir %[3]s 2>/dev/null; do
+    if [ "$lock_waited" -ge %[4]d ]; then
+      echo "timed out waiting for remote cutover lock %[3]s" >&2
+      exit 1
+    fi
+    sleep 1
+    lock_waited=$((lock_waited + 1))
+  done
+  lock_dir_held=1
+fi
+`, dirQ, lockFileQ, lockDirQ, remoteCutoverLockWaitSeconds)
+
+	// Ensure destination config.json matches the layout validated before cutover.
+	if expectedConfigSHA == "" {
+		fmt.Fprintf(&b, `if [ -L %[1]s ] || [ -e %[1]s ]; then
+  echo "remote orchestrator config appeared during sync copy; retry" >&2
+  exit 1
+fi
+`, cfgQ)
+	} else {
+		fmt.Fprintf(&b, `if [ -L %[1]s ] || [ ! -f %[1]s ]; then
+  echo "remote orchestrator config changed during sync copy; retry" >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  cur_cfg_sha=$(sha256sum %[1]s | awk '{print $1}' | tr 'A-F' 'a-f')
+elif command -v shasum >/dev/null 2>&1; then
+  cur_cfg_sha=$(shasum -a 256 %[1]s | awk '{print $1}' | tr 'A-F' 'a-f')
+else
+  echo "sha256sum or shasum is required on remote host" >&2
+  exit 1
+fi
+if [ "$cur_cfg_sha" != %[2]s ]; then
+  echo "remote orchestrator config changed during sync copy; retry" >&2
+  exit 1
+fi
+`, cfgQ, sshQuote(expectedConfigSHA))
+	}
+
+	// Prepare backup dir and reject symlink targets BEFORE stopping a running service.
+	fmt.Fprintf(&b, `mkdir -m 0700 %[2]s
 backup_created=1
 for d in %[3]s; do
   if [ -L %[1]s/"$d" ]; then
@@ -789,25 +1032,38 @@ for d in %[3]s; do
     exit 1
   fi
 done
-`, dirQ, backupQ, strings.Join(dirs, " "))
+`, dirQ, backupQ, dirsList)
 
-	if unitFound {
-		fmt.Fprintf(&b, `active_before=$(systemctl show -p ActiveState --value %[1]s 2>/dev/null || echo inactive)
-case "$active_before" in
-  active|activating|reloading|refreshing)
-    restart_remote=1
-    need_restart=1
-    ;;
-esac
-systemctl stop %[1]s
-state=$(systemctl show -p ActiveState --value %[1]s)
-case "$state" in
-  inactive|failed) ;;
-  *) echo "remote service %[1]s did not stop (state: $state)" >&2; exit 1 ;;
-esac
+	// Check live remote unit existence and active state at cutover time; fail closed on query errors.
+	fmt.Fprintf(&b, `if command -v systemctl >/dev/null 2>&1; then
+  load_state=$(systemctl show -p LoadState --value %[1]s)
+  active_before=$(systemctl show -p ActiveState --value %[1]s)
+  if [ -z "$load_state" ] || [ -z "$active_before" ]; then
+    echo "cannot determine state of remote service %[1]s" >&2
+    exit 1
+  fi
+  if [ "$load_state" != "not-found" ] || [ "$active_before" != "inactive" ]; then
+    unit_found=1
+  fi
+fi
+if [ "$unit_found" -eq 1 ]; then
+  case "$active_before" in
+    active|activating|reloading|refreshing)
+      restart_remote=1
+      need_restart=1
+      ;;
+    inactive|failed|deactivating|maintenance)
+      ;;
+    *)
+      echo "unexpected ActiveState for remote service %[1]s: $active_before" >&2
+      exit 1
+      ;;
+  esac
+  stop_remote_unit
+fi
 `, svcQ)
-	}
 
+	// Swap staged sync directories into place; record each directory before moving so signal rollback covers it.
 	fmt.Fprintf(&b, `swapped=1
 for d in %[3]s; do
   if [ -L %[1]s/"$d" ]; then
@@ -817,21 +1073,36 @@ for d in %[3]s; do
   if [ -e %[1]s/"$d" ]; then
     mv %[1]s/"$d" %[2]s/"$d"
   fi
-  mv %[4]s/"$d" %[1]s/"$d"
   installed_dirs="$installed_dirs $d"
+  mv %[4]s/"$d" %[1]s/"$d"
 done
-rm -rf %[4]s
-swapped=0
-`, dirQ, backupQ, strings.Join(dirs, " "), stageQ)
+`, dirQ, backupQ, dirsList, stageQ)
 
-	if unitFound {
-		fmt.Fprintf(&b, `if [ "$restart_remote" -eq 1 ]; then
+	// Keep rollback armed until remote startup succeeds (or commit immediately if unit stays stopped).
+	fmt.Fprintf(&b, `if [ "$unit_found" -eq 1 ] && [ "$restart_remote" -eq 1 ]; then
+  start_attempted=1
   systemctl start %[1]s
+  post_state=$(systemctl show -p ActiveState --value %[1]s)
+  case "$post_state" in
+    active) ;;
+    *)
+      echo "remote service %[1]s is $post_state after restart" >&2
+      exit 1
+      ;;
+  esac
   need_restart=0
+  swapped=0
+  backup_created=0
+  rm -rf %[2]s || true
+else
+  swapped=0
+  backup_created=0
+  rm -rf %[2]s || true
 fi
-`, svcQ)
-	}
-	b.WriteString("echo \"REMOTE_RESTARTED=$restart_remote\"\n")
+echo "REMOTE_UNIT_FOUND=$unit_found"
+echo "REMOTE_RESTARTED=$restart_remote"
+`, svcQ, stageQ)
+
 	return b.String()
 }
 

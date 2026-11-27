@@ -592,12 +592,17 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	defer func() { _ = os.Remove(staged) }()
 
 	var previousStaged string
+	keepPreviousStaged := false
 	if hasExistingBin {
 		previousStaged, err = stageCopy(binPath, binPath)
 		if err != nil {
 			return res, err
 		}
-		defer func() { _ = os.Remove(previousStaged) }()
+		defer func() {
+			if !keepPreviousStaged && previousStaged != "" {
+				_ = os.Remove(previousStaged)
+			}
+		}()
 	}
 	if err := ctx.Err(); err != nil {
 		return res, err
@@ -639,14 +644,35 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	configCreated := false
 	rollbackBinary := func(cause error, stopFirst bool) error {
 		if stopFirst && (installed || unitCreated) {
-			_ = stopService(cfg.OrchestratorService)
+			if stopErr := stopService(cfg.OrchestratorService); stopErr != nil {
+				if previousStaged != "" {
+					keepPreviousStaged = true
+					return errors.Join(cause, fmt.Errorf("stop %s during rollback (candidate binary may still be running; previous binary retained at %s): %w", cfg.OrchestratorService, previousStaged, stopErr))
+				}
+				return errors.Join(cause, fmt.Errorf("stop %s during rollback (candidate binary may still be running): %w", cfg.OrchestratorService, stopErr))
+			}
+			// Confirm the unit reached a stopped state before replacing the binary.
+			st, stErr := serviceStatus(cfg.OrchestratorService)
+			if stErr != nil || !st.Stopped() {
+				var stateErr error
+				if stErr != nil {
+					stateErr = fmt.Errorf("confirm %s stopped during rollback: %w", cfg.OrchestratorService, stErr)
+				} else {
+					stateErr = fmt.Errorf("%s is still %s during rollback; refusing to replace running candidate binary", cfg.OrchestratorService, st)
+				}
+				if previousStaged != "" {
+					keepPreviousStaged = true
+					stateErr = fmt.Errorf("%w (previous binary retained at %s)", stateErr, previousStaged)
+				}
+				return errors.Join(cause, stateErr)
+			}
 		}
 		if previousStaged != "" {
 			if restoreErr := os.Rename(previousStaged, binPath); restoreErr != nil {
-				cause = errors.Join(cause, fmt.Errorf("restore previous orchestrator binary at %s: %w", binPath, restoreErr))
-			} else {
-				previousStaged = ""
+				keepPreviousStaged = true
+				return errors.Join(cause, fmt.Errorf("restore previous orchestrator binary at %s (retained at %s): %w", binPath, previousStaged, restoreErr))
 			}
+			previousStaged = ""
 		}
 		return recoverService(cause)
 	}
@@ -681,8 +707,10 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	if previousStaged != "" {
 		previousPath = binPath + ".previous"
 		if err := os.Rename(previousStaged, previousPath); err != nil {
-			return res, fmt.Errorf("orchestrator %s is running, but saving previous binary to %s failed: %w", release.Tag, previousPath, err)
+			keepPreviousStaged = true
+			return res, fmt.Errorf("orchestrator %s is running, but saving previous binary to %s failed (previous binary retained at %s): %w", release.Tag, previousPath, previousStaged, err)
 		}
+		previousStaged = ""
 	}
 
 	res = DeployResult{

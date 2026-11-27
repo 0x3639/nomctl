@@ -4,12 +4,17 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,10 +170,10 @@ func TestCopySyncDataSequenceAndFailureRecovery(t *testing.T) {
 	sshRun = func(_ context.Context, _ SyncCopyOptions, script string) (string, error) {
 		sshScripts = append(sshScripts, script)
 		if len(sshScripts) == 1 {
-			return "LOAD=loaded\nACTIVE=active\n", nil
+			return "CONFIG_PRESENT=0\nLOAD=loaded\nACTIVE=active\n", nil
 		}
 		if strings.Contains(script, "REMOTE_RESTARTED=") {
-			return "REMOTE_RESTARTED=1\n", nil
+			return "REMOTE_UNIT_FOUND=1\nREMOTE_RESTARTED=1\n", nil
 		}
 		return "", nil
 	}
@@ -180,10 +185,11 @@ func TestCopySyncDataSequenceAndFailureRecovery(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.OrchestratorDir = dir
+	fixedNow := func() time.Time { return time.Date(2026, 11, 26, 20, 30, 0, 0, time.UTC) }
 	res, err := CopySyncData(context.Background(), cfg, SyncCopyOptions{
 		Host: "root@target.example",
 		Port: 2222,
-		Now:  func() time.Time { return time.Date(2026, 11, 26, 20, 30, 0, 0, time.UTC) },
+		Now:  fixedNow,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -198,34 +204,64 @@ func TestCopySyncDataSequenceAndFailureRecovery(t *testing.T) {
 	if len(syncedSources) != 2 || filepath.Base(syncedSources[0]) != "events" || filepath.Base(syncedSources[1]) != "queues" {
 		t.Fatalf("rsync sources leaked extra files: %v", syncedSources)
 	}
-	if !strings.Contains(syncedStage, ".sync-copy-stage-20261126-203000") {
+	if !strings.Contains(syncedStage, ".sync-copy-stage-20261126-203000-") {
 		t.Fatalf("unexpected remote stage: %q", syncedStage)
 	}
-	// Cutover script must create backup dir BEFORE stop, sample live ActiveState,
-	// install an EXIT/HUP/INT/TERM recovery trap, swap, and restart remote.
+	// Stage creation must not rm -rf any existing directory.
+	if strings.Contains(sshScripts[1], "rm -rf") {
+		t.Fatalf("stage create script must not rm -rf existing stage:\n%s", sshScripts[1])
+	}
+	// Cutover script must acquire destination lock, create backup dir BEFORE stop,
+	// inspect live unit existence/ActiveState, record installed_dirs before mv,
+	// keep rollback armed across start, and emit REMOTE_UNIT_FOUND + REMOTE_RESTARTED.
 	cutover := sshScripts[len(sshScripts)-1]
 	for _, want := range []string{
-		"mkdir -m 0700 " + sshQuote(filepath.Join(dir, "sync-backup-before-copy-20261126-203000")),
+		".nomctl-sync-cutover.lock",
+		"mkdir -m 0700 " + sshQuote(res.RemoteBackup),
 		"trap on_exit EXIT",
 		"trap 'exit 143' TERM",
-		"active_before=$(systemctl show -p ActiveState --value 'orchestrator'",
-		"systemctl stop 'orchestrator'",
+		"load_state=$(systemctl show -p LoadState --value 'orchestrator')",
+		"active_before=$(systemctl show -p ActiveState --value 'orchestrator')",
+		"stop_remote_unit",
 		"rollback()",
 		"systemctl start 'orchestrator'",
+		"REMOTE_UNIT_FOUND=$unit_found",
 		"REMOTE_RESTARTED=$restart_remote",
 	} {
 		if !strings.Contains(cutover, want) {
 			t.Errorf("cutover script missing %q:\n%s", want, cutover)
 		}
 	}
-	if strings.Index(cutover, "mkdir -m 0700") > strings.Index(cutover, "systemctl stop") {
-		t.Fatalf("backup mkdir must precede systemctl stop:\n%s", cutover)
+	if strings.Contains(cutover, "|| echo inactive") {
+		t.Fatalf("cutover script must not swallow ActiveState errors:\n%s", cutover)
+	}
+	if strings.Index(cutover, "mkdir -m 0700") > strings.Index(cutover, "stop_remote_unit\nfi") {
+		t.Fatalf("backup mkdir must precede stop_remote_unit:\n%s", cutover)
+	}
+	if strings.Index(cutover, `installed_dirs="$installed_dirs $d"`) > strings.Index(cutover, `mv `+sshQuote(syncedStage)+`/"$d"`) {
+		t.Fatalf("installed_dirs must be recorded before stage-to-live mv:\n%s", cutover)
 	}
 	if out, err := exec.Command("sh", "-n", "-c", cutover).CombinedOutput(); err != nil {
 		t.Fatalf("cutover script failed sh -n syntax check: %v\n%s", err, string(out))
 	}
 	if strings.Join(*calls, ",") != "stop orchestrator,start orchestrator" {
 		t.Fatalf("local calls = %v", *calls)
+	}
+
+	// Second copy at the exact same UTC second must get a distinct stage and backup dir.
+	firstStage := syncedStage
+	firstBackup := res.RemoteBackup
+	sshScripts = nil
+	resSameSecond, err := CopySyncData(context.Background(), cfg, SyncCopyOptions{
+		Host: "root@target.example",
+		Port: 2222,
+		Now:  fixedNow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if syncedStage == firstStage || resSameSecond.RemoteBackup == firstBackup {
+		t.Fatalf("same-second copies collided: stage %q vs %q, backup %q vs %q", syncedStage, firstStage, resSameSecond.RemoteBackup, firstBackup)
 	}
 
 	// If the remote service stopped between preflight and cutover, RemoteRestarted
@@ -235,10 +271,10 @@ func TestCopySyncDataSequenceAndFailureRecovery(t *testing.T) {
 	sshRun = func(_ context.Context, _ SyncCopyOptions, script string) (string, error) {
 		sshScripts = append(sshScripts, script)
 		if len(sshScripts) == 1 {
-			return "LOAD=loaded\nACTIVE=active\n", nil
+			return "CONFIG_PRESENT=0\nLOAD=loaded\nACTIVE=active\n", nil
 		}
 		if strings.Contains(script, "REMOTE_RESTARTED=") {
-			return "REMOTE_RESTARTED=0\n", nil
+			return "REMOTE_UNIT_FOUND=1\nREMOTE_RESTARTED=0\n", nil
 		}
 		return "", nil
 	}
@@ -249,17 +285,41 @@ func TestCopySyncDataSequenceAndFailureRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resStopped.RemoteRestarted {
-		t.Fatalf("expected RemoteRestarted=false when cutover observed inactive remote unit: %+v", resStopped)
+	if !resStopped.RemoteUnitFound || resStopped.RemoteRestarted {
+		t.Fatalf("expected RemoteUnitFound=true RemoteRestarted=false when cutover observed inactive remote unit: %+v", resStopped)
 	}
 
-	// Missing REMOTE_RESTARTED status line must fail rather than report success.
+	// If unit was installed between preflight and cutover, result reflects cutover's REMOTE_UNIT_FOUND=1.
 	*calls = nil
 	sshScripts = nil
 	sshRun = func(_ context.Context, _ SyncCopyOptions, script string) (string, error) {
 		sshScripts = append(sshScripts, script)
 		if len(sshScripts) == 1 {
-			return "LOAD=loaded\nACTIVE=active\n", nil
+			return "CONFIG_PRESENT=0\nLOAD=not-found\nACTIVE=inactive\n", nil
+		}
+		if strings.Contains(script, "REMOTE_RESTARTED=") {
+			return "REMOTE_UNIT_FOUND=1\nREMOTE_RESTARTED=1\n", nil
+		}
+		return "", nil
+	}
+	resInstalledLate, err := CopySyncData(context.Background(), cfg, SyncCopyOptions{
+		Host: "root@target.example",
+		Now:  func() time.Time { return time.Date(2026, 11, 26, 20, 31, 30, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resInstalledLate.RemoteUnitFound || !resInstalledLate.RemoteRestarted {
+		t.Fatalf("expected RemoteUnitFound=true RemoteRestarted=true from cutover output: %+v", resInstalledLate)
+	}
+
+	// Missing REMOTE_RESTARTED/REMOTE_UNIT_FOUND status line must fail rather than report success.
+	*calls = nil
+	sshScripts = nil
+	sshRun = func(_ context.Context, _ SyncCopyOptions, script string) (string, error) {
+		sshScripts = append(sshScripts, script)
+		if len(sshScripts) == 1 {
+			return "CONFIG_PRESENT=0\nLOAD=loaded\nACTIVE=active\n", nil
 		}
 		return "", nil
 	}
@@ -292,6 +352,100 @@ func TestCopySyncDataSequenceAndFailureRecovery(t *testing.T) {
 	}
 }
 
+func TestCopySyncDataValidatesDestinationLayoutBeforeStoppingLocal(t *testing.T) {
+	probePayload := func(cfgJSON string) string {
+		sum := sha256.Sum256([]byte(cfgJSON))
+		return fmt.Sprintf("CONFIG_PRESENT=1\nCONFIG_SHA256=%s\nCONFIG_B64_BEGIN\n%s\nCONFIG_B64_END\nLOAD=loaded\nACTIVE=active\n",
+			hex.EncodeToString(sum[:]), base64.StdEncoding.EncodeToString([]byte(cfgJSON)))
+	}
+
+	// 1. Destination passphrase file under events/ must be rejected before stopping local service.
+	dir := populateOrchestratorDir(t)
+	calls := stubDeployHost(t, true, service.Active, filepath.Join(t.TempDir(), "orchestrator.service"))
+	oldSSH, oldRsync, oldTool := sshRun, rsyncRun, toolExists
+	t.Cleanup(func() { sshRun, rsyncRun, toolExists = oldSSH, oldRsync, oldTool })
+	toolExists = func(string) bool { return true }
+
+	remoteDir := "/srv/remote/.orchestrator"
+	sshRun = func(_ context.Context, _ SyncCopyOptions, _ string) (string, error) {
+		return probePayload(`{"ProducerKeyFilePassphraseFile":"events/pass.txt"}`), nil
+	}
+	rsyncCalled := false
+	rsyncRun = func(_ context.Context, _ SyncCopyOptions, _ []string, _ string) error {
+		rsyncCalled = true
+		return nil
+	}
+
+	cfg := config.Default()
+	cfg.OrchestratorDir = dir
+	if _, err := CopySyncData(context.Background(), cfg, SyncCopyOptions{
+		Host:      "root@target.example",
+		RemoteDir: remoteDir,
+	}); err == nil || !strings.Contains(err.Error(), "overlaps sync directory") {
+		t.Fatalf("expected destination overlap rejection, got %v", err)
+	}
+	if len(*calls) != 0 || rsyncCalled {
+		t.Fatalf("local service/rsync must not run when destination layout overlaps secrets: calls=%v rsync=%v", *calls, rsyncCalled)
+	}
+
+	// 2. Destination protected path inside queues/ is allowed when source only replaces events/.
+	eventsOnlyDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(eventsOnlyDir, "events"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(eventsOnlyDir, "events", "0001.ldb"), []byte("ev"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.OrchestratorDir = eventsOnlyDir
+	var lastCutover string
+	sshCalls := 0
+	sshRun = func(_ context.Context, _ SyncCopyOptions, script string) (string, error) {
+		sshCalls++
+		if sshCalls == 1 {
+			return probePayload(`{"ProducerKeyFileName":"producer","ProducerKeyFilePassphraseFile":"queues/pass.txt","TssConfig":{"BaseDir":"/srv/remote/.orchestrator/tss"}}`), nil
+		}
+		if strings.Contains(script, "REMOTE_RESTARTED=") {
+			lastCutover = script
+			return "REMOTE_UNIT_FOUND=1\nREMOTE_RESTARTED=1\n", nil
+		}
+		return "", nil
+	}
+	if _, err := CopySyncData(context.Background(), cfg, SyncCopyOptions{
+		Host:      "root@target.example",
+		RemoteDir: remoteDir,
+	}); err != nil {
+		t.Fatalf("copy should allow protected path outside replaced directories, got %v", err)
+	}
+	if !strings.Contains(lastCutover, "remote orchestrator config changed during sync copy") {
+		t.Fatalf("cutover script must verify remote config SHA-256 stayed unchanged:\n%s", lastCutover)
+	}
+
+	// 3. Real POSIX preflight script execution round-trips through parseRemoteProbe + checkSyncLayoutBytes.
+	realRemote := filepath.Join(t.TempDir(), ".orchestrator")
+	if err := os.MkdirAll(realRemote, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	badCfg := `{"ProducerKeyFilePassphraseFile":"` + filepath.Join(realRemote, "events", "pass") + `"}`
+	if err := os.WriteFile(ConfigPath(realRemote), []byte(badCfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preflight := remotePreflightScript(SyncCopyOptions{RemoteDir: realRemote, RemoteService: "orchestrator"})
+	out, err := exec.Command("sh", "-eu", "-c", preflight).CombinedOutput()
+	if err != nil {
+		t.Fatalf("preflight script failed: %v\n%s", err, string(out))
+	}
+	probe, err := parseRemoteProbe(string(out))
+	if err != nil {
+		t.Fatalf("parseRemoteProbe failed: %v\n%s", err, string(out))
+	}
+	if !probe.configPresent {
+		t.Fatalf("expected configPresent=true")
+	}
+	if err := checkSyncLayoutBytes(realRemote, probe.configRaw, []string{"events", "queues"}, true); err == nil {
+		t.Fatal("expected checkSyncLayoutBytes to reject passphrase inside events/")
+	}
+}
+
 func TestSyncCopyOptionsValidation(t *testing.T) {
 	cfg := config.Default()
 	for _, bad := range []SyncCopyOptions{
@@ -309,52 +463,566 @@ func TestSyncCopyOptionsValidation(t *testing.T) {
 	}
 }
 
+func writeExecScript(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runShellWithPath(pathPrefix, script string) ([]byte, error) {
+	cmd := exec.Command("sh", "-eu", "-c", script)
+	if pathPrefix != "" {
+		cmd.Env = append(os.Environ(), "PATH="+pathPrefix+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	return cmd.CombinedOutput()
+}
+
 func TestRemoteCutoverScriptRollbackAndCleanup(t *testing.T) {
-	// 1. Fresh remote: events succeeds, queues is missing in stage -> rollback removes
-	//    installed events/, removes stage, and removes the empty backup dir.
-	remoteDir := filepath.Join(t.TempDir(), ".orchestrator")
-	stageDir := filepath.Join(remoteDir, ".sync-copy-stage-1")
-	backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-1")
-	if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+	realMV, err := exec.LookPath("mv")
+	if err != nil {
 		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(stageDir, "events", "data"), []byte("new"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	script := remoteCutoverScript(SyncCopyOptions{
-		RemoteDir:     remoteDir,
-		RemoteService: "orchestrator",
-	}, stageDir, backupDir, []string{"events", "queues"}, false)
-	if out, err := exec.Command("sh", "-eu", "-c", script).CombinedOutput(); err == nil {
-		t.Fatalf("expected cutover to fail on missing staged queues, output:\n%s", string(out))
-	}
-	for _, gone := range []string{filepath.Join(remoteDir, "events"), stageDir, backupDir} {
-		if _, err := os.Stat(gone); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("expected %s to be cleaned up on rollback, stat err=%v", gone, err)
-		}
 	}
 
+	// 1. Fresh remote: events succeeds, queues is missing in stage -> verify mv actually
+	//    moved events/ into place before rollback removed installed events/, stage, and backup.
+	t.Run("fresh rollback traces first move before cleanup", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-1")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-1")
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, "events", "data"), []byte("new"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		traceFile := filepath.Join(tmp, "mv.trace")
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeExecScript(t, filepath.Join(binDir, "mv"), fmt.Sprintf(`#!/bin/sh
+%s "$@"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  printf '%%s -> %%s\n' "$1" "$2" >> %s
+fi
+exit "$rc"
+`, sshQuote(realMV), sshQuote(traceFile)))
+
+		script := remoteCutoverScript(SyncCopyOptions{
+			RemoteDir:     remoteDir,
+			RemoteService: "orchestrator",
+		}, stageDir, backupDir, []string{"events", "queues"}, "")
+		if out, err := runShellWithPath(binDir, script); err == nil {
+			t.Fatalf("expected cutover to fail on missing staged queues, output:\n%s", string(out))
+		}
+		traceBytes, err := os.ReadFile(traceFile)
+		if err != nil {
+			t.Fatalf("expected mv trace proving swap began: %v", err)
+		}
+		wantMove := filepath.Join(stageDir, "events") + " -> " + filepath.Join(remoteDir, "events")
+		if !strings.Contains(string(traceBytes), wantMove) {
+			t.Fatalf("expected first move %q in trace, got:\n%s", wantMove, string(traceBytes))
+		}
+		for _, gone := range []string{filepath.Join(remoteDir, "events"), stageDir, backupDir} {
+			if _, err := os.Stat(gone); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected %s to be cleaned up on rollback, stat err=%v", gone, err)
+			}
+		}
+	})
+
 	// 2. Pre-swap backup mkdir collision: stage dir is cleaned up, existing backup dir preserved.
-	remoteDir2 := filepath.Join(t.TempDir(), ".orchestrator")
-	stageDir2 := filepath.Join(remoteDir2, ".sync-copy-stage-2")
-	backupDir2 := filepath.Join(remoteDir2, "sync-backup-before-copy-2")
-	if err := os.MkdirAll(stageDir2, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(backupDir2, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	script2 := remoteCutoverScript(SyncCopyOptions{
-		RemoteDir:     remoteDir2,
-		RemoteService: "orchestrator",
-	}, stageDir2, backupDir2, []string{"events"}, false)
-	if out, err := exec.Command("sh", "-eu", "-c", script2).CombinedOutput(); err == nil {
-		t.Fatalf("expected cutover to fail on colliding backup dir, output:\n%s", string(out))
-	}
-	if _, err := os.Stat(stageDir2); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected stageDir2 cleaned up, err=%v", err)
-	}
-	if _, err := os.Stat(backupDir2); err != nil {
-		t.Fatalf("existing colliding backupDir2 should be preserved, err=%v", err)
-	}
+	t.Run("backup collision preserves existing backup", func(t *testing.T) {
+		remoteDir2 := filepath.Join(t.TempDir(), ".orchestrator")
+		stageDir2 := filepath.Join(remoteDir2, ".sync-copy-stage-2")
+		backupDir2 := filepath.Join(remoteDir2, "sync-backup-before-copy-2")
+		if err := os.MkdirAll(stageDir2, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(backupDir2, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		script2 := remoteCutoverScript(SyncCopyOptions{
+			RemoteDir:     remoteDir2,
+			RemoteService: "orchestrator",
+		}, stageDir2, backupDir2, []string{"events"}, "")
+		if out, err := runShellWithPath("", script2); err == nil {
+			t.Fatalf("expected cutover to fail on colliding backup dir, output:\n%s", string(out))
+		}
+		if _, err := os.Stat(stageDir2); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected stageDir2 cleaned up, err=%v", err)
+		}
+		if _, err := os.Stat(backupDir2); err != nil {
+			t.Fatalf("existing colliding backupDir2 should be preserved, err=%v", err)
+		}
+	})
+
+	// 3. Stage creation refuses colliding stage rather than rm -rf'ing another copy's stage.
+	t.Run("stage create refuses collision", func(t *testing.T) {
+		remoteDir := filepath.Join(t.TempDir(), ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-existing")
+		if err := os.MkdirAll(stageDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(stageDir, "keep")
+		if err := os.WriteFile(marker, []byte("other-host"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		script := remoteStageCreateScript(SyncCopyOptions{RemoteDir: remoteDir}, stageDir)
+		if out, err := runShellWithPath("", script); err == nil {
+			t.Fatalf("expected colliding stage create to fail, output:\n%s", string(out))
+		}
+		if got, err := os.ReadFile(marker); err != nil || string(got) != "other-host" {
+			t.Fatalf("existing stage contents must be preserved, got %q (err=%v)", string(got), err)
+		}
+	})
+
+	// 4. Concurrent cutovers on the same destination serialize via destination lock.
+	t.Run("concurrent cutovers serialize without interleaving", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stage1 := filepath.Join(remoteDir, ".sync-copy-stage-a")
+		stage2 := filepath.Join(remoteDir, ".sync-copy-stage-b")
+		backup1 := filepath.Join(remoteDir, "sync-backup-before-copy-a")
+		backup2 := filepath.Join(remoteDir, "sync-backup-before-copy-b")
+		for _, s := range []struct {
+			dir  string
+			body string
+		}{{stage1, "copy-1"}, {stage2, "copy-2"}} {
+			if err := os.MkdirAll(filepath.Join(s.dir, "events"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(s.dir, "events", "val"), []byte(s.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		activeFlag := filepath.Join(tmp, "mv-active")
+		overlapFlag := filepath.Join(tmp, "mv-overlap")
+		writeExecScript(t, filepath.Join(binDir, "mv"), fmt.Sprintf(`#!/bin/sh
+if ! mkdir %s 2>/dev/null; then
+  echo overlap >> %s
+fi
+sleep 0.2
+%s "$@"
+rc=$?
+rmdir %s 2>/dev/null || true
+exit "$rc"
+`, sshQuote(activeFlag), sshQuote(overlapFlag), sshQuote(realMV), sshQuote(activeFlag)))
+
+		s1 := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stage1, backup1, []string{"events"}, "")
+		s2 := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stage2, backup2, []string{"events"}, "")
+
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		outs := make([][]byte, 2)
+		for i, sc := range []string{s1, s2} {
+			wg.Add(1)
+			go func(idx int, script string) {
+				defer wg.Done()
+				outs[idx], errs[idx] = runShellWithPath(binDir, script)
+			}(i, sc)
+		}
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("concurrent cutover %d failed: %v\n%s", i, err, string(outs[i]))
+			}
+		}
+		if _, err := os.Stat(overlapFlag); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("concurrent cutovers overlapped inside live swap")
+		}
+		val, err := os.ReadFile(filepath.Join(remoteDir, "events", "val"))
+		if err != nil || (string(val) != "copy-1" && string(val) != "copy-2") {
+			t.Fatalf("unexpected final events/val = %q (err=%v)", string(val), err)
+		}
+	})
+
+	// 5. Systemd unit discovered at cutover time is stopped and restarted cleanly.
+	t.Run("unit discovered at cutover is stopped and restarted", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-unit")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-unit")
+		if err := os.MkdirAll(filepath.Join(remoteDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(remoteDir, "events", "v"), []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, "events", "v"), []byte("new"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stateFile := filepath.Join(tmp, "svc.state")
+		logFile := filepath.Join(tmp, "svc.log")
+		if err := os.WriteFile(stateFile, []byte("active"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		writeExecScript(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  show)
+    case "$*" in
+      *LoadState*) echo loaded ;;
+      *ActiveState*) cat %s ;;
+    esac
+    ;;
+  stop)
+    echo "stop $2" >> %s
+    echo inactive > %s
+    ;;
+  start)
+    echo "start $2" >> %s
+    echo active > %s
+    ;;
+esac
+`, sshQuote(stateFile), sshQuote(logFile), sshQuote(stateFile), sshQuote(logFile), sshQuote(stateFile)))
+
+		script := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stageDir, backupDir, []string{"events"}, "")
+		out, err := runShellWithPath(binDir, script)
+		if err != nil {
+			t.Fatalf("cutover failed: %v\n%s", err, string(out))
+		}
+		unitFound, restarted, err := parseRemoteCutoverResult(string(out))
+		if err != nil || !unitFound || !restarted {
+			t.Fatalf("parseRemoteCutoverResult = (%v, %v, %v), output:\n%s", unitFound, restarted, err, string(out))
+		}
+		logBytes, _ := os.ReadFile(logFile)
+		if strings.TrimSpace(string(logBytes)) != "stop orchestrator\nstart orchestrator" {
+			t.Fatalf("systemctl log = %q", string(logBytes))
+		}
+		if got, _ := os.ReadFile(filepath.Join(remoteDir, "events", "v")); string(got) != "new" {
+			t.Fatalf("live events = %q, want new", string(got))
+		}
+	})
+
+	// 6. ActiveState query failure aborts before systemctl stop.
+	t.Run("ActiveState query failure aborts before stop", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-err")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-err")
+		if err := os.MkdirAll(filepath.Join(remoteDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(remoteDir, "events", "v"), []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		logFile := filepath.Join(tmp, "svc.log")
+		writeExecScript(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  show)
+    case "$*" in
+      *LoadState*) echo loaded ;;
+      *ActiveState*) echo "dbus error" >&2; exit 1 ;;
+    esac
+    ;;
+  *)
+    echo "$1 $2" >> %s
+    ;;
+esac
+`, sshQuote(logFile)))
+
+		script := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stageDir, backupDir, []string{"events"}, "")
+		if out, err := runShellWithPath(binDir, script); err == nil {
+			t.Fatalf("expected ActiveState failure to abort cutover, output:\n%s", string(out))
+		}
+		if _, err := os.Stat(logFile); !errors.Is(err, os.ErrNotExist) {
+			b, _ := os.ReadFile(logFile)
+			t.Fatalf("systemctl stop/start must not run on ActiveState failure, log=%q", string(b))
+		}
+		if got, _ := os.ReadFile(filepath.Join(remoteDir, "events", "v")); string(got) != "old" {
+			t.Fatalf("live events changed on ActiveState failure: %q", string(got))
+		}
+	})
+
+	// 7. Remote config.json changed during rsync aborts before stopping service.
+	t.Run("config change during rsync aborts before stop", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-cfg")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-cfg")
+		if err := os.MkdirAll(filepath.Join(remoteDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ConfigPath(remoteDir), []byte(`{"ProducerKeyFilePassphraseFile":"events/secret"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		logFile := filepath.Join(tmp, "svc.log")
+		writeExecScript(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+echo "$*" >> %s
+`, sshQuote(logFile)))
+
+		oldSHA := strings.Repeat("0", 64)
+		script := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stageDir, backupDir, []string{"events"}, oldSHA)
+		out, err := runShellWithPath(binDir, script)
+		if err == nil || !strings.Contains(string(out), "config changed during sync copy") {
+			t.Fatalf("expected config change abort, err=%v output:\n%s", err, string(out))
+		}
+		if _, err := os.Stat(logFile); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("systemctl must not be called when remote config changed")
+		}
+	})
+
+	// 8. Remote startup failure after swap confirms stopped, restores old dirs, and restarts on restored data.
+	t.Run("startup failure triggers rollback and recovery restart", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-startfail")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-startfail")
+		if err := os.MkdirAll(filepath.Join(remoteDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(remoteDir, "events", "v"), []byte("old-good"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, "events", "v"), []byte("new-bad"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stateFile := filepath.Join(tmp, "svc.state")
+		logFile := filepath.Join(tmp, "svc.log")
+		startCountFile := filepath.Join(tmp, "start.count")
+		if err := os.WriteFile(stateFile, []byte("active"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(startCountFile, []byte("0"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		writeExecScript(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  show)
+    case "$*" in
+      *LoadState*) echo loaded ;;
+      *ActiveState*) cat %s ;;
+    esac
+    ;;
+  stop)
+    echo "stop $2" >> %s
+    echo inactive > %s
+    ;;
+  start)
+    n=$(cat %s)
+    n=$((n + 1))
+    echo "$n" > %s
+    echo "start#$n $2" >> %s
+    if [ "$n" -eq 1 ]; then
+      echo "bad replacement data" >&2
+      echo failed > %s
+      exit 1
+    fi
+    echo active > %s
+    ;;
+esac
+`, sshQuote(stateFile), sshQuote(logFile), sshQuote(stateFile),
+			sshQuote(startCountFile), sshQuote(startCountFile), sshQuote(logFile),
+			sshQuote(stateFile), sshQuote(stateFile)))
+
+		script := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stageDir, backupDir, []string{"events"}, "")
+		out, err := runShellWithPath(binDir, script)
+		if err == nil {
+			t.Fatalf("expected startup failure to return error, output:\n%s", string(out))
+		}
+		if !strings.Contains(string(out), "bad replacement data") {
+			t.Fatalf("original startup error must be preserved, output:\n%s", string(out))
+		}
+		if got, _ := os.ReadFile(filepath.Join(remoteDir, "events", "v")); string(got) != "old-good" {
+			t.Fatalf("live events = %q, want old-good restored after startup failure", string(got))
+		}
+		logBytes, _ := os.ReadFile(logFile)
+		wantLog := "stop orchestrator\nstart#1 orchestrator\nstop orchestrator\nstart#2 orchestrator"
+		if strings.TrimSpace(string(logBytes)) != wantLog {
+			t.Fatalf("systemctl log =\n%s\nwant:\n%s", strings.TrimSpace(string(logBytes)), wantLog)
+		}
+	})
+
+	// 9. Incomplete rollback must keep service stopped and preserve backup path.
+	t.Run("incomplete rollback keeps unit stopped and preserves backup", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-incomp")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-incomp")
+		if err := os.MkdirAll(filepath.Join(remoteDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(remoteDir, "events", "v"), []byte("old-events"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, "events", "v"), []byte("new-events"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// queues intentionally missing in stageDir so swap fails after events succeeds.
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stateFile := filepath.Join(tmp, "svc.state")
+		logFile := filepath.Join(tmp, "svc.log")
+		if err := os.WriteFile(stateFile, []byte("active"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		writeExecScript(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  show)
+    case "$*" in
+      *LoadState*) echo loaded ;;
+      *ActiveState*) cat %s ;;
+    esac
+    ;;
+  stop)
+    echo "stop $2" >> %s
+    echo inactive > %s
+    ;;
+  start)
+    echo "start $2" >> %s
+    echo active > %s
+    ;;
+esac
+`, sshQuote(stateFile), sshQuote(logFile), sshQuote(stateFile), sshQuote(logFile), sshQuote(stateFile)))
+		// Fail mv only when restoring from backupDir back into remoteDir.
+		writeExecScript(t, filepath.Join(binDir, "mv"), fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  %s/*)
+    echo "simulated restore IO error" >&2
+    exit 1
+    ;;
+esac
+exec %s "$@"
+`, sshQuote(backupDir), sshQuote(realMV)))
+
+		script := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stageDir, backupDir, []string{"events", "queues"}, "")
+		out, err := runShellWithPath(binDir, script)
+		if err == nil {
+			t.Fatalf("expected cutover error, output:\n%s", string(out))
+		}
+		if !strings.Contains(string(out), backupDir) {
+			t.Fatalf("stderr should report preserved backup path %q:\n%s", backupDir, string(out))
+		}
+		logBytes, _ := os.ReadFile(logFile)
+		if strings.TrimSpace(string(logBytes)) != "stop orchestrator" {
+			t.Fatalf("unit must stay stopped after incomplete rollback, log = %q", string(logBytes))
+		}
+		if got, err := os.ReadFile(filepath.Join(backupDir, "events", "v")); err != nil || string(got) != "old-events" {
+			t.Fatalf("backup must be preserved on incomplete rollback, got %q (err=%v)", string(got), err)
+		}
+	})
+
+	// 10. Startup failure followed by failed stop during rollback aborts restore and preserves backup.
+	t.Run("startup failure with failed rollback stop preserves backup and skips restore", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-stopfail")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-stopfail")
+		if err := os.MkdirAll(filepath.Join(remoteDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(remoteDir, "events", "v"), []byte("old-good"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, "events", "v"), []byte("new-bad"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stateFile := filepath.Join(tmp, "svc.state")
+		logFile := filepath.Join(tmp, "svc.log")
+		stopCountFile := filepath.Join(tmp, "stop.count")
+		if err := os.WriteFile(stateFile, []byte("active"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(stopCountFile, []byte("0"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		writeExecScript(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  show)
+    case "$*" in
+      *LoadState*) echo loaded ;;
+      *ActiveState*) cat %s ;;
+    esac
+    ;;
+  stop)
+    n=$(cat %s)
+    n=$((n + 1))
+    echo "$n" > %s
+    echo "stop#$n $2" >> %s
+    if [ "$n" -eq 2 ]; then
+      echo "still stopping" >&2
+      echo active > %s
+      exit 1
+    fi
+    echo inactive > %s
+    ;;
+  start)
+    echo "start $2" >> %s
+    echo "bad replacement data" >&2
+    echo active > %s
+    exit 1
+    ;;
+esac
+`, sshQuote(stateFile), sshQuote(stopCountFile), sshQuote(stopCountFile), sshQuote(logFile),
+			sshQuote(stateFile), sshQuote(stateFile), sshQuote(logFile), sshQuote(stateFile)))
+
+		script := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stageDir, backupDir, []string{"events"}, "")
+		out, err := runShellWithPath(binDir, script)
+		if err == nil {
+			t.Fatalf("expected startup failure, output:\n%s", string(out))
+		}
+		for _, want := range []string{"bad replacement data", "could not be confirmed stopped", backupDir} {
+			if !strings.Contains(string(out), want) {
+				t.Errorf("output missing %q:\n%s", want, string(out))
+			}
+		}
+		// Must not overwrite live events while service may still be running, and must preserve backup.
+		if got, _ := os.ReadFile(filepath.Join(remoteDir, "events", "v")); string(got) != "new-bad" {
+			t.Fatalf("live events = %q, want new-bad untouched when rollback stop failed", string(got))
+		}
+		if got, _ := os.ReadFile(filepath.Join(backupDir, "events", "v")); string(got) != "old-good" {
+			t.Fatalf("backup events = %q, want old-good preserved", string(got))
+		}
+		logBytes, _ := os.ReadFile(logFile)
+		wantLog := "stop#1 orchestrator\nstart orchestrator\nstop#2 orchestrator"
+		if strings.TrimSpace(string(logBytes)) != wantLog {
+			t.Fatalf("systemctl log =\n%s\nwant:\n%s", strings.TrimSpace(string(logBytes)), wantLog)
+		}
+	})
 }

@@ -619,3 +619,184 @@ func TestInstallPreflightsConfigSymlinkBeforeStoppingActiveService(t *testing.T)
 		t.Fatalf("service must not be stopped when config.json is a symlink: %v", *calls)
 	}
 }
+
+func TestUpgradeRollbackRefusesRestoreWhenStopFailsOrUnitStaysActive(t *testing.T) {
+	makeRelease := func(t *testing.T) (*mockReleaseServer, Release) {
+		t.Helper()
+		zipBytes := makeZip(t, map[string]struct {
+			body []byte
+			mode os.FileMode
+		}{
+			"orchestrator-linux-amd64": {body: []byte("v2-broken"), mode: 0o755},
+		})
+		sums := shaHex(zipBytes) + "  orchestrator-linux-amd64.zip\n"
+		rel := Release{
+			Tag: "v2",
+			Assets: []Asset{
+				{ID: 60, Name: "orchestrator-linux-amd64.zip"},
+				{ID: 61, Name: "SHA256CHECKSUMS.txt"},
+			},
+		}
+		return newMockReleaseServer(t, []Release{rel}, map[int64][]byte{60: zipBytes, 61: []byte(sums)}), rel
+	}
+
+	t.Run("rollback stop error", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelease(t)
+		calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		stopAttempts := 0
+		stopService = func(name string) error {
+			stopAttempts++
+			*calls = append(*calls, "stop "+name)
+			if stopAttempts == 2 {
+				return errors.New("systemctl stop timed out")
+			}
+			return nil
+		}
+		startService = func(name string) error {
+			*calls = append(*calls, "start "+name)
+			return errors.New("candidate start failed")
+		}
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		_, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel)
+		if err == nil {
+			t.Fatal("expected upgrade error")
+		}
+		for _, want := range []string{"candidate start failed", "systemctl stop timed out", "candidate binary may still be running", "retained at"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q missing %q", err.Error(), want)
+			}
+		}
+		// Candidate must not be overwritten while stop failed, and recovery start must not run.
+		if got, _ := os.ReadFile(binPath); string(got) != "v2-broken" {
+			t.Fatalf("live binary = %q, want v2-broken untouched while candidate may run", string(got))
+		}
+		if strings.Join(*calls, ",") != "stop orchestrator,start orchestrator,stop orchestrator" {
+			t.Fatalf("calls = %v, must not call recovery start when rollback stop failed", *calls)
+		}
+		stagedFiles, err := filepath.Glob(filepath.Join(binDir, ".nomctl-orchestrator-*"))
+		if err != nil || len(stagedFiles) != 1 {
+			t.Fatalf("expected 1 retained staged previous binary, got %v (err=%v)", stagedFiles, err)
+		}
+		if got, _ := os.ReadFile(stagedFiles[0]); string(got) != "v1-live" {
+			t.Fatalf("retained staged binary = %q, want v1-live", string(got))
+		}
+	})
+
+	t.Run("unit remains active after rollback stop", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelease(t)
+		calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		stopAttempts := 0
+		stopService = func(name string) error {
+			stopAttempts++
+			*calls = append(*calls, "stop "+name)
+			return nil
+		}
+		startService = func(name string) error {
+			*calls = append(*calls, "start "+name)
+			return errors.New("candidate start failed")
+		}
+		serviceStatus = func(string) (service.State, error) {
+			return service.Active, nil
+		}
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		_, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel)
+		if err == nil {
+			t.Fatal("expected upgrade error")
+		}
+		if !strings.Contains(err.Error(), "refusing to replace running candidate binary") || !strings.Contains(err.Error(), "retained at") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got, _ := os.ReadFile(binPath); string(got) != "v2-broken" {
+			t.Fatalf("live binary = %q, want v2-broken untouched while unit stays active", string(got))
+		}
+		if strings.Join(*calls, ",") != "stop orchestrator,start orchestrator,stop orchestrator" {
+			t.Fatalf("calls = %v, must not call recovery start when unit stays active", *calls)
+		}
+		stagedFiles, err := filepath.Glob(filepath.Join(binDir, ".nomctl-orchestrator-*"))
+		if err != nil || len(stagedFiles) != 1 {
+			t.Fatalf("expected 1 retained staged previous binary, got %v (err=%v)", stagedFiles, err)
+		}
+	})
+}
+
+func TestUpgradeRetainsStagedPreviousWhenPublishFails(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(binDir, "orchestrator")
+	if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Make .previous a non-empty directory so os.Rename(previousStaged, previousPath) fails.
+	prevDir := binPath + ".previous"
+	if err := os.MkdirAll(filepath.Join(prevDir, "blocker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	zipBytes := makeZip(t, map[string]struct {
+		body []byte
+		mode os.FileMode
+	}{
+		"orchestrator-linux-amd64": {body: []byte("v2-good"), mode: 0o755},
+	})
+	sums := shaHex(zipBytes) + "  orchestrator-linux-amd64.zip\n"
+	rel := Release{
+		Tag: "v2",
+		Assets: []Asset{
+			{ID: 70, Name: "orchestrator-linux-amd64.zip"},
+			{ID: 71, Name: "SHA256CHECKSUMS.txt"},
+		},
+	}
+	srv := newMockReleaseServer(t, []Release{rel}, map[int64][]byte{70: zipBytes, 71: []byte(sums)})
+	stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+
+	cfg := config.Default()
+	cfg.InstallDir = binDir
+	cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+	_, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel)
+	if err == nil {
+		t.Fatal("expected .previous publish failure")
+	}
+	if !strings.Contains(err.Error(), "previous binary retained at") {
+		t.Fatalf("error should include retained staged binary path: %v", err)
+	}
+	stagedFiles, globErr := filepath.Glob(filepath.Join(binDir, ".nomctl-orchestrator-*"))
+	if globErr != nil || len(stagedFiles) != 1 {
+		t.Fatalf("expected 1 retained staged previous binary, got %v (err=%v)", stagedFiles, globErr)
+	}
+	if !strings.Contains(err.Error(), stagedFiles[0]) {
+		t.Fatalf("error %q did not include exact retained path %q", err.Error(), stagedFiles[0])
+	}
+	if got, _ := os.ReadFile(stagedFiles[0]); string(got) != "v1-live" {
+		t.Fatalf("retained staged binary = %q, want v1-live", string(got))
+	}
+	if got, _ := os.ReadFile(binPath); string(got) != "v2-good" {
+		t.Fatalf("running binary = %q, want v2-good", string(got))
+	}
+}
