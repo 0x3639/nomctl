@@ -512,6 +512,23 @@ sleep 30
 	if elapsed > 3*time.Second {
 		t.Fatalf("defaultSSHRun blocked too long on inherited pipe (%s)", elapsed)
 	}
+
+	// Same WaitDelay protection for defaultRsyncRun when a child SSH helper holds stderr open.
+	writeExecScript(t, filepath.Join(binDir, "rsync"), `#!/bin/sh
+(sleep 30) &
+sleep 30
+`)
+	rsyncCtx, rsyncCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer rsyncCancel()
+	start = time.Now()
+	err = defaultRsyncRun(rsyncCtx, SyncCopyOptions{Host: "root@target.example", Port: 22, Progress: io.Discard}, []string{"/tmp/src"}, "/tmp/stage")
+	elapsed = time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error from hanging rsync helper")
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("defaultRsyncRun blocked too long on inherited pipe (%s)", elapsed)
+	}
 }
 
 func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.T) {

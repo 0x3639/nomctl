@@ -1174,6 +1174,7 @@ func defaultRsyncRun(ctx context.Context, opts SyncCopyOptions, sources []string
 	args = append(args, sources...)
 	args = append(args, rsyncHost(opts.Host)+":"+remoteStage+"/")
 	cmd := exec.CommandContext(ctx, "rsync", args...)
+	cmd.WaitDelay = sshWaitDelay
 	if opts.Progress != nil {
 		cmd.Stdout = opts.Progress
 		cmd.Stderr = opts.Progress
