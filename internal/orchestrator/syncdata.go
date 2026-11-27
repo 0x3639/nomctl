@@ -446,8 +446,9 @@ func checkSyncLayoutBytes(dir string, raw []byte, dirs []string, strictJSON bool
 // --- Copy sync data to another server ----------------------------------------
 
 var (
-	reServiceName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@._:-]{0,127}$`)
-	reUnsafeHost  = regexp.MustCompile(`[\s'"` + "`" + `;&|$<>\\]`)
+	reServiceName    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@._:-]{0,127}$`)
+	reUnsafeHost     = regexp.MustCompile(`[\s'"` + "`" + `;&|$<>\\]`)
+	errSSHNotStarted = errors.New("ssh command did not start")
 
 	// Injectable hooks for tests.
 	sshRun                       = defaultSSHRun
@@ -455,6 +456,7 @@ var (
 	toolExists                   = execx.Exists
 	copyNonce                    = defaultCopyNonce
 	remoteCutoverLockWaitSeconds = 120
+	remoteCleanupTimeout         = 15 * time.Second
 )
 
 func defaultCopyNonce() (string, error) {
@@ -625,6 +627,11 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 
 	remoteStage := filepath.Join(opts.RemoteDir, ".sync-copy-stage-"+token)
 	remoteBackup := filepath.Join(opts.RemoteDir, "sync-backup-before-copy-"+token)
+	cleanupRemoteStage := func() {
+		cleanCtx, cancel := context.WithTimeout(context.Background(), remoteCleanupTimeout)
+		defer cancel()
+		_, _ = sshRun(cleanCtx, opts, remoteCleanupScript(remoteStage))
+	}
 
 	if _, err := sshRun(ctx, opts, remoteStageCreateScript(opts, remoteStage)); err != nil {
 		return res, errors.Join(fmt.Errorf("prepare remote staging directory: %w", err), restartLocal())
@@ -636,13 +643,21 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 	}
 	slog.Info(fmt.Sprintf("Syncing %s to %s:%s…", strings.Join(present, ", "), opts.Host, opts.RemoteDir))
 	if err := rsyncRun(ctx, opts, sources, remoteStage); err != nil {
-		_, _ = sshRun(context.Background(), opts, remoteCleanupScript(remoteStage))
+		cleanupRemoteStage()
 		return res, errors.Join(fmt.Errorf("rsync sync data to %s failed: %w", opts.Host, err), restartLocal())
+	}
+
+	if err := ctx.Err(); err != nil {
+		cleanupRemoteStage()
+		return res, errors.Join(fmt.Errorf("sync copy to %s cancelled before remote cutover: %w", opts.Host, err), restartLocal())
 	}
 
 	slog.Info("Installing staged sync data on " + opts.Host + " (keeping safety backup at " + remoteBackup + ")…")
 	cutoverOut, err := sshRun(ctx, opts, remoteCutoverScript(opts, remoteStage, remoteBackup, present, probe.configSHA256))
 	if err != nil {
+		if errors.Is(err, errSSHNotStarted) {
+			cleanupRemoteStage()
+		}
 		return res, errors.Join(fmt.Errorf("remote cutover on %s failed: %w", opts.Host, err), restartLocal())
 	}
 	remoteUnitFound, remoteRestarted, err := parseRemoteCutoverResult(cutoverOut)
@@ -720,6 +735,19 @@ func remotePreflightScript(o SyncCopyOptions) string {
 if [ -L %[1]s ]; then echo "remote orchestrator dir is a symlink" >&2; exit 1; fi
 if [ -e %[1]s ] && [ ! -d %[1]s ]; then echo "remote orchestrator path is not a directory" >&2; exit 1; fi
 if [ -L %[3]s ]; then echo "remote orchestrator config is a symlink" >&2; exit 1; fi
+if command -v systemctl >/dev/null 2>&1; then
+  load=$(systemctl show -p LoadState --value %[2]s)
+  active=$(systemctl show -p ActiveState --value %[2]s)
+  if [ -z "$load" ] || [ -z "$active" ]; then
+    echo "cannot determine state of remote service %[2]s" >&2
+    exit 1
+  fi
+  echo "LOAD=$load"
+  echo "ACTIVE=$active"
+else
+  echo "LOAD=not-found"
+  echo "ACTIVE=inactive"
+fi
 if [ -e %[3]s ]; then
   if [ ! -f %[3]s ]; then echo "remote orchestrator config is not a regular file" >&2; exit 1; fi
   cfg_size=$(wc -c < %[3]s | tr -d '[:space:]')
@@ -740,19 +768,6 @@ if [ -e %[3]s ]; then
   echo "CONFIG_B64_END"
 else
   echo "CONFIG_PRESENT=0"
-fi
-if command -v systemctl >/dev/null 2>&1; then
-  load=$(systemctl show -p LoadState --value %[2]s)
-  active=$(systemctl show -p ActiveState --value %[2]s)
-  if [ -z "$load" ] || [ -z "$active" ]; then
-    echo "cannot determine state of remote service %[2]s" >&2
-    exit 1
-  fi
-  echo "LOAD=$load"
-  echo "ACTIVE=$active"
-else
-  echo "LOAD=not-found"
-  echo "ACTIVE=inactive"
 fi`, dirQ, svcQ, cfgQ, MaxConfigBytes)
 }
 
@@ -864,8 +879,11 @@ func remoteCutoverScript(o SyncCopyOptions, stageDir, backupDir string, dirs []s
 
 	var b strings.Builder
 	// Install cleanup/recovery traps before touching any remote state.
+	// Ignore SIGPIPE so a dropped SSH client (broken pipe on stdout/stderr)
+	// fails writes with EPIPE -> errexit -> on_exit instead of killing the shell.
 	// Signal traps call exit with 128+sig so EXIT runs with a non-zero rc under dash.
 	fmt.Fprintf(&b, `umask 077
+trap '' PIPE
 unit_found=0
 restart_remote=0
 need_restart=0
@@ -924,7 +942,12 @@ rollback() {
 
 on_exit() {
   rc=$?
-  trap - EXIT HUP INT TERM
+  set +e
+  trap '' HUP INT TERM
+  trap - EXIT
+  # Flush any buffered stdout left behind after EPIPE on bash-based /bin/sh
+  # so subsequent $(...) command substitutions inside recovery are not polluted.
+  echo >/dev/null
   allow_restart=1
   if [ "$swapped" -eq 1 ]; then
     if [ "$start_attempted" -eq 1 ] && [ "$unit_found" -eq 1 ]; then
@@ -986,7 +1009,7 @@ else
   lock_waited=0
   while ! mkdir %[3]s 2>/dev/null; do
     if [ "$lock_waited" -ge %[4]d ]; then
-      echo "timed out waiting for remote cutover lock %[3]s" >&2
+      echo "timed out waiting for remote cutover lock %[3]s (remove %[3]s if no other copy-sync is running)" >&2
       exit 1
     fi
     sleep 1
@@ -1109,15 +1132,20 @@ echo "REMOTE_RESTARTED=$restart_remote"
 func defaultSSHRun(ctx context.Context, opts SyncCopyOptions, script string) (string, error) {
 	args := append(opts.sshArgs(), "--", opts.Host, opts.wrapRemote(script))
 	cmd := exec.CommandContext(ctx, "ssh", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg != "" {
-			return string(out), fmt.Errorf("%w: %s", err, msg)
-		}
-		return string(out), err
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("%w: %w", errSSHNotStarted, err)
 	}
-	return string(out), nil
+	if err := cmd.Wait(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return stdout.String(), fmt.Errorf("%w: %s", err, msg)
+		}
+		return stdout.String(), err
+	}
+	return stdout.String(), nil
 }
 
 func defaultRsyncRun(ctx context.Context, opts SyncCopyOptions, sources []string, remoteStage string) error {
