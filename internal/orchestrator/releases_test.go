@@ -955,3 +955,374 @@ func TestUpgradeRetainsStagedPreviousWhenPublishFails(t *testing.T) {
 		}
 	})
 }
+
+func TestDeployPendingStateProtectionsAndRecovery(t *testing.T) {
+	makeRelServer := func(t *testing.T, tag string, relID, assetID int64, payload string) (*mockReleaseServer, Release) {
+		t.Helper()
+		zipBytes := makeZip(t, map[string]struct {
+			body []byte
+			mode os.FileMode
+		}{
+			"orchestrator-linux-amd64": {body: []byte(payload), mode: 0o755},
+		})
+		sums := shaHex(zipBytes) + "  orchestrator-linux-amd64.zip\n"
+		rel := Release{
+			ID:  relID,
+			Tag: tag,
+			Assets: []Asset{
+				{ID: assetID, Name: "orchestrator-linux-amd64.zip", Digest: "sha256:" + shaHex(zipBytes)},
+				{ID: assetID + 1, Name: "SHA256CHECKSUMS.txt"},
+			},
+		}
+		return newMockReleaseServer(t, []Release{rel}, map[int64][]byte{assetID: zipBytes, assetID + 1: []byte(sums)}), rel
+	}
+
+	t.Run("WAL write failure before cutover leaves service and binary untouched", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 1, 100, "v2-new")
+		calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		oldWrite := writePendingState
+		t.Cleanup(func() { writePendingState = oldWrite })
+		writePendingState = func(string, pendingDeployState) error {
+			return errors.New("no space left on device")
+		}
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil || !strings.Contains(err.Error(), "no space left on device") {
+			t.Fatalf("expected pre-cutover WAL failure, got %v", err)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("service must not be stopped if pre-cutover WAL write fails: %v", *calls)
+		}
+		if got, _ := os.ReadFile(binPath); string(got) != "v1-live" {
+			t.Fatalf("live binary changed on WAL failure: %q", string(got))
+		}
+	})
+
+	t.Run("post-cutover disk full still preserves pre-written rollback WAL", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 2, 110, "v2-broken")
+		stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		writeCalls := 0
+		oldWrite := writePendingState
+		t.Cleanup(func() { writePendingState = oldWrite })
+		writePendingState = func(p string, st pendingDeployState) error {
+			writeCalls++
+			if writeCalls > 1 {
+				return errors.New("no space left on device")
+			}
+			return defaultWritePendingDeployState(p, st)
+		}
+		startService = func(string) error { return errors.New("v2 crashed") }
+		serviceStatus = func(string) (service.State, error) { return service.Active, nil }
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+			t.Fatal("expected upgrade failure")
+		}
+		// Pre-cutover WAL is already on disk, blocking V3 from staging V2.
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), Release{Tag: "v3", Assets: rel.Assets}); err == nil || !strings.Contains(err.Error(), "nomctl orchestrator recover") {
+			t.Fatalf("expected recover guidance error, got %v", err)
+		}
+	})
+
+	t.Run("different repository or release ID does not short-circuit pending publish", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		prevDir := binPath + ".previous"
+		if err := os.MkdirAll(filepath.Join(prevDir, "blocker"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srvA, relA := makeRelServer(t, "v2", 10, 120, "v2-repo-a")
+		srvB, relB := makeRelServer(t, "v2", 20, 130, "v2-repo-b")
+		stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srvA.client(t, "0x3639/orchestrator"), relA); err == nil {
+			t.Fatal("expected initial .previous publish failure")
+		}
+		if err := os.RemoveAll(prevDir); err != nil {
+			t.Fatal(err)
+		}
+		// Selecting repo B's v2 must finish repo A's publish AND fetch/deploy repo B's v2.
+		res, err := Upgrade(context.Background(), cfg, srvB.client(t, "HyperCore-Team/orchestrator"), relB)
+		if err != nil {
+			t.Fatalf("repo B upgrade failed: %v", err)
+		}
+		if res.Repo != "HyperCore-Team/orchestrator" {
+			t.Fatalf("Repo = %q, want HyperCore-Team/orchestrator", res.Repo)
+		}
+		if got, _ := os.ReadFile(binPath); string(got) != "v2-repo-b" {
+			t.Fatalf("live binary = %q, want v2-repo-b (repo B must actually be fetched and installed)", string(got))
+		}
+		if prev, _ := os.ReadFile(prevDir); string(prev) != "v2-repo-a" {
+			t.Fatalf(".previous = %q, want v2-repo-a", string(prev))
+		}
+	})
+
+	t.Run("pending recovery binds to original systemd unit", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 3, 140, "v2-broken")
+		calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		startService = func(string) error { return errors.New("start failed") }
+		serviceStatus = func(string) (service.State, error) { return service.Active, nil }
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		cfg.OrchestratorService = "orchestrator-a"
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+			t.Fatal("expected failed upgrade")
+		}
+
+		*calls = nil
+		cfgB := cfg
+		cfgB.OrchestratorService = "orchestrator-b"
+		if err := RecoverPendingRollback(cfgB); err == nil || !strings.Contains(err.Error(), "orchestrator-a") {
+			t.Fatalf("expected service mismatch rejection, got %v", err)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("unit B must not be queried or touched on mismatch: %v", *calls)
+		}
+	})
+
+	t.Run("publication retry succeeds after rename when pending-file removal fails, and rejects unrelated .previous", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 4, 150, "v2-good")
+		stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		oldRm := removePendingState
+		t.Cleanup(func() { removePendingState = oldRm })
+		removePendingState = func(string) error { return errors.New("permission denied removing pending file") }
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil || !strings.Contains(err.Error(), "clearing pending state") {
+			t.Fatalf("expected pending state removal error, got %v", err)
+		}
+		// .previous now has V1, staged path was consumed, .pending.json remains.
+		if prev, _ := os.ReadFile(binPath + ".previous"); string(prev) != "v1-live" {
+			t.Fatalf(".previous = %q, want v1-live", string(prev))
+		}
+		// Tampering .previous with an unrelated file must be rejected.
+		if err := os.WriteFile(binPath+".previous", []byte("unrelated-file"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		removePendingState = os.Remove
+		if _, err := CompletePendingPreviousPublish(cfg); err == nil || !strings.Contains(err.Error(), "does not match") {
+			t.Fatalf("expected unrelated .previous to be rejected, got %v", err)
+		}
+		// Restore expected V1 at .previous -> retry clears .pending.json cleanly.
+		if err := os.WriteFile(binPath+".previous", []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		prevPath, err := CompletePendingPreviousPublish(cfg)
+		if err != nil || prevPath != binPath+".previous" {
+			t.Fatalf("retry publish cleanup failed: %q, %v", prevPath, err)
+		}
+		if _, err := os.Stat(deployStatePath(binPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pending state should be removed after retry, err=%v", err)
+		}
+	})
+
+	t.Run("rollback retries after restore when startService or state removal fails, and respects WasRunning=false", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 5, 160, "v2-broken")
+		calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		curState := service.Active
+		startFails := true
+		stopService = func(name string) error {
+			*calls = append(*calls, "stop "+name)
+			if startFails {
+				// First fail rollback stop so pending rollback stays unresolved.
+				if len(*calls) > 2 {
+					return errors.New("stop hung")
+				}
+			}
+			curState = service.Inactive
+			return nil
+		}
+		startService = func(name string) error {
+			*calls = append(*calls, "start "+name)
+			if startFails {
+				curState = service.Active
+				return errors.New("start failed")
+			}
+			curState = service.Active
+			return nil
+		}
+		serviceStatus = func(string) (service.State, error) { return curState, nil }
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+			t.Fatal("expected failed upgrade")
+		}
+
+		// Recovery attempt 1: stop succeeds and V1 is restored, but startService fails -> pending state stays.
+		*calls = nil
+		stopService = func(name string) error {
+			*calls = append(*calls, "stop "+name)
+			curState = service.Inactive
+			return nil
+		}
+		startService = func(name string) error {
+			*calls = append(*calls, "start "+name)
+			return errors.New("transient start failure")
+		}
+		if err := RecoverPendingRollback(cfg); err == nil || !strings.Contains(err.Error(), "transient start failure") {
+			t.Fatalf("expected restart failure during recovery, got %v", err)
+		}
+		if got, _ := os.ReadFile(binPath); string(got) != "v1-live" {
+			t.Fatalf("V1 should be restored on disk: %q", string(got))
+		}
+		if _, err := os.Stat(deployStatePath(binPath)); err != nil {
+			t.Fatalf("pending state must be kept until required restart succeeds: %v", err)
+		}
+
+		// Recovery attempt 2: startService succeeds, but state-file removal fails -> retryable without staging file.
+		*calls = nil
+		startService = func(name string) error {
+			*calls = append(*calls, "start "+name)
+			curState = service.Active
+			return nil
+		}
+		oldRm := removePendingState
+		t.Cleanup(func() { removePendingState = oldRm })
+		removePendingState = func(string) error { return errors.New("rm failed") }
+		if err := RecoverPendingRollback(cfg); err == nil || !strings.Contains(err.Error(), "clearing pending state") {
+			t.Fatalf("expected pending state removal error, got %v", err)
+		}
+		if strings.Join(*calls, ",") != "start orchestrator" {
+			t.Fatalf("retry should only start restored V1 without re-stopping: %v", *calls)
+		}
+
+		// Recovery attempt 3: state-file removal succeeds -> service already Active, no extra start/stop.
+		*calls = nil
+		removePendingState = os.Remove
+		if _, err := RecoverPendingDeploy(cfg); err != nil {
+			t.Fatalf("final recovery cleanup failed: %v", err)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("already-active restored unit should not be restarted again: %v", *calls)
+		}
+		if _, err := os.Stat(deployStatePath(binPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pending state should be removed, err=%v", err)
+		}
+	})
+
+	t.Run("RecoverPendingRollback refuses to overwrite manually changed binary", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 6, 170, "v2-broken")
+		calls := stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		startService = func(string) error { return errors.New("v2 crashed") }
+		serviceStatus = func(string) (service.State, error) { return service.Active, nil }
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+			t.Fatal("expected failed upgrade")
+		}
+		// Operator manually installs a different binary at binPath.
+		if err := os.WriteFile(binPath, []byte("manual-v4"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		*calls = nil
+		if err := RecoverPendingRollback(cfg); err == nil || !strings.Contains(err.Error(), "no longer matches failed candidate") {
+			t.Fatalf("expected manual binary change protection error, got %v", err)
+		}
+		if got, _ := os.ReadFile(binPath); string(got) != "manual-v4" {
+			t.Fatalf("manual binary was overwritten: %q", string(got))
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("service must not be stopped when live binary no longer matches candidate: %v", *calls)
+		}
+	})
+
+	t.Run("fresh install rollback consistently removes failed candidate binary", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		orchDir := filepath.Join(tmp, ".orchestrator")
+		unitPath := filepath.Join(tmp, "systemd", "orchestrator.service")
+		srv, rel := makeRelServer(t, "v1", 7, 180, "v1-broken")
+		stubDeployHost(t, false, service.NotFound, unitPath)
+		startService = func(string) error { return errors.New("fresh install crashed") }
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = orchDir
+		binPath := filepath.Join(binDir, "orchestrator")
+		if _, err := Install(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil {
+			t.Fatal("expected install failure")
+		}
+		if _, err := os.Stat(binPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("fresh install rollback should remove failed binary %s, stat err=%v", binPath, err)
+		}
+		if _, err := os.Stat(deployStatePath(binPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pending state should be cleared after clean fresh-install rollback, err=%v", err)
+		}
+	})
+}

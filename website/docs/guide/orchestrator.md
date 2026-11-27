@@ -8,6 +8,7 @@ The orchestrator is a separate service, usually installed next to a pillar's nod
 ```bash
 sudo nomctl orchestrator install                       # pick GitHub account & release (default: 0x3639/orchestrator, newest)
 sudo nomctl orchestrator upgrade                       # upgrade installed orchestrator from a GitHub release
+sudo nomctl orchestrator recover                       # finish a pending rollback or .previous publication
 sudo nomctl orchestrator status                        # active / inactive / not found
 sudo nomctl orchestrator logs -f                       # follow the journal, Ctrl+C to stop
 sudo nomctl orchestrator backup                        # archive events/ and queues/ with SHA-256 sidecar
@@ -27,7 +28,7 @@ Both `install` and `upgrade` let you select a GitHub account/repository (default
 2. Stop the orchestrator service (when installed).
 3. Atomically install the verified binary to `/usr/local/bin/orchestrator` while keeping a staged copy of the prior binary on the same filesystem.
 4. On `install`, create `NOMCTL_ORCHESTRATOR_DIR` (`/root/.orchestrator` by default, mode `0700` when newly created; existing directory permissions are preserved), a starter `config.json` (mode `0600`), and `/etc/systemd/system/orchestrator.service` (running as `root` with `Environment="HOME=<parent>"`, enabled with `Restart=always`) if absent. Because the orchestrator binary always reads `<HOME>/.orchestrator`, generating a new unit requires `NOMCTL_ORCHESTRATOR_DIR` to end in `/.orchestrator`. Existing units (including vendor units) and configuration are preserved.
-5. Start or restart the orchestrator service and verify it is active. Only after startup succeeds is the prior binary promoted to `/usr/local/bin/orchestrator.previous`; if startup fails, the prior binary is restored and the previous service is restarted if it was running.
+5. Start or restart the orchestrator service and verify it is active. Only after startup succeeds is the prior binary promoted to `/usr/local/bin/orchestrator.previous`; if startup fails, the prior binary is restored and the previous service is restarted if it was running. If a rollback or `.previous` publication is interrupted (recorded in `<binary>.pending.json`), run `sudo nomctl orchestrator recover` to complete it cleanly before starting a new deployment.
 
 Non-interactive automation requires `--yes`:
 

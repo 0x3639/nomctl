@@ -457,6 +457,7 @@ var (
 	copyNonce                    = defaultCopyNonce
 	remoteCutoverLockWaitSeconds = 120
 	remoteCleanupTimeout         = 15 * time.Second
+	sshWaitDelay                 = 2 * time.Second
 )
 
 func defaultCopyNonce() (string, error) {
@@ -643,22 +644,25 @@ func CopySyncData(ctx context.Context, cfg config.Config, opts SyncCopyOptions) 
 	}
 	slog.Info(fmt.Sprintf("Syncing %s to %s:%s…", strings.Join(present, ", "), opts.Host, opts.RemoteDir))
 	if err := rsyncRun(ctx, opts, sources, remoteStage); err != nil {
+		restartErr := restartLocal()
 		cleanupRemoteStage()
-		return res, errors.Join(fmt.Errorf("rsync sync data to %s failed: %w", opts.Host, err), restartLocal())
+		return res, errors.Join(fmt.Errorf("rsync sync data to %s failed: %w", opts.Host, err), restartErr)
 	}
 
 	if err := ctx.Err(); err != nil {
+		restartErr := restartLocal()
 		cleanupRemoteStage()
-		return res, errors.Join(fmt.Errorf("sync copy to %s cancelled before remote cutover: %w", opts.Host, err), restartLocal())
+		return res, errors.Join(fmt.Errorf("sync copy to %s cancelled before remote cutover: %w", opts.Host, err), restartErr)
 	}
 
 	slog.Info("Installing staged sync data on " + opts.Host + " (keeping safety backup at " + remoteBackup + ")…")
 	cutoverOut, err := sshRun(ctx, opts, remoteCutoverScript(opts, remoteStage, remoteBackup, present, probe.configSHA256))
 	if err != nil {
+		restartErr := restartLocal()
 		if errors.Is(err, errSSHNotStarted) {
 			cleanupRemoteStage()
 		}
-		return res, errors.Join(fmt.Errorf("remote cutover on %s failed: %w", opts.Host, err), restartLocal())
+		return res, errors.Join(fmt.Errorf("remote cutover on %s failed: %w", opts.Host, err), restartErr)
 	}
 	remoteUnitFound, remoteRestarted, err := parseRemoteCutoverResult(cutoverOut)
 	if err != nil {
@@ -1113,8 +1117,8 @@ done
       exit 1
       ;;
   esac
-  need_restart=0
   swapped=0
+  need_restart=0
   backup_created=0
   rm -rf %[2]s || true
 else
@@ -1132,6 +1136,7 @@ echo "REMOTE_RESTARTED=$restart_remote"
 func defaultSSHRun(ctx context.Context, opts SyncCopyOptions, script string) (string, error) {
 	args := append(opts.sshArgs(), "--", opts.Host, opts.wrapRemote(script))
 	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd.WaitDelay = sshWaitDelay
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

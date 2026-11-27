@@ -81,6 +81,7 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 |---|---|
 | `nomctl orchestrator install [--repo REPO] [--version TAG] [--yes]` | [Orchestrator](/guide/orchestrator): download verified release (default `0x3639/orchestrator`, newest), stop, install `/usr/local/bin/orchestrator`, create unit/config if absent, start |
 | `nomctl orchestrator upgrade [--repo REPO] [--version TAG] [--yes]` | upgrade an installed orchestrator from a verified GitHub release, keeping `.previous` |
+| `nomctl orchestrator recover` | complete a pending orchestrator rollback or `.previous` publication recorded in `<binary>.pending.json` |
 | `nomctl orchestrator status` | refuses when the unit is not installed |
 | `nomctl orchestrator logs [-f] [-n 20]` | |
 | `nomctl orchestrator backup [--output DIR]` | stop, archive `events/` and `queues/` with SHA-256 sidecar, restart |

@@ -40,6 +40,7 @@ func TestOrchestratorCommandsRegisteredAndAnnotated(t *testing.T) {
 	}{
 		{[]string{"orchestrator", "install"}, false},
 		{[]string{"orchestrator", "upgrade"}, true},
+		{[]string{"orchestrator", "recover"}, true},
 		{[]string{"orchestrator", "status"}, true},
 		{[]string{"orchestrator", "logs"}, true},
 		{[]string{"orchestrator", "backup"}, true},

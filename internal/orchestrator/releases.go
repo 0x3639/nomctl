@@ -58,6 +58,7 @@ type Asset struct {
 
 // Release is one published GitHub release.
 type Release struct {
+	ID          int64     `json:"id"`
 	Tag         string    `json:"tag_name"`
 	Name        string    `json:"name"`
 	PublishedAt time.Time `json:"published_at"`
@@ -526,9 +527,11 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	if err != nil {
 		return res, err
 	}
-	if _, err := ArchiveName(hostGOOS, hostGOARCH); err != nil {
+	archiveName, err := ArchiveName(hostGOOS, hostGOARCH)
+	if err != nil {
 		return res, err
 	}
+	reqReleaseID := releaseArchiveIdentity(release, archiveName)
 
 	installed, err := Installed(cfg)
 	if err != nil {
@@ -556,15 +559,18 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	if pending, err := loadPendingDeployState(binPath); err != nil {
 		return res, err
 	} else if pending != nil {
-		switch pending.Kind {
-		case pendingRollback:
-			return res, fmt.Errorf("unresolved orchestrator rollback from failed release %s (previous binary retained at %s; state %s): recover the pending rollback before deploying another release", pending.ReleaseTag, pending.PreviousStaged, deployStatePath(binPath))
-		case pendingPublishPrevious:
+		if err := checkPendingService(binPath, pending, cfg.OrchestratorService); err != nil {
+			return res, err
+		}
+		switch pending.Phase {
+		case phaseCutover, phaseRestored:
+			return res, fmt.Errorf("unresolved orchestrator rollback from failed release %s (previous binary retained at %s; state %s): run \"sudo nomctl orchestrator recover\" before deploying another release", pending.ReleaseTag, pending.PreviousStaged, deployStatePath(binPath))
+		case phasePublishPrevious:
 			previousPath, err := completePendingPreviousPublish(cfg, binPath, pending)
 			if err != nil {
 				return res, err
 			}
-			if release.Tag != "" && release.Tag == pending.ReleaseTag {
+			if pending.matchesRelease(client.Repo(), release.Tag, reqReleaseID) {
 				res = DeployResult{
 					Repo:           client.Repo(),
 					Tag:            release.Tag,
@@ -577,7 +583,7 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 				return res, nil
 			}
 		default:
-			return res, fmt.Errorf("unknown pending orchestrator deploy state %q in %s", pending.Kind, deployStatePath(binPath))
+			return res, fmt.Errorf("unknown pending orchestrator deploy state %q in %s", pending.Phase, deployStatePath(binPath))
 		}
 	}
 
@@ -620,6 +626,7 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	defer func() { _ = os.Remove(staged) }()
 
 	var previousStaged string
+	var previousSHA string
 	keepPreviousStaged := false
 	if hasExistingBin {
 		previousStaged, err = stageCopy(binPath, binPath)
@@ -631,6 +638,10 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 				_ = os.Remove(previousStaged)
 			}
 		}()
+		previousSHA, err = fileSHA256Hex(previousStaged)
+		if err != nil {
+			return res, fmt.Errorf("hash staged previous binary %s: %w", previousStaged, err)
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return res, err
@@ -656,35 +667,56 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 			return res, err
 		}
 		wasRunning = st.Running()
+	}
+
+	// Persist transaction intent BEFORE stopping the service or replacing the
+	// live binary so a later disk-full error or crash cannot drop rollback state.
+	txState := pendingDeployState{
+		Phase:          phaseCutover,
+		Service:        cfg.OrchestratorService,
+		Repo:           client.Repo(),
+		ReleaseTag:     release.Tag,
+		ReleaseID:      reqReleaseID,
+		CandidateSHA:   binSHA,
+		PreviousStaged: previousStaged,
+		PreviousSHA:    previousSHA,
+		WasRunning:     installed && wasRunning,
+	}
+	if err := writePendingState(binPath, txState); err != nil {
+		return res, fmt.Errorf("record orchestrator deploy transaction before cutover: %w", err)
+	}
+
+	if installed {
 		slog.Info("Stopping " + cfg.OrchestratorService + "…")
 		if err := stopService(cfg.OrchestratorService); err != nil {
-			return res, recoverService(err)
+			err = recoverService(err)
+			if rmErr := removePendingDeployState(binPath); rmErr != nil {
+				err = errors.Join(err, rmErr)
+			}
+			return res, err
 		}
 	}
 
 	slog.Info("Installing orchestrator binary at " + binPath + "…")
 	if err := os.Rename(staged, binPath); err != nil {
-		return res, recoverService(fmt.Errorf("install orchestrator binary: %w", err))
+		cause := recoverService(fmt.Errorf("install orchestrator binary: %w", err))
+		if rmErr := removePendingDeployState(binPath); rmErr != nil {
+			cause = errors.Join(cause, rmErr)
+		}
+		return res, cause
 	}
 
 	unitCreated := false
 	unitPath := unitPathFor(cfg)
 	configCreated := false
 	rollbackBinary := func(cause error, stopFirst bool) error {
-		recordUnresolvedRollback := func(err error) error {
+		keepUnresolved := func(err error) error {
 			if previousStaged != "" {
 				keepPreviousStaged = true
 			}
-			if recErr := writePendingDeployState(binPath, pendingDeployState{
-				Kind:           pendingRollback,
-				ReleaseTag:     release.Tag,
-				CandidateSHA:   binSHA,
-				PreviousStaged: previousStaged,
-				WasRunning:     installed && wasRunning,
-			}); recErr != nil {
-				err = errors.Join(err, recErr)
-			}
-			return err
+			// txState (phase=cutover) was already persisted before cutover; do not
+			// clear it while rollback remains unresolved.
+			return fmt.Errorf("%w (run \"sudo nomctl orchestrator recover\" to finish rollback; state %s)", err, deployStatePath(binPath))
 		}
 		if stopFirst && (installed || unitCreated) {
 			if stopErr := stopService(cfg.OrchestratorService); stopErr != nil {
@@ -703,16 +735,29 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 				if previousStaged != "" {
 					stateErr = fmt.Errorf("%w (previous binary retained at %s)", stateErr, previousStaged)
 				}
-				return recordUnresolvedRollback(errors.Join(cause, stateErr))
+				return keepUnresolved(errors.Join(cause, stateErr))
 			}
 		}
 		if previousStaged != "" {
 			if restoreErr := os.Rename(previousStaged, binPath); restoreErr != nil {
-				return recordUnresolvedRollback(errors.Join(cause, fmt.Errorf("restore previous orchestrator binary at %s (retained at %s): %w", binPath, previousStaged, restoreErr)))
+				return keepUnresolved(errors.Join(cause, fmt.Errorf("restore previous orchestrator binary at %s (retained at %s): %w", binPath, previousStaged, restoreErr)))
 			}
 			previousStaged = ""
+		} else if err := os.Remove(binPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return keepUnresolved(errors.Join(cause, fmt.Errorf("remove failed orchestrator binary %s: %w", binPath, err)))
 		}
-		return recoverService(cause)
+		txState.Phase = phaseRestored
+		_ = writePendingState(binPath, txState)
+		if installed && wasRunning {
+			slog.Info("Restarting previous " + cfg.OrchestratorService + " after failure…")
+			if startErr := startService(cfg.OrchestratorService); startErr != nil {
+				return errors.Join(cause, fmt.Errorf("restart restored %s failed (run \"sudo nomctl orchestrator recover\" to retry starting): %w", cfg.OrchestratorService, startErr))
+			}
+		}
+		if rmErr := removePendingDeployState(binPath); rmErr != nil {
+			cause = errors.Join(cause, fmt.Errorf("rollback complete, but clearing pending state %s failed (run \"sudo nomctl orchestrator recover\" to clean up): %w", deployStatePath(binPath), rmErr))
+		}
+		return cause
 	}
 
 	if !upgradeOnly {
@@ -743,13 +788,20 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	// an unsuccessful retry can never overwrite a known-good recovery binary.
 	previousPath := ""
 	if previousStaged != "" {
-		var pubErr error
-		previousPath, pubErr = publishPreviousBinary(binPath, previousStaged, release.Tag, binSHA)
-		if pubErr != nil {
+		txState.Phase = phasePublishPrevious
+		pubStateErr := writePendingState(binPath, txState)
+		previousPath = binPath + ".previous"
+		if err := os.Rename(previousStaged, previousPath); err != nil {
 			keepPreviousStaged = true
-			return res, pubErr
+			pubErr := fmt.Errorf("orchestrator %s is running, but saving previous binary to %s failed (previous binary retained at %s; resolve the blocker and run \"sudo nomctl orchestrator recover\" or re-run the same release): %w", release.Tag, previousPath, previousStaged, err)
+			return res, errors.Join(pubStateErr, pubErr)
 		}
 		previousStaged = ""
+		if rmErr := removePendingDeployState(binPath); rmErr != nil {
+			return res, errors.Join(pubStateErr, fmt.Errorf("orchestrator %s is running and %s was published, but clearing pending state %s failed (run \"sudo nomctl orchestrator recover\" to finish cleanup): %w", release.Tag, previousPath, deployStatePath(binPath), rmErr))
+		}
+	} else if rmErr := removePendingDeployState(binPath); rmErr != nil {
+		return res, fmt.Errorf("orchestrator %s is running, but clearing pending state %s failed: %w", release.Tag, deployStatePath(binPath), rmErr)
 	}
 
 	res = DeployResult{
@@ -858,20 +910,67 @@ func protectTransaction() func() {
 }
 
 const (
-	pendingRollback        = "rollback"
-	pendingPublishPrevious = "publish-previous"
+	phaseCutover         = "cutover"
+	phaseRestored        = "restored"
+	phasePublishPrevious = "publish-previous"
+)
+
+var (
+	writePendingState  = defaultWritePendingDeployState
+	removePendingState = os.Remove
 )
 
 type pendingDeployState struct {
-	Kind           string `json:"kind"`
+	Phase          string `json:"phase"`
+	Service        string `json:"service"`
+	Repo           string `json:"repo"`
 	ReleaseTag     string `json:"releaseTag"`
+	ReleaseID      string `json:"releaseId"`
 	CandidateSHA   string `json:"candidateSha256"`
 	PreviousStaged string `json:"previousStaged"`
+	PreviousSHA    string `json:"previousSha256"`
 	WasRunning     bool   `json:"wasRunning"`
+}
+
+func (p *pendingDeployState) matchesRelease(repo, tag, releaseID string) bool {
+	return p != nil &&
+		p.Repo != "" && p.Repo == repo &&
+		p.ReleaseTag != "" && p.ReleaseTag == tag &&
+		p.ReleaseID != "" && p.ReleaseID == releaseID
+}
+
+func releaseArchiveIdentity(release Release, archiveName string) string {
+	var parts []string
+	if release.ID != 0 {
+		parts = append(parts, fmt.Sprintf("release:%d", release.ID))
+	}
+	for _, a := range release.Assets {
+		if a.Name == archiveName {
+			parts = append(parts, fmt.Sprintf("archive:%d:%s:%d:%s", a.ID, a.Name, a.Size, strings.TrimSpace(a.Digest)))
+		}
+		if a.Name == checksumName {
+			parts = append(parts, fmt.Sprintf("checksums:%d:%d:%s", a.ID, a.Size, strings.TrimSpace(a.Digest)))
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
 }
 
 func deployStatePath(binPath string) string {
 	return binPath + ".pending.json"
+}
+
+func checkPendingService(binPath string, pending *pendingDeployState, configuredService string) error {
+	if pending == nil {
+		return nil
+	}
+	if strings.TrimSpace(pending.Service) == "" {
+		return fmt.Errorf("pending orchestrator deploy state %s is missing original service identity", deployStatePath(binPath))
+	}
+	if pending.Service != configuredService {
+		return fmt.Errorf("pending orchestrator deploy state %s belongs to service %q, not configured service %q; re-run with NOMCTL_ORCHESTRATOR_SERVICE=%s", deployStatePath(binPath), pending.Service, configuredService, pending.Service)
+	}
+	return nil
 }
 
 func loadPendingDeployState(binPath string) (*pendingDeployState, error) {
@@ -897,7 +996,7 @@ func loadPendingDeployState(binPath string) (*pendingDeployState, error) {
 	return &state, nil
 }
 
-func writePendingDeployState(binPath string, state pendingDeployState) error {
+func defaultWritePendingDeployState(binPath string, state pendingDeployState) error {
 	statePath := deployStatePath(binPath)
 	if st, err := os.Lstat(statePath); err == nil {
 		if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
@@ -942,21 +1041,12 @@ func writePendingDeployState(binPath string, state pendingDeployState) error {
 	return nil
 }
 
-func publishPreviousBinary(binPath, previousStaged, releaseTag, candidateSHA string) (string, error) {
-	previousPath := binPath + ".previous"
-	if err := os.Rename(previousStaged, previousPath); err != nil {
-		pubErr := fmt.Errorf("orchestrator %s is running, but saving previous binary to %s failed (previous binary retained at %s): %w", releaseTag, previousPath, previousStaged, err)
-		if recErr := writePendingDeployState(binPath, pendingDeployState{
-			Kind:           pendingPublishPrevious,
-			ReleaseTag:     releaseTag,
-			CandidateSHA:   candidateSHA,
-			PreviousStaged: previousStaged,
-		}); recErr != nil {
-			pubErr = errors.Join(pubErr, recErr)
-		}
-		return "", pubErr
+func removePendingDeployState(binPath string) error {
+	err := removePendingState(deployStatePath(binPath))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	return previousPath, nil
+	return err
 }
 
 func validateRetainedPreviousPath(binPath, retainedPath string) (string, error) {
@@ -995,31 +1085,58 @@ func fileSHA256Hex(path string) (string, error) {
 }
 
 func completePendingPreviousPublish(cfg config.Config, binPath string, pending *pendingDeployState) (string, error) {
-	retained, err := validateRetainedPreviousPath(binPath, pending.PreviousStaged)
-	if err != nil {
+	if err := checkPendingService(binPath, pending, cfg.OrchestratorService); err != nil {
 		return "", err
 	}
-	if pending.CandidateSHA != "" {
-		liveSHA, err := fileSHA256Hex(binPath)
-		if err != nil {
-			return "", fmt.Errorf("verify running orchestrator binary %s before publishing .previous: %w", binPath, err)
-		}
-		if liveSHA != pending.CandidateSHA {
-			return "", fmt.Errorf("live orchestrator binary %s changed since %s was verified; refusing to publish %s to .previous", binPath, pending.ReleaseTag, retained)
-		}
+	if pending.CandidateSHA == "" {
+		return "", fmt.Errorf("pending .previous state %s is missing candidate SHA-256", deployStatePath(binPath))
 	}
-	st, err := serviceStatus(cfg.OrchestratorService)
+	liveSHA, err := fileSHA256Hex(binPath)
 	if err != nil {
-		return "", fmt.Errorf("verify %s is active before publishing .previous: %w", cfg.OrchestratorService, err)
+		return "", fmt.Errorf("verify running orchestrator binary %s before publishing .previous: %w", binPath, err)
+	}
+	if liveSHA != pending.CandidateSHA {
+		return "", fmt.Errorf("live orchestrator binary %s changed since %s was verified; refusing to publish .previous", binPath, pending.ReleaseTag)
+	}
+	st, err := serviceStatus(pending.Service)
+	if err != nil {
+		return "", fmt.Errorf("verify %s is active before publishing .previous: %w", pending.Service, err)
 	}
 	if st != service.Active {
-		return "", fmt.Errorf("%s is %s (expected active); refusing to publish %s to .previous", cfg.OrchestratorService, st, retained)
+		return "", fmt.Errorf("%s is %s (expected active); refusing to publish .previous", pending.Service, st)
 	}
+
 	previousPath := binPath + ".previous"
-	if err := os.Rename(retained, previousPath); err != nil {
-		return "", fmt.Errorf("finish publishing previous binary to %s (retained at %s): %w", previousPath, retained, err)
+	alreadyPublished := false
+	if _, err := os.Lstat(pending.PreviousStaged); errors.Is(err, os.ErrNotExist) {
+		if pending.PreviousSHA == "" {
+			return "", fmt.Errorf("retained previous binary %s is missing and pending state lacks previous SHA-256", pending.PreviousStaged)
+		}
+		prevSHA, prevErr := fileSHA256Hex(previousPath)
+		if prevErr != nil || prevSHA != pending.PreviousSHA {
+			return "", fmt.Errorf("retained previous binary %s is missing and %s does not match the expected previous binary", pending.PreviousStaged, previousPath)
+		}
+		alreadyPublished = true
 	}
-	if err := os.Remove(deployStatePath(binPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if !alreadyPublished {
+		retained, err := validateRetainedPreviousPath(binPath, pending.PreviousStaged)
+		if err != nil {
+			return "", err
+		}
+		if pending.PreviousSHA != "" {
+			stagedSHA, err := fileSHA256Hex(retained)
+			if err != nil {
+				return "", fmt.Errorf("verify retained previous binary %s: %w", retained, err)
+			}
+			if stagedSHA != pending.PreviousSHA {
+				return "", fmt.Errorf("retained previous binary %s checksum mismatch; refusing to publish .previous", retained)
+			}
+		}
+		if err := os.Rename(retained, previousPath); err != nil {
+			return "", fmt.Errorf("finish publishing previous binary to %s (retained at %s): %w", previousPath, retained, err)
+		}
+	}
+	if err := removePendingDeployState(binPath); err != nil {
 		return previousPath, fmt.Errorf("published %s, but clearing pending state %s failed: %w", previousPath, deployStatePath(binPath), err)
 	}
 	return previousPath, nil
@@ -1037,17 +1154,17 @@ func CompletePendingPreviousPublish(cfg config.Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if pending == nil || pending.Kind != pendingPublishPrevious {
+	if pending == nil || pending.Phase != phasePublishPrevious {
 		return "", fmt.Errorf("no pending .previous publication found for %s", binPath)
 	}
 	return completePendingPreviousPublish(cfg, binPath, pending)
 }
 
 // RecoverPendingRollback completes an unresolved orchestrator rollback recorded
-// after a failed deployment could not confirm a stop or restore the previous
-// binary. Once the unit is confirmed stopped, it restores the retained previous
-// binary (or removes a failed fresh-install binary), clears the pending state,
-// and restarts the service if it had been running.
+// in <binary>.pending.json. If the previous binary is not yet restored, it
+// confirms the original unit stopped before restoring; if the previous binary
+// is already at the live path (including retries after state-cleanup or restart
+// failures), it resumes only the remaining restart and state cleanup steps.
 func RecoverPendingRollback(cfg config.Config) error {
 	binPath, err := ValidateBinaryPath(cfg.OrchestratorBinaryPath())
 	if err != nil {
@@ -1057,44 +1174,170 @@ func RecoverPendingRollback(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	if pending == nil || pending.Kind != pendingRollback {
+	if pending == nil || (pending.Phase != phaseCutover && pending.Phase != phaseRestored) {
 		return fmt.Errorf("no pending rollback found for %s", binPath)
 	}
-	retained := ""
-	if pending.PreviousStaged != "" {
-		retained, err = validateRetainedPreviousPath(binPath, pending.PreviousStaged)
-		if err != nil {
-			return err
+	if err := checkPendingService(binPath, pending, cfg.OrchestratorService); err != nil {
+		return err
+	}
+
+	alreadyRestored := false
+	switch pending.Phase {
+	case phaseRestored:
+		if pending.PreviousSHA != "" {
+			liveSHA, err := fileSHA256Hex(binPath)
+			if err != nil || liveSHA != pending.PreviousSHA {
+				return fmt.Errorf("pending state %s marks rollback restored, but %s does not match the expected previous binary", deployStatePath(binPath), binPath)
+			}
+		} else if _, err := os.Lstat(binPath); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("pending state %s marks failed install removed, but %s still exists", deployStatePath(binPath), binPath)
+		}
+		alreadyRestored = true
+	case phaseCutover:
+		if pending.PreviousStaged != "" {
+			if _, err := os.Lstat(pending.PreviousStaged); errors.Is(err, os.ErrNotExist) {
+				if pending.PreviousSHA != "" {
+					if liveSHA, shaErr := fileSHA256Hex(binPath); shaErr == nil && liveSHA == pending.PreviousSHA {
+						alreadyRestored = true
+					}
+				}
+				if !alreadyRestored {
+					return fmt.Errorf("retained previous binary %s is missing and %s does not match the expected previous binary", pending.PreviousStaged, binPath)
+				}
+			}
+		} else if _, err := os.Lstat(binPath); errors.Is(err, os.ErrNotExist) {
+			alreadyRestored = true
 		}
 	}
+
 	var stopErr error
-	if err := stopService(cfg.OrchestratorService); err != nil {
-		stopErr = fmt.Errorf("stop %s during rollback recovery: %w", cfg.OrchestratorService, err)
-	}
-	st, stErr := serviceStatus(cfg.OrchestratorService)
-	if stErr != nil || !st.Stopped() {
-		if stErr != nil {
-			return errors.Join(stopErr, fmt.Errorf("confirm %s stopped during rollback recovery: %w", cfg.OrchestratorService, stErr))
+	if !alreadyRestored {
+		// Verify binPath still holds the failed candidate before overwriting or
+		// removing it, so recovery never clobbers a manually reconciled binary.
+		if _, statErr := os.Lstat(binPath); statErr == nil {
+			if pending.CandidateSHA == "" {
+				return fmt.Errorf("pending rollback state %s is missing candidate SHA-256; refusing to modify %s", deployStatePath(binPath), binPath)
+			}
+			liveSHA, shaErr := fileSHA256Hex(binPath)
+			if shaErr != nil {
+				return fmt.Errorf("inspect live orchestrator binary %s before rollback: %w", binPath, shaErr)
+			}
+			if liveSHA != pending.CandidateSHA {
+				return fmt.Errorf("live orchestrator binary %s no longer matches failed candidate %s; refusing to overwrite or remove manually changed binary (remove %s if you already reconciled manually)", binPath, pending.ReleaseTag, deployStatePath(binPath))
+			}
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect live orchestrator binary %s before rollback: %w", binPath, statErr)
 		}
-		return errors.Join(stopErr, fmt.Errorf("%s is still %s; refusing to restore %s", cfg.OrchestratorService, st, binPath))
-	}
-	if retained != "" {
-		if err := os.Rename(retained, binPath); err != nil {
-			return errors.Join(stopErr, fmt.Errorf("restore previous orchestrator binary at %s from %s: %w", binPath, retained, err))
+		retained := ""
+		if pending.PreviousStaged != "" {
+			retained, err = validateRetainedPreviousPath(binPath, pending.PreviousStaged)
+			if err != nil {
+				return err
+			}
+			if pending.PreviousSHA != "" {
+				stagedSHA, err := fileSHA256Hex(retained)
+				if err != nil {
+					return fmt.Errorf("verify retained previous binary %s: %w", retained, err)
+				}
+				if stagedSHA != pending.PreviousSHA {
+					return fmt.Errorf("retained previous binary %s checksum mismatch; refusing rollback", retained)
+				}
+			}
 		}
-	} else if err := os.Remove(binPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Join(stopErr, fmt.Errorf("remove failed orchestrator binary %s: %w", binPath, err))
-	}
-	if err := os.Remove(deployStatePath(binPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Join(stopErr, fmt.Errorf("clear pending rollback state %s: %w", deployStatePath(binPath), err))
-	}
-	if pending.WasRunning && retained != "" {
-		if err := startService(cfg.OrchestratorService); err != nil {
-			return errors.Join(stopErr, fmt.Errorf("restart recovered %s: %w", cfg.OrchestratorService, err))
+		if err := stopService(pending.Service); err != nil {
+			stopErr = fmt.Errorf("stop %s during rollback recovery: %w", pending.Service, err)
 		}
+		st, stErr := serviceStatus(pending.Service)
+		if stErr != nil || !st.Stopped() {
+			if stErr != nil {
+				return errors.Join(stopErr, fmt.Errorf("confirm %s stopped during rollback recovery: %w", pending.Service, stErr))
+			}
+			return errors.Join(stopErr, fmt.Errorf("%s is still %s; refusing to restore %s", pending.Service, st, binPath))
+		}
+		if retained != "" {
+			if err := os.Rename(retained, binPath); err != nil {
+				return errors.Join(stopErr, fmt.Errorf("restore previous orchestrator binary at %s from %s: %w", binPath, retained, err))
+			}
+		} else if err := os.Remove(binPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(stopErr, fmt.Errorf("remove failed orchestrator binary %s: %w", binPath, err))
+		}
+		pending.Phase = phaseRestored
+		_ = writePendingState(binPath, *pending)
+	}
+
+	if pending.WasRunning && pending.PreviousSHA != "" {
+		st, stErr := serviceStatus(pending.Service)
+		if stErr != nil || st != service.Active {
+			if err := startService(pending.Service); err != nil {
+				return errors.Join(stopErr, fmt.Errorf("restart recovered %s (binary restored; re-run \"sudo nomctl orchestrator recover\" to retry starting): %w", pending.Service, err))
+			}
+			if st, stErr = serviceStatus(pending.Service); stErr != nil || st != service.Active {
+				if stErr != nil {
+					return errors.Join(stopErr, fmt.Errorf("verify recovered %s is active: %w", pending.Service, stErr))
+				}
+				return errors.Join(stopErr, fmt.Errorf("recovered %s is %s after restart", pending.Service, st))
+			}
+		}
+	}
+
+	if err := removePendingDeployState(binPath); err != nil {
+		return errors.Join(stopErr, fmt.Errorf("rollback complete, but clearing pending state %s failed: %w", deployStatePath(binPath), err))
 	}
 	if stopErr != nil {
 		slog.Warn("Rollback recovery succeeded after transient stop error: " + stopErr.Error())
 	}
 	return nil
+}
+
+// RecoverPendingDeploy completes whichever pending deployment transaction is
+// recorded in <binary>.pending.json (an unresolved rollback or a pending
+// .previous binary publication).
+func RecoverPendingDeploy(cfg config.Config) (string, error) {
+	binPath, err := ValidateBinaryPath(cfg.OrchestratorBinaryPath())
+	if err != nil {
+		return "", err
+	}
+	pending, err := loadPendingDeployState(binPath)
+	if err != nil {
+		return "", err
+	}
+	if pending == nil {
+		return "", fmt.Errorf("no pending orchestrator deployment recovery found for %s", binPath)
+	}
+	if err := checkPendingService(binPath, pending, cfg.OrchestratorService); err != nil {
+		return "", err
+	}
+	switch pending.Phase {
+	case phaseCutover:
+		if pending.PreviousStaged != "" && pending.CandidateSHA != "" && pending.PreviousSHA != "" {
+			if _, statErr := os.Lstat(pending.PreviousStaged); errors.Is(statErr, os.ErrNotExist) {
+				liveSHA, liveErr := fileSHA256Hex(binPath)
+				prevSHA, prevErr := fileSHA256Hex(binPath + ".previous")
+				if liveErr == nil && liveSHA == pending.CandidateSHA && prevErr == nil && prevSHA == pending.PreviousSHA {
+					prevPath, err := completePendingPreviousPublish(cfg, binPath, pending)
+					if err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Published previous orchestrator binary to %s", prevPath), nil
+				}
+			}
+		}
+		if err := RecoverPendingRollback(cfg); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Recovered pending rollback for %s (%s)", pending.Service, binPath), nil
+	case phaseRestored:
+		if err := RecoverPendingRollback(cfg); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Recovered pending rollback for %s (%s)", pending.Service, binPath), nil
+	case phasePublishPrevious:
+		prevPath, err := CompletePendingPreviousPublish(cfg)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Published previous orchestrator binary to %s", prevPath), nil
+	default:
+		return "", fmt.Errorf("unknown pending orchestrator deploy state %q in %s", pending.Phase, deployStatePath(binPath))
+	}
 }

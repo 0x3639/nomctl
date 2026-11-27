@@ -519,6 +519,29 @@ func restartOrchestratorIfAsked(out io.Writer, restart bool) error {
 	return service.Restart(cfg.OrchestratorService)
 }
 
+var orchestratorRecoverCmd = &cobra.Command{
+	Use:   "recover",
+	Short: "Complete a pending orchestrator rollback or .previous binary publication",
+	Long: `Finishes an interrupted or unresolved orchestrator install/upgrade recorded
+in <binary>.pending.json: stops the original unit, restores the previous binary
+and restarts it (for a pending rollback), or finishes promoting the retained
+previous binary to .previous without restarting a verified running release.`,
+	Args:        cobra.NoArgs,
+	Annotations: diagnostic(),
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		var summary string
+		if err := withLock("orchestrator recover", func() error {
+			var err error
+			summary, err = orchestrator.RecoverPendingDeploy(cfg)
+			return err
+		}); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), summary)
+		return nil
+	},
+}
+
 var orchestratorHardResetCmd = &cobra.Command{
 	Use:   "hard-reset",
 	Short: "Stop the orchestrator, delete its queues and events, start it again",
@@ -572,6 +595,7 @@ func init() {
 	orchestratorCmd.AddCommand(
 		orchestratorInstallCmd,
 		orchestratorUpgradeCmd,
+		orchestratorRecoverCmd,
 		orchestratorStatusCmd,
 		orchestratorLogsCmd,
 		orchestratorBackupCmd,

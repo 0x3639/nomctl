@@ -241,6 +241,9 @@ func TestCopySyncDataSequenceAndFailureRecovery(t *testing.T) {
 	if strings.Index(cutover, `installed_dirs="$installed_dirs $d"`) > strings.Index(cutover, `mv `+sshQuote(syncedStage)+`/"$d"`) {
 		t.Fatalf("installed_dirs must be recorded before stage-to-live mv:\n%s", cutover)
 	}
+	if strings.Index(cutover, "  swapped=0\n") > strings.Index(cutover, "  need_restart=0\n") {
+		t.Fatalf("swapped=0 must be cleared before need_restart=0:\n%s", cutover)
+	}
 	if out, err := exec.Command("sh", "-n", "-c", cutover).CombinedOutput(); err != nil {
 		t.Fatalf("cutover script failed sh -n syntax check: %v\n%s", err, string(out))
 	}
@@ -489,6 +492,26 @@ exit 1
 	if !errors.Is(err, errSSHNotStarted) {
 		t.Fatalf("expected errSSHNotStarted for pre-cancelled context, got %v", err)
 	}
+
+	// Inherited pipe held open by a grandchild (e.g. blocked ProxyCommand) is bounded by sshWaitDelay.
+	oldWaitDelay := sshWaitDelay
+	sshWaitDelay = 150 * time.Millisecond
+	t.Cleanup(func() { sshWaitDelay = oldWaitDelay })
+	writeExecScript(t, filepath.Join(binDir, "ssh"), `#!/bin/sh
+(sleep 30) &
+sleep 30
+`)
+	shortCtx, shortCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer shortCancel()
+	start := time.Now()
+	_, err = defaultSSHRun(shortCtx, opts, "true")
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout error from hanging ssh helper")
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("defaultSSHRun blocked too long on inherited pipe (%s)", elapsed)
+	}
 }
 
 func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.T) {
@@ -500,9 +523,15 @@ func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.
 	t.Cleanup(func() { sshRun, rsyncRun, toolExists = oldSSH, oldRsync, oldTool })
 	toolExists = func(string) bool { return true }
 
-	t.Run("cancelled after rsync cleans up remote stage with bounded context", func(t *testing.T) {
+	t.Run("cancelled after rsync restarts local before remote cleanup with bounded context", func(t *testing.T) {
 		calls := stubDeployHost(t, true, service.Active, filepath.Join(t.TempDir(), "orchestrator.service"))
 		ctx, cancel := context.WithCancel(context.Background())
+		var events []string
+		oldStart := startService
+		startService = func(name string) error {
+			events = append(events, "start-local")
+			return oldStart(name)
+		}
 		var cleanupRan bool
 		var cleanupHasDeadline bool
 		var cleanupCtxErr error
@@ -514,6 +543,7 @@ func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.
 				return "CONFIG_PRESENT=0\nLOAD=loaded\nACTIVE=active\n", nil
 			}
 			if strings.HasPrefix(script, "rm -rf ") {
+				events = append(events, "cleanup-remote")
 				cleanupRan = strings.Contains(script, stagedPath)
 				_, cleanupHasDeadline = runCtx.Deadline()
 				cleanupCtxErr = runCtx.Err()
@@ -531,6 +561,9 @@ func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.
 		}
 		if !cleanupRan || !cleanupHasDeadline || cleanupCtxErr != nil {
 			t.Fatalf("expected bounded live cleanup of %q (ran=%v deadline=%v ctxErr=%v)", stagedPath, cleanupRan, cleanupHasDeadline, cleanupCtxErr)
+		}
+		if strings.Join(events, ",") != "start-local,cleanup-remote" {
+			t.Fatalf("local restart must precede remote cleanup, got %v", events)
 		}
 		if strings.Join(*calls, ",") != "stop orchestrator,start orchestrator" {
 			t.Fatalf("local service must restart after pre-cutover cancellation: %v", *calls)
@@ -572,6 +605,7 @@ func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.
 
 	t.Run("post-dispatch cutover error preserves remote recovery artifacts", func(t *testing.T) {
 		calls := stubDeployHost(t, true, service.Active, filepath.Join(t.TempDir(), "orchestrator.service"))
+		errPostDispatchCutover := errors.New("exit status 1: rollback incomplete")
 		cleanupRan := false
 		sshCalls := 0
 		sshRun = func(_ context.Context, _ SyncCopyOptions, script string) (string, error) {
@@ -580,7 +614,7 @@ func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.
 			case sshCalls == 1:
 				return "CONFIG_PRESENT=0\nLOAD=loaded\nACTIVE=active\n", nil
 			case strings.Contains(script, "REMOTE_RESTARTED="):
-				return "", errors.New("exit status 1: rollback incomplete")
+				return "", errPostDispatchCutover
 			case strings.HasPrefix(script, "rm -rf "):
 				cleanupRan = true
 			}
@@ -588,8 +622,9 @@ func TestCopySyncDataCutoverPreDispatchCleanupVsPostDispatchPreserve(t *testing.
 		}
 		rsyncRun = func(_ context.Context, _ SyncCopyOptions, _ []string, _ string) error { return nil }
 
-		if _, err := CopySyncData(context.Background(), cfg, SyncCopyOptions{Host: "root@target.example"}); err == nil {
-			t.Fatal("expected cutover error")
+		_, err := CopySyncData(context.Background(), cfg, SyncCopyOptions{Host: "root@target.example"})
+		if !errors.Is(err, errPostDispatchCutover) {
+			t.Fatalf("expected sentinel post-dispatch cutover error, got %v", err)
 		}
 		if cleanupRan {
 			t.Fatal("post-dispatch cutover error must NOT delete remote recovery artifacts")
