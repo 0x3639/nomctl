@@ -20,7 +20,7 @@ The daemon samples every 30 seconds and keeps 30 minutes of history. Each rule i
 | `backup_stale` | warning | a daily cron schedule or older backup timer is configured and no archive exists (including before the first scheduled run), or the newest archive is older than cadence + 1 day | |
 | `rpc_unreachable` | warning | the service is active but the local RPC's stats calls have not answered for the window; a slow ledger call alone does not count | `minutes=5` |
 | `node_silent` | critical | raised by the relay: no heartbeat from the node for 5 minutes | relay setting |
-| `wallet_backup_missing` | info, **off by default** | a producer key is configured and no [wallet backup](/guide/backups#wallet-and-config-backup) is newer than the key file; sent once, clears after `nomctl backup wallet` | |
+| `wallet_backup_missing` | info, **off by default** | a producer key is configured and no [wallet backup](/guide/backups#wallet-and-config-backup) is newer than the key file; sent once, clears after `nomctl backup wallet` (only applies when `NOMCTL_ZNN_DIR` is outside `/root` and readable by the daemon; see [What it cannot access](/alerts/pairing#what-it-cannot-access)) | |
 | `update_available` | info, **off by default** | a newer nomctl release exists, or the configured go-zenon branch has commits beyond the running build; sent once, no reminders | |
 
 ## Which alert for which failure

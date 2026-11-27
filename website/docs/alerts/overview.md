@@ -1,11 +1,16 @@
 ---
 title: Alerts overview
-description: "Telegram alerts for Zenon nodes through a shared relay: how it works, what you get, and privacy."
+description: "Telegram alerts for Zenon nodes through a shared relay: architecture, setup, privacy, and system access."
 ---
 
 nomctl can message you on Telegram when the node needs attention, and again when it recovers.
 
-All operators share one bot; each operator only sees alerts for the nodes they paired. The bot token lives on a small relay service, never on your node. Your node signs every report with a secret created at pairing, and the relay forwards it to your chat only.
+Alerting has two components:
+
+- **The node-side alerts daemon** (`nomctl-alerts.service` plus the offline `nomctl-alerts-probe.timer` helper) — runs on your node, samples health every 30 seconds, evaluates alert rules, and pushes signed reports outward.
+- **The relay** (`nomctl-relay`) — a container that holds the Telegram bot token (never stored on your node), forwards each node's reports only to its paired chat, and raises `node_silent` if heartbeats stop.
+
+All operators using the community relay share one bot; each operator only sees alerts for the nodes they paired. Your node signs every report with an HMAC-SHA256 secret created at pairing.
 
 ```
 node (nomctl-alerts.service)  ──HTTPS, signed──▶  relay (alerts.zenon.info)  ──Bot API──▶  Telegram
@@ -18,13 +23,13 @@ node (nomctl-alerts.service)  ──HTTPS, signed──▶  relay (alerts.zenon.
 - A `node silent` alert from the relay when the whole machine stops reporting, which the node itself could never send.
 - Per-alert thresholds and switches on the node, mutes from Telegram.
 
-## The three steps
+## Deploying in three steps
 
 1. Send `/start` to the bot and get a pairing code.
 2. Run `sudo nomctl alerts setup` on the node.
-3. Read the test message in your chat.
+3. Confirm the "paired and reporting" and test messages in your chat.
 
-Details in [Pairing](/alerts/pairing), the full list of alerts in [Rules](/alerts/rules), the chat commands in [Telegram commands](/alerts/telegram-commands), and how to run your own relay in [Relay](/alerts/relay).
+Details and step-by-step setup/upgrade instructions are in [Pairing](/alerts/pairing), the full list of alerts in [Rules](/alerts/rules), the chat commands in [Telegram commands](/alerts/telegram-commands), and self-hosting instructions in [Relay](/alerts/relay).
 
 :::warning[Privacy notice: your node's IP address is visible to the relay]
 
@@ -34,6 +39,12 @@ If your pillar's IP address must stay private, [run your own relay](/alerts/rela
 
 :::
 
-## Privacy
+## System access and privacy summary
 
-The relay stores your chat id, the node name and host name, the last heartbeat summary (sync state, height, peers, restarts), mutes, and when each alert was last sent. Alert text is forwarded, not stored. The relay never sends anything to a node. Unpairing from either side invalidates the node's secret immediately.
+| Component | Runs as | Network access | Sensitive files it cannot access |
+|---|---|---|---|
+| `nomctl-alerts.service` | locked user `nomctl` (no capabilities) | outbound HTTPS to relay (every 30 s) and GitHub update check (hourly, if enabled); no listening ports | `/root`, `/root/.znn` (wallet, producer keys, `config.json`), `znnd` process memory, Telegram bot token |
+| `nomctl-alerts-probe.service` | `root` (oneshot every 30 s) | **none** (`PrivateNetwork=true`) | `/root/.znn/wallet/`, producer keys/passwords, chain databases |
+| `nomctl-relay` | distroless non-root (`uid 65532`, no shell) | inbound HTTPS via proxy, outbound to `api.telegram.org` | no access back into any node (nodes only push) |
+
+For the complete file, RPC, `/proc`, and storage disclosure, see [What runs on the node](/alerts/pairing#what-runs-on-the-node) and [What the relay accesses and stores](/alerts/relay#what-the-relay-accesses-and-stores). Unpairing from either side invalidates the node's secret immediately.
