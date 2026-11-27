@@ -79,8 +79,16 @@ Every menu action is a subcommand. All require root except `--help`, `--version`
 
 | Command | Notes |
 |---|---|
+| `nomctl orchestrator install [--repo REPO] [--version TAG] [--yes]` | [Orchestrator](/guide/orchestrator): download verified release (default `0x3639/orchestrator`, newest), stop, install `/usr/local/bin/orchestrator`, create unit/config if absent, start |
+| `nomctl orchestrator upgrade [--repo REPO] [--version TAG] [--yes]` | upgrade an installed orchestrator from a verified GitHub release, keeping `.previous` |
 | `nomctl orchestrator status` | refuses when the unit is not installed |
 | `nomctl orchestrator logs [-f] [-n 20]` | |
+| `nomctl orchestrator backup [--output DIR]` | stop, archive `events/` and `queues/` with SHA-256 sidecar, restart |
+| `nomctl orchestrator copy-sync --to HOST [--port 22] [--remote-dir PATH] [--remote-service NAME] [--sudo] [--yes]` | copy `events/` and `queues/` over SSH via `rsync` with a remote safety backup |
+| `nomctl orchestrator config show [--show-secrets]` | print orchestrator `config.json` (secrets redacted by default) |
+| `nomctl orchestrator config edit [--restart]` | `$EDITOR`, validated before atomic save with backup |
+| `nomctl orchestrator template list` | list built-in Alchemy and dRPC (`drpc.org`) sync templates |
+| `nomctl orchestrator template apply [--provider alchemy\|drpc] [--network bnb\|ethereum\|all] [--bnb PROVIDER] [--eth PROVIDER] [--restart]` | apply per-network sync settings while preserving `Urls` and unrelated config |
 | `nomctl orchestrator hard-reset` | [Orchestrator](/guide/orchestrator): stop, delete `queues/` and `events/`, start |
 
 ## Observability

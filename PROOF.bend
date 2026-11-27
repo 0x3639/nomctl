@@ -653,3 +653,18 @@ def Laws.oversized_alert_is_rejected(kind, state, severity):
 
 def Laws.ui_runs_action_once(calls):
   {==}
+
+def Laws.orchestrator_sync_includes_sync_dirs():
+  {==}
+
+def Laws.orchestrator_sync_preserves_config():
+  {==}
+
+def Laws.orchestrator_sync_preserves_tss():
+  {==}
+
+def Laws.orchestrator_sync_preserves_producer():
+  {==}
+
+def Laws.orchestrator_sync_preserves_other():
+  {==}

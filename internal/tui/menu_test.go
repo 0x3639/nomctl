@@ -29,7 +29,13 @@ func TestRequestedLabelsAndReachableActions(t *testing.T) {
 		ActionCreatePoint: "Create restore point", ActionRestorePoint: "Restore from restore point", ActionManagePoints: "Manage restore points",
 		ActionBootstrap: `Restore from "trusted" bootstrap snapshot`,
 		ActionDeploy:    "Deploy a node from source", ActionUpgradeSource: "Upgrade a node from source",
-		ActionUpgradeNode: "Upgrade a node from signed release",
+		ActionUpgradeNode:   "Upgrade a node from signed release",
+		ActionOrchInstall:   "Install orchestrator",
+		ActionOrchUpgrade:   "Upgrade orchestrator",
+		ActionOrchBackup:    "Backup sync data",
+		ActionOrchCopySync:  "Copy sync data to another server",
+		ActionOrchConfig:    "Edit config.json",
+		ActionOrchTemplates: "Apply sync templates",
 	}
 	seen := map[Action]bool{}
 	for group, menu := range menus {
@@ -90,6 +96,44 @@ func TestSubmenuNavigation(t *testing.T) {
 	}
 	if len(calls) != 2 || calls[0] != ActionCreatePoint || calls[1] != ActionRestore {
 		t.Fatal(calls)
+	}
+}
+
+func TestOrchestratorNestedMenuNavigation(t *testing.T) {
+	if got := menuTitle(menuOrchestrator); got != "nomctl › Pillar & orchestrator › Orchestrator" {
+		t.Fatalf("menuTitle(menuOrchestrator) = %q", got)
+	}
+	steps := []struct {
+		menu, previous, choice Action
+		err                    error
+	}{
+		{"", "", menuPillar, nil},
+		{menuPillar, "", menuOrchestrator, nil},
+		{menuOrchestrator, "", ActionOrchTemplates, nil},
+		{menuOrchestrator, ActionOrchTemplates, ActionBack, nil},
+		{menuPillar, menuOrchestrator, ActionBack, nil},
+		{"", menuPillar, ActionExit, nil},
+	}
+	index := 0
+	choose := func(menu, previous Action) (Action, error) {
+		if index >= len(steps) {
+			t.Fatal("menu did not exit")
+		}
+		step := steps[index]
+		index++
+		if menu != step.menu || previous != step.previous {
+			t.Fatalf("step %d: menu=%s previous=%s, want menu=%s previous=%s", index, menu, previous, step.menu, step.previous)
+		}
+		return step.choice, step.err
+	}
+	var calls []Action
+	dispatch := func(_ *config.Config, a Action) error { calls = append(calls, a); return nil }
+	cfg := config.Default()
+	if err := runMenus(&cfg, choose, dispatch); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != ActionOrchTemplates {
+		t.Fatalf("calls = %v", calls)
 	}
 }
 

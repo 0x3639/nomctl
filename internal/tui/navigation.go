@@ -16,6 +16,7 @@ const (
 	menuBackups          Action = "backups"
 	menuInstall          Action = "install"
 	menuPillar           Action = "pillar-orchestrator"
+	menuOrchestrator     Action = "orchestrator"
 	menuTools            Action = "tools"
 	ActionBack           Action = "back"
 	ActionUpgradeSource  Action = "upgrade-source"
@@ -31,8 +32,14 @@ const (
 	ActionPillarStatus   Action = "pillar-status"
 	ActionPillarSetup    Action = "pillar-setup"
 	ActionMigration      Action = "migrate"
+	ActionOrchInstall    Action = "orchestrator-install"
+	ActionOrchUpgrade    Action = "orchestrator-upgrade"
 	ActionOrchStatus     Action = "orchestrator-status"
 	ActionOrchLogs       Action = "orchestrator-logs"
+	ActionOrchBackup     Action = "orchestrator-backup"
+	ActionOrchCopySync   Action = "orchestrator-copy-sync"
+	ActionOrchConfig     Action = "orchestrator-config"
+	ActionOrchTemplates  Action = "orchestrator-templates"
 	ActionOrchReset      Action = "orchestrator-reset"
 )
 
@@ -87,8 +94,17 @@ var menus = map[Action]menuDefinition{
 	menuPillar: {"Pillar & orchestrator", []menuEntry{
 		{ActionPillarStatus, "Pillar status", "Show the configured producer address and key file."},
 		{ActionPillarSetup, "Set up producer key", "Create a producer key or configure an existing one."},
+		{menuOrchestrator, "Manage orchestrator", "Install, upgrade, configure, back up and operate the orchestrator."},
+	}},
+	menuOrchestrator: {"Orchestrator", []menuEntry{
+		{ActionOrchInstall, "Install orchestrator", "Download a GitHub release, set up the service if needed, install and start."},
+		{ActionOrchUpgrade, "Upgrade orchestrator", "Download a GitHub release, stop, replace /usr/local/bin/orchestrator and restart."},
 		{ActionOrchStatus, "Orchestrator status", "Show the state of the configured orchestrator service."},
 		{ActionOrchLogs, "View orchestrator logs", "Follow orchestrator logs; Ctrl+C returns to this menu."},
+		{ActionOrchBackup, "Backup sync data", "Stop orchestrator, archive events/ and queues/ with a SHA-256 hash, then restart."},
+		{ActionOrchCopySync, "Copy sync data to another server", "Copy events/ and queues/ over SSH with rsync and a remote safety backup."},
+		{ActionOrchConfig, "Edit config.json", "Edit orchestrator config.json in $EDITOR with JSON validation and backup."},
+		{ActionOrchTemplates, "Apply sync templates", "Apply Alchemy or dRPC (drpc.org) sync settings per EVM network (BNB Chain / Ethereum)."},
 		{ActionOrchReset, "Reset orchestrator", "Delete queues and events, then restart; confirmation required."},
 	}},
 	menuTools: {"Alerts & tools", []menuEntry{
@@ -98,12 +114,35 @@ var menus = map[Action]menuDefinition{
 	}},
 }
 
+var parentMenu = map[Action]Action{
+	menuOrchestrator: menuPillar,
+}
+
 func menuEntries(menu Action) []menuEntry {
 	entries := append([]menuEntry(nil), menus[menu].entries...)
 	if menu != "" {
-		entries = append(entries, menuEntry{ActionBack, "Back", "Return to the main menu."})
+		backDesc := "Return to the main menu."
+		if parent := parentMenu[menu]; parent != "" {
+			backDesc = "Return to " + menus[parent].title + "."
+		}
+		entries = append(entries, menuEntry{ActionBack, "Back", backDesc})
 	}
 	return entries
+}
+
+func menuTitle(menu Action) string {
+	if menu == "" {
+		return "nomctl"
+	}
+	var chain []string
+	for cur := menu; cur != ""; cur = parentMenu[cur] {
+		chain = append([]string{menus[cur].title}, chain...)
+	}
+	title := "nomctl"
+	for _, part := range chain {
+		title += " › " + part
+	}
+	return title
 }
 
 // MenuOptions returns the top-level groups with readable labels.
@@ -123,10 +162,7 @@ func chooseMenu(menu Action, previous Action) (Action, error) {
 	if chosen == "" {
 		chosen = string(entries[0].action)
 	}
-	title := "nomctl"
-	if menu != "" {
-		title += " › " + menus[menu].title
-	}
+	title := menuTitle(menu)
 	sel := huh.NewSelect[string]().Title(ui.StyleHeader.Render(title)).Options(optionsFor(entries)...).Value(&chosen)
 	sel.DescriptionFunc(func() string {
 		for _, e := range entries {
@@ -157,7 +193,7 @@ func runMenus(cfg *config.Config, choose func(Action, Action) (Action, error), d
 			if current == "" {
 				return nil
 			}
-			current = ""
+			current = parentMenu[current]
 			continue
 		}
 		if err != nil {
@@ -167,7 +203,7 @@ func runMenus(cfg *config.Config, choose func(Action, Action) (Action, error), d
 			return nil
 		}
 		if action == ActionBack {
-			current = ""
+			current = parentMenu[current]
 			continue
 		}
 		previous[current] = action
