@@ -70,12 +70,11 @@ The signed-release picker selects the most recently published release by default
 |---|---|
 | Pillar status | Show producer address, key file and index |
 | Set up producer key | Create or configure a [producer key](/guide/pillar) |
-| Orchestrator status | Show the configured orchestrator service state |
-| View orchestrator logs | Follow orchestrator logs |
-| Reset orchestrator | [Hard reset](/guide/orchestrator), after confirmation |
+| Manage orchestrator | Opens the **Orchestrator** management submenu: install or upgrade from a GitHub release (default `0x3639/orchestrator`), check status, follow logs, back up sync data, copy sync data to another server, edit `config.json`, apply Alchemy/dRPC sync templates per EVM network, or [hard reset](/guide/orchestrator) |
 
 Wallet backups are under **Backups & recovery**; Pillar deployment is under
-**Install & upgrade**. Orchestrator operations require an installed service.
+**Install & upgrade**. Orchestrator install sets up the service if missing;
+upgrade, status, logs, sync backup/copy and reset require an installed service.
 
 ## Alerts & tools
 

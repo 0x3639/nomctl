@@ -404,3 +404,23 @@ law oversized_alert_is_rejected:
 law ui_runs_action_once:
   for +calls: Nat
   {M.step_count(calls) == 1n+calls : Nat}
+
+# Orchestrator sync operations include events and queues.
+law orchestrator_sync_includes_sync_dirs:
+  {(M.orchestrator_sync_path(M.OrchEvents{}) && M.orchestrator_sync_path(M.OrchQueues{})) == True{} : Bool}
+
+# Orchestrator sync operations exclude config.json.
+law orchestrator_sync_preserves_config:
+  {M.orchestrator_sync_path(M.OrchConfig{}) == False{} : Bool}
+
+# Orchestrator sync operations exclude TSS key shares.
+law orchestrator_sync_preserves_tss:
+  {M.orchestrator_sync_path(M.OrchTss{}) == False{} : Bool}
+
+# Orchestrator sync operations exclude producer key files.
+law orchestrator_sync_preserves_producer:
+  {M.orchestrator_sync_path(M.OrchProducer{}) == False{} : Bool}
+
+# Orchestrator sync operations exclude voting stores and unrelated files.
+law orchestrator_sync_preserves_other:
+  {(M.orchestrator_sync_path(M.OrchVotes{}) || M.orchestrator_sync_path(M.OrchOther{})) == False{} : Bool}

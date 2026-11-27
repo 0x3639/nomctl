@@ -116,6 +116,18 @@ func Dispatch(cfg *config.Config, action Action) error {
 		return PillarSetup(*cfg)
 	case ActionPillarStatus:
 		return PillarStatus(*cfg)
+	case ActionOrchInstall:
+		return OrchestratorInstall(*cfg)
+	case ActionOrchUpgrade:
+		return OrchestratorUpgrade(*cfg)
+	case ActionOrchBackup:
+		return OrchestratorBackupSync(*cfg)
+	case ActionOrchCopySync:
+		return OrchestratorCopySync(*cfg)
+	case ActionOrchConfig:
+		return OrchestratorEditConfig(*cfg)
+	case ActionOrchTemplates:
+		return OrchestratorSyncTemplates(*cfg)
 	case ActionOrchStatus, ActionOrchLogs, ActionOrchReset:
 		return OrchestratorAction(*cfg, action)
 	case ActionRestart:

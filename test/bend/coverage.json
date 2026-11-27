@@ -655,14 +655,29 @@
       "paths": [
         "internal/orchestrator/**"
       ],
-      "contract": "Refuse unsafe hard-reset paths and unavailable services before mutation.",
+      "contract": "Verify release checksums and archive boundaries before stopping; install, upgrade, configure and apply per-network sync templates atomically with redaction; back up and transfer only events/ and queues/ while preserving keys, TSS shares and config; refuse unsafe paths and unavailable services.",
       "laws": [
+        "archive_accepts_valid",
+        "archive_requires_allowed",
         "archive_requires_contained",
+        "archive_requires_safe_type",
         "change_accepts_valid",
         "change_requires_locked",
         "change_requires_recoverable",
         "change_requires_stopped",
-        "change_requires_validated"
+        "change_requires_validated",
+        "failed_commit_preserves_old",
+        "invalid_config_preserves_old",
+        "orchestrator_sync_includes_sync_dirs",
+        "orchestrator_sync_preserves_config",
+        "orchestrator_sync_preserves_other",
+        "orchestrator_sync_preserves_producer",
+        "orchestrator_sync_preserves_tss",
+        "public_text_is_preserved",
+        "publication_requires_verified",
+        "redaction_is_idempotent",
+        "secrets_are_redacted",
+        "successful_commit_installs_new"
       ],
       "evidence": [
         {
@@ -673,6 +688,51 @@
         {
           "file": "internal/orchestrator/orchestrator_test.go",
           "test": "TestHardResetRefusesWithoutUnit",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/releases_test.go",
+          "test": "TestInstallFreshCreatesBinaryConfigAndUnit",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/releases_test.go",
+          "test": "TestUpgradeStopsReplacesAndPreservesPreviousAndUnit",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/releases_test.go",
+          "test": "TestDeployRefusesBadChecksumBeforeStoppingService",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/releases_test.go",
+          "test": "TestExtractZipRejectsTraversalAndSymlinks",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/config_test.go",
+          "test": "TestSyncTemplatesApplyPerNetworkAndPreserveConfig",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/config_test.go",
+          "test": "TestConfigInvalidEditPreservesOldFile",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/config_test.go",
+          "test": "TestRedactConfigJSONIsIdempotentAndMasksSecrets",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/syncdata_test.go",
+          "test": "TestBackupSyncDataOnlyIncludesEventsAndQueues",
+          "module": "main"
+        },
+        {
+          "file": "internal/orchestrator/syncdata_test.go",
+          "test": "TestCopySyncDataSequenceAndFailureRecovery",
           "module": "main"
         }
       ],
@@ -993,6 +1053,11 @@
           "file": "internal/tui/top_test.go",
           "test": "TestRenderTopHTTPRejection",
           "module": "main"
+        },
+        {
+          "file": "internal/tui/menu_test.go",
+          "test": "TestOrchestratorNestedMenuNavigation",
+          "module": "main"
         }
       ],
       "go_packages": [
@@ -1125,6 +1190,21 @@
         {
           "file": "cmd/service_test.go",
           "test": "TestServiceActionsRespectOperationLock",
+          "module": "main"
+        },
+        {
+          "file": "cmd/orchestrator_test.go",
+          "test": "TestOrchestratorCommandsRegisteredAndAnnotated",
+          "module": "main"
+        },
+        {
+          "file": "cmd/orchestrator_test.go",
+          "test": "TestOrchestratorReleaseRepoFlagPrecedence",
+          "module": "main"
+        },
+        {
+          "file": "cmd/orchestrator_test.go",
+          "test": "TestOrchestratorTemplateFlagsAndList",
           "module": "main"
         }
       ],
@@ -1429,7 +1509,12 @@
         "unknown_alert_is_rejected",
         "events_cannot_fire",
         "oversized_alert_is_rejected",
-        "ui_runs_action_once"
+        "ui_runs_action_once",
+        "orchestrator_sync_includes_sync_dirs",
+        "orchestrator_sync_preserves_config",
+        "orchestrator_sync_preserves_tss",
+        "orchestrator_sync_preserves_producer",
+        "orchestrator_sync_preserves_other"
       ],
       "evidence": [
         {
@@ -1460,6 +1545,11 @@
         {
           "file": "test/bend/contract_test.go",
           "test": "TestBendConfigDefaults",
+          "module": "main"
+        },
+        {
+          "file": "test/bend/contract_test.go",
+          "test": "TestBendOrchestratorSyncScope",
           "module": "main"
         }
       ],

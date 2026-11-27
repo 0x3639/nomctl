@@ -26,6 +26,9 @@ func TestDefaults(t *testing.T) {
 	if c.MinFreeSpaceKB != 15728640 {
 		t.Errorf("min free space = %d, want 15 GB in KB", c.MinFreeSpaceKB)
 	}
+	if c.OrchestratorService != DefaultOrchestratorService || c.OrchestratorDir != DefaultOrchestratorDir || c.OrchestratorRepo != DefaultOrchestratorRepo || c.OrchestratorBinary != DefaultOrchestratorBinary {
+		t.Errorf("unexpected orchestrator defaults: %+v", c)
+	}
 	if c.Debug || c.SkipPreflight {
 		t.Errorf("debug/skip-preflight should default to false")
 	}
@@ -42,12 +45,14 @@ func TestEnvOverrides(t *testing.T) {
 		"NOMCTL_RESTORE_POINT_KEEP_DAYS": "7",
 		"NOMCTL_MIN_FREE_SPACE_KB":       "1024",
 		"NOMCTL_ZNN_DIR":                 "/data/.znn",
+		"NOMCTL_ORCHESTRATOR_REPO":       "HyperCore-Team/orchestrator",
+		"NOMCTL_ORCHESTRATOR_BINARY":     "orch",
 		"NOMCTL_BACKUP_DIR":              "",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.Debug || c.RepoURL != "https://example.com/x.git" || c.MaxBackups != 3 || c.BackupCadenceDays != 7 || c.BackupHour != 5 || c.BackupRetentionDays != 30 || c.RestorePointKeepDays != 7 || c.MinFreeSpaceKB != 1024 || c.ZnnDir != "/data/.znn" {
+	if !c.Debug || c.RepoURL != "https://example.com/x.git" || c.MaxBackups != 3 || c.BackupCadenceDays != 7 || c.BackupHour != 5 || c.BackupRetentionDays != 30 || c.RestorePointKeepDays != 7 || c.MinFreeSpaceKB != 1024 || c.ZnnDir != "/data/.znn" || c.OrchestratorRepo != "HyperCore-Team/orchestrator" || c.OrchestratorBinary != "orch" {
 		t.Errorf("overrides not applied: %+v", c)
 	}
 	if c.BackupDir != DefaultBackupDir {
@@ -114,6 +119,12 @@ func TestDerivedPaths(t *testing.T) {
 	if c.BinaryPath() != "/usr/local/bin/znnd" {
 		t.Errorf("BinaryPath = %q", c.BinaryPath())
 	}
+	if c.OrchestratorUnitPath() != "/etc/systemd/system/orchestrator.service" {
+		t.Errorf("OrchestratorUnitPath = %q", c.OrchestratorUnitPath())
+	}
+	if c.OrchestratorBinaryPath() != "/usr/local/bin/orchestrator" {
+		t.Errorf("OrchestratorBinaryPath = %q", c.OrchestratorBinaryPath())
+	}
 	u, err := c.GoURL()
 	if err != nil {
 		t.Skip("unsupported host arch")
@@ -131,8 +142,8 @@ func TestVarsCoverEveryField(t *testing.T) {
 		}
 		names[v.Name] = true
 	}
-	if len(names) != 32 {
-		t.Errorf("expected 32 documented variables, got %d", len(names))
+	if len(names) != 34 {
+		t.Errorf("expected 34 documented variables, got %d", len(names))
 	}
 }
 

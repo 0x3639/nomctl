@@ -46,6 +46,8 @@ const (
 	DefaultRPCTimeout            = 3 * time.Second
 	DefaultOrchestratorService   = "orchestrator"
 	DefaultOrchestratorDir       = "/root/.orchestrator"
+	DefaultOrchestratorRepo      = "0x3639/orchestrator"
+	DefaultOrchestratorBinary    = "orchestrator"
 	DefaultBootstrapURL          = "https://hypercore.nyc3.digitaloceanspaces.com/bootstrap/2026-09-01/bootstrap-20260901010001.zip"
 )
 
@@ -98,10 +100,15 @@ type Config struct {
 	// NOMCTL_RPC_TIMEOUT (a duration such as 3s or 10s).
 	RPCTimeout time.Duration
 	// OrchestratorService is the orchestrator's systemd unit (without
-	// .service) and OrchestratorDir its state directory. Env:
-	// NOMCTL_ORCHESTRATOR_SERVICE, NOMCTL_ORCHESTRATOR_DIR.
+	// .service), OrchestratorDir its state directory, OrchestratorRepo its
+	// GitHub release repository, and OrchestratorBinary its installed binary
+	// name under InstallDir. Env: NOMCTL_ORCHESTRATOR_SERVICE,
+	// NOMCTL_ORCHESTRATOR_DIR, NOMCTL_ORCHESTRATOR_REPO,
+	// NOMCTL_ORCHESTRATOR_BINARY.
 	OrchestratorService string
 	OrchestratorDir     string
+	OrchestratorRepo    string
+	OrchestratorBinary  string
 
 	// Backup settings. Env: NOMCTL_BACKUP_DIR, NOMCTL_MAX_BACKUPS,
 	// NOMCTL_BACKUP_RETENTION_DAYS, NOMCTL_BACKUP_CADENCE_DAYS,
@@ -160,6 +167,8 @@ func Default() Config {
 		RPCTimeout:            DefaultRPCTimeout,
 		OrchestratorService:   DefaultOrchestratorService,
 		OrchestratorDir:       DefaultOrchestratorDir,
+		OrchestratorRepo:      DefaultOrchestratorRepo,
+		OrchestratorBinary:    DefaultOrchestratorBinary,
 		UpdateCheck:           true,
 	}
 }
@@ -247,6 +256,8 @@ func LoadFrom(lookup func(string) (string, bool)) (Config, error) {
 	duration("RPC_TIMEOUT", &c.RPCTimeout)
 	str("ORCHESTRATOR_SERVICE", &c.OrchestratorService)
 	str("ORCHESTRATOR_DIR", &c.OrchestratorDir)
+	str("ORCHESTRATOR_REPO", &c.OrchestratorRepo)
+	str("ORCHESTRATOR_BINARY", &c.OrchestratorBinary)
 	str("BACKUP_DIR", &c.BackupDir)
 	integer("MAX_BACKUPS", &c.MaxBackups)
 	integer("BACKUP_RETENTION_DAYS", &c.BackupRetentionDays)
@@ -341,6 +352,15 @@ func (c Config) ServiceUnitPath() string { return "/etc/systemd/system/" + c.Ser
 // BinaryPath is where the node binary is installed.
 func (c Config) BinaryPath() string { return c.InstallDir + "/" + c.BinaryName }
 
+// OrchestratorUnit is the full systemd unit name for the orchestrator.
+func (c Config) OrchestratorUnit() string { return c.OrchestratorService + ".service" }
+
+// OrchestratorUnitPath is the path of the orchestrator systemd unit file.
+func (c Config) OrchestratorUnitPath() string { return "/etc/systemd/system/" + c.OrchestratorUnit() }
+
+// OrchestratorBinaryPath is where the orchestrator binary is installed.
+func (c Config) OrchestratorBinaryPath() string { return c.InstallDir + "/" + c.OrchestratorBinary }
+
 // Var describes one environment variable for documentation purposes.
 type Var struct {
 	Name, Default, Description string
@@ -367,7 +387,9 @@ func Vars() []Var {
 		{"NOMCTL_BOOTSTRAP_URL", DefaultBootstrapURL, "Snapshot for nomctl bootstrap (.zip with a .hash sidecar next to it)"},
 		{"NOMCTL_RPC_TIMEOUT", DefaultRPCTimeout.String(), "Per-call timeout for the node's JSON-RPC (raise on slow disks)"},
 		{"NOMCTL_ORCHESTRATOR_SERVICE", DefaultOrchestratorService, "systemd unit of the orchestrator (nomctl orchestrator ...)"},
-		{"NOMCTL_ORCHESTRATOR_DIR", DefaultOrchestratorDir, "Orchestrator state directory; hard-reset deletes queues/ and events/ under it"},
+		{"NOMCTL_ORCHESTRATOR_DIR", DefaultOrchestratorDir, "Orchestrator state directory (config.json, queues/, events/)"},
+		{"NOMCTL_ORCHESTRATOR_REPO", DefaultOrchestratorRepo, "Default GitHub repository for orchestrator releases (owner, owner/repo, or URL)"},
+		{"NOMCTL_ORCHESTRATOR_BINARY", DefaultOrchestratorBinary, "Orchestrator binary name installed under NOMCTL_INSTALL_DIR"},
 		{"NOMCTL_BACKUP_DIR", DefaultBackupDir, "Directory that stores backup archives"},
 		{"NOMCTL_MAX_BACKUPS", strconv.Itoa(DefaultMaxBackups), "Number of backups to retain"},
 		{"NOMCTL_BACKUP_RETENTION_DAYS", strconv.Itoa(DefaultBackupRetentionDays), "Maximum age of local backups in days (1-30)"},

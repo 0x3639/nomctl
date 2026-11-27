@@ -211,3 +211,18 @@ def commit(old: Nat, staged: Nat, success: Bool) -> Nat:
   match success:
     case False{}: old
     case True{}: staged
+
+type OrchPath is Data:
+  OrchEvents{}
+  OrchQueues{}
+  OrchConfig{}
+  OrchTss{}
+  OrchProducer{}
+  OrchVotes{}
+  OrchOther{}
+
+def orchestrator_sync_path(p: OrchPath) -> Bool:
+  match p:
+    case OrchEvents{}: True{}
+    case OrchQueues{}: True{}
+    case _: False{}

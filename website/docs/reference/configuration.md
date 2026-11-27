@@ -25,7 +25,9 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_BOOTSTRAP_URL` | the snapshot published for this release | Snapshot `.zip` for [`nomctl bootstrap`](/guide/bootstrap); a `.hash` sidecar must sit next to it |
 | `NOMCTL_RPC_TIMEOUT` | `3s` | Per-call timeout for the node's JSON-RPC; raise it on slow disks |
 | `NOMCTL_ORCHESTRATOR_SERVICE` | `orchestrator` | systemd unit for [`nomctl orchestrator`](/guide/orchestrator) |
-| `NOMCTL_ORCHESTRATOR_DIR` | `/root/.orchestrator` | Orchestrator state directory; `hard-reset` deletes `queues/` and `events/` under it |
+| `NOMCTL_ORCHESTRATOR_DIR` | `/root/.orchestrator` | Orchestrator state directory (`config.json`, `queues/`, `events/`) |
+| `NOMCTL_ORCHESTRATOR_REPO` | `0x3639/orchestrator` | Default GitHub repository for orchestrator releases (owner, `owner/repo`, or URL) |
+| `NOMCTL_ORCHESTRATOR_BINARY` | `orchestrator` | Orchestrator binary name installed under `NOMCTL_INSTALL_DIR` |
 | `NOMCTL_BACKUP_DIR` | `/backup` | Directory that stores backup archives |
 | `NOMCTL_MAX_BACKUPS` | `7` | Maximum number of ordinary chain archives retained by a manual backup run (1–30), including archives created by cron; cron jobs use 30 |
 | `NOMCTL_BACKUP_RETENTION_DAYS` | `7` | Maximum age of ordinary chain backups (1–30 days); applies to both manual and scheduled archives |
@@ -46,6 +48,9 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | Path | Written by |
 |---|---|
 | `/etc/systemd/system/go-zenon.service` | `deploy` |
+| `/etc/systemd/system/orchestrator.service` | `orchestrator install` (created only when absent) |
+| `/usr/local/bin/orchestrator.previous` | `orchestrator install` / `orchestrator upgrade`, previous orchestrator binary |
+| `/backup/orchestrator/` | `orchestrator backup`, sync-data archives (`events/` and `queues/`) and `.hash` sidecars |
 | `/etc/cron.d/nomctl-backup` | Saved daily schedule and pause state; `backup schedule`, `edit`, `pause`, `resume` |
 | `/var/lib/nomctl/backups/` | Persistent scheduled run outcomes; shown by `backup status` |
 | `/etc/systemd/system/nomctl-alerts.service` | `alerts setup` |

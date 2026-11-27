@@ -15,6 +15,7 @@ import (
 	"github.com/0x3639/nomctl/internal/backup"
 	"github.com/0x3639/nomctl/internal/health"
 	"github.com/0x3639/nomctl/internal/nodeconfig"
+	"github.com/0x3639/nomctl/internal/orchestrator"
 	"github.com/0x3639/nomctl/internal/resync"
 	"github.com/0x3639/nomctl/internal/service"
 )
@@ -165,5 +166,13 @@ func TestBendConfigDefaults(t *testing.T) {
 		if fromFile != (a[0] == 1) {
 			t.Fatal("configuration provenance disagrees with presence")
 		}
+	}
+}
+
+func TestBendOrchestratorSyncScope(t *testing.T) {
+	t.Parallel()
+	names := []string{"events", "queues", "config.json", "tss", "producer", "unwrap-pool-votes", "other"}
+	for _, v := range vectors(t, "orchestrator_sync", 1, len(names)) {
+		compare(t, v, bit(orchestrator.IsSyncDir(names[v.Args[0]])))
 	}
 }

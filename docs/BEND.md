@@ -1,6 +1,6 @@
 # Bend contracts for nomctl
 
-The root `LAWS.bend` contains 73 laws, with proofs in `PROOF.bend` and an
+The root `LAWS.bend` contains 78 laws, with proofs in `PROOF.bend` and an
 executable specification in `test/bend/model.bend`. The coverage inventory maps
 39 areas across the entire maintained repository to laws and executable checks:
 all Go packages, the separate schedule-proof experiment, website, deployment,
@@ -94,8 +94,9 @@ those images without recording the alternatives.
 | Health outcomes | 7 | `health.Report.Passed`, including empty and unknown strings |
 | Alert validation | 384 | `alertproto.ValidAlert`: known/event/unknown names, state/severity combinations and six text-length boundaries |
 | Configuration | 24 | `nodeconfig.Effective`: absent/present settings, values and defaults |
+| Orchestrator sync scope | 7 | `orchestrator.IsSyncDir`: `events`/`queues` included; `config.json`, `tss`, `producer`, `unwrap-pool-votes`, other excluded |
 
-These 1,695 comparisons are bounded executable evidence. The alert adapter
+These 1,702 comparisons are bounded executable evidence. The alert adapter
 classifies actual names, states and lengths into the model's categories; it does
 not prove every alert rule or all possible strings. Naturals in the retention
 model are unbounded; tested Go values are small integers. Negative retention
@@ -135,7 +136,7 @@ below is a readable index; review the named laws and tests when changing an area
 | `node` | Use configured internal HTTP; preserve bounded RPC error details and partial snapshots; bound request durations. |
 | `nodeconfig` | Validate edits before atomic save; preserve unrelated configuration; resolve local RPC settings and use defaults only when absent. |
 | `nodeupgrade` | Verify release identity and checksums, build before downtime, confirm stop and keep matching recovery material. |
-| `orchestrator` | Refuse unsafe hard-reset paths and unavailable services before mutation. |
+| `orchestrator` | Verify release checksums and archive boundaries before stopping; install, upgrade, configure and apply per-network sync templates atomically with redaction; back up and transfer only `events/` and `queues/` while preserving keys, TSS shares and config; refuse unsafe paths and unavailable services. |
 | `preflight` | Check resource and time synchronization prerequisites before deployment. |
 | `producer` | Validate configuration before creating keys; preserve key/address compatibility and explicit replacement intent. |
 | `recovery` | Verification never changes live data; results bind all selected artifact components; schedules reject stale generations. |

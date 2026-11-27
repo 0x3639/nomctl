@@ -139,6 +139,8 @@ def vector_inputs():
     for present, value, fallback in itertools.product([0, 1], [1, 10, 80, 255], [1, 80, 255]):
         configured = f"Some{{{value}n}}" if present else "None{}"
         add("config", [present, value, fallback], f"M.effective({configured}, {fallback}n)")
+    for i, path in enumerate(["OrchEvents", "OrchQueues", "OrchConfig", "OrchTss", "OrchProducer", "OrchVotes", "OrchOther"]):
+        add("orchestrator_sync", [i], f"M.orchestrator_sync_path(M.{path}{{}})", True)
     return cases
 
 
@@ -229,6 +231,7 @@ def implementation_mutations(work, vector_env):
         ("retention", "internal/backup/backup.go", "return sorted[keep:]", "return sorted", "TestBendRetention"),
         ("alert", "internal/alertproto/proto.go", 'if _, ok := Lookup(a.Alert); !ok && !Events[a.Alert] {\n\t\treturn false', 'if _, ok := Lookup(a.Alert); !ok && !Events[a.Alert] {\n\t\treturn true', "TestBendAlertValidation"),
         ("wallet", "internal/resync/resync.go", 'var Dirs = []string{"network", "nom", "consensus", "log"}', 'var Dirs = []string{"network", "nom", "consensus", "log", "wallet"}', "TestBendDataScope"),
+        ("orchestrator_sync", "internal/orchestrator/orchestrator.go", 'var SyncDirs = []string{"events", "queues"}', 'var SyncDirs = []string{"events", "queues", "tss"}', "TestBendOrchestratorSyncScope"),
     ]
     for name, source_path, old, new, test in faults:
         source = (ROOT / source_path).read_text()

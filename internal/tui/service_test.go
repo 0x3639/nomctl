@@ -60,7 +60,7 @@ func TestSetupActionsRunPreflightBeforeWork(t *testing.T) {
 	operationLockPath = filepath.Join(t.TempDir(), "nomctl.lock")
 	t.Cleanup(func() { operationLockPath, preflightChecks = oldPath, oldChecks })
 	unavailable := errors.New("setup preflight unavailable")
-	for _, action := range []Action{ActionDeploy, ActionUpgradeSource, ActionPillarDep, ActionAnalytics} {
+	for _, action := range []Action{ActionDeploy, ActionUpgradeSource, ActionPillarDep, ActionAnalytics, ActionOrchInstall} {
 		t.Run(string(action), func(t *testing.T) {
 			calls := 0
 			preflightChecks = func() error { calls++; return unavailable }
