@@ -1220,9 +1220,11 @@ func completePendingPreviousPublish(cfg config.Config, binPath string, pending *
 		if err := os.Rename(retained, previousPath); err != nil {
 			return "", fmt.Errorf("finish publishing previous binary to %s (retained at %s): %w", previousPath, retained, err)
 		}
-		if err := syncDirPath(filepath.Dir(binPath)); err != nil {
-			return previousPath, fmt.Errorf("published %s, but syncing install directory failed: %w", previousPath, err)
-		}
+	}
+	// Sync the install directory before removing the WAL on both fresh and
+	// already-published retries so .previous is durable before WAL unlink.
+	if err := syncDirPath(filepath.Dir(binPath)); err != nil {
+		return previousPath, fmt.Errorf("published %s, but syncing install directory failed: %w", previousPath, err)
 	}
 	if err := removePendingDeployState(binPath); err != nil {
 		return previousPath, fmt.Errorf("published %s, but clearing pending state %s failed: %w", previousPath, deployStatePath(binPath), err)
@@ -1243,6 +1245,9 @@ func completePendingVerifiedCleanup(cfg config.Config, binPath string, pending *
 	}
 	if liveSHA != pending.CandidateSHA {
 		return fmt.Errorf("live orchestrator binary %s changed since %s passed verification; refusing to clear %s", binPath, pending.ReleaseTag, deployStatePath(binPath))
+	}
+	if err := syncDirPath(filepath.Dir(binPath)); err != nil {
+		return fmt.Errorf("sync install directory before clearing verified state %s: %w", deployStatePath(binPath), err)
 	}
 	if err := removePendingDeployState(binPath); err != nil {
 		return fmt.Errorf("clear verified install state %s: %w", deployStatePath(binPath), err)

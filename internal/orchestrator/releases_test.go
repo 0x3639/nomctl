@@ -1640,11 +1640,22 @@ func TestDeployPendingStateProtectionsAndRecovery(t *testing.T) {
 		if _, err := CompletePendingPreviousPublish(cfg); err == nil || !strings.Contains(err.Error(), "does not match") {
 			t.Fatalf("expected unrelated .previous to be rejected, got %v", err)
 		}
-		// Restore expected V1 at .previous -> retry clears .pending.json cleanly even if unit is stopped.
+		// Restore expected V1 at .previous -> repeated dir sync failure on alreadyPublished path must retain WAL.
 		if err := os.WriteFile(binPath+".previous", []byte("v1-live"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		serviceStatus = func(string) (service.State, error) { return service.Inactive, nil }
+		oldSync := syncDirPath
+		t.Cleanup(func() { syncDirPath = oldSync })
+		syncDirPath = func(string) error { return errors.New("repeated dir fsync failure") }
+		if _, err := CompletePendingPreviousPublish(cfg); err == nil || !strings.Contains(err.Error(), "repeated dir fsync failure") {
+			t.Fatalf("expected repeated dir sync failure to retain WAL, got %v", err)
+		}
+		if _, err := os.Stat(deployStatePath(binPath)); err != nil {
+			t.Fatalf("WAL must stay on disk when alreadyPublished dir sync fails: %v", err)
+		}
+		// Once sync recovers, retry clears .pending.json cleanly even while unit is stopped.
+		syncDirPath = defaultSyncDir
 		prevPath, err := CompletePendingPreviousPublish(cfg)
 		if err != nil || prevPath != binPath+".previous" {
 			t.Fatalf("retry publish cleanup failed while unit stopped: %q, %v", prevPath, err)
