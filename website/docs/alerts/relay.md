@@ -42,10 +42,18 @@ docker run -d --name nomctl-relay --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -e RELAY_TELEGRAM_TOKEN='123456:your-bot-token' \
   -e RELAY_PUBLIC_URL='https://alerts.example.org' \
-  -e RELAY_TRUSTED_PROXIES='127.0.0.1/32' \
+  -e RELAY_TRUSTED_PROXIES='<proxy-gateway-or-ip>/32' \
   -v relay-data:/data \
   ghcr.io/0x3639/nomctl-relay:latest
 ```
+
+Set `RELAY_TRUSTED_PROXIES` to the source address the container actually sees from your reverse proxy:
+
+- When a host-installed reverse proxy forwards to a published port (`-p 127.0.0.1:8080:8080`), the container typically sees the Docker bridge gateway IP (for example `172.17.0.1`), **not** `127.0.0.1`. Check the gateway with `docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}' nomctl-relay`.
+- When the reverse proxy runs in another container on a shared Docker network, use that proxy container's IP (or the narrowest subnet containing only trusted proxies).
+- Use `127.0.0.1/32` only when the relay uses host networking (`--network host`).
+
+If the proxy's address is not in `RELAY_TRUSTED_PROXIES`, `X-Forwarded-For` is ignored and all proxied clients share one rate-limit bucket (10 pairing attempts/min and 120 unauthenticated admission requests/min). Keep the range as narrow as possible, since any peer inside `RELAY_TRUSTED_PROXIES` is trusted to set `X-Forwarded-For`.
 
 If you bind-mount a host directory instead of a named volume, set its ownership first because the container runs as non-root `uid 65532`:
 
@@ -72,11 +80,18 @@ Open `https://alerts.example.org/healthz` (expects `ok`), confirm `relay listeni
 
 ## 3. Point nodes at it
 
-`sudo nomctl alerts setup --relay https://alerts.example.org`, or `NOMCTL_RELAY_URL`. To bake the URL into your own builds, set the `NOMCTL_RELAY_URL` repository variable (releases) or `make build RELAY_URL=...`.
+`sudo nomctl alerts setup --relay https://alerts.example.org` (or `sudo NOMCTL_RELAY_URL=https://alerts.example.org nomctl alerts setup`, since `sudo` drops exported environment variables by default). To bake the URL into your own builds, set the `NOMCTL_RELAY_URL` repository variable (releases) or `make build RELAY_URL=...`.
 
 ## Upgrading
 
-Pairings, mutes, and last-sent state live in `/data/relay.db` and survive upgrades; the SQLite schema initializes and migrates automatically on startup. Back up `/data/relay.db` before upgrading.
+Pairings, mutes, and last-sent state live in `/data/relay.db` and survive compatible upgrades. On startup, the relay initializes missing tables (`CREATE TABLE IF NOT EXISTS`), but it does not track schema versions or alter existing tables automatically—check release notes before upgrading across breaking versions.
+
+Because `/data/relay.db` is opened in SQLite WAL mode, recent writes (including newly paired nodes) can remain in `/data/relay.db-wal` until checkpointed. **Do not back up by copying `relay.db` alone while the relay is running.** Before upgrading, take a consistent SQLite snapshot using one of:
+
+- Stop the relay first, then copy `relay.db`, `relay.db-wal`, and `relay.db-shm` together.
+- Use SQLite's online backup (`sqlite3 /data/relay.db ".backup /path/to/relay-backup.db"`), which captures committed WAL content.
+
+Then update the container:
 
 - **Coolify**: redeploy the resource to pull the new image.
 - **Standalone Docker**: pull the new image and recreate the container against the same `/data` volume:
@@ -97,8 +112,8 @@ Pairings, mutes, and last-sent state live in `/data/relay.db` and survive upgrad
 
 ## What the relay accesses and stores
 
-- **Container isolation**: runs as a static binary on `gcr.io/distroless/static:nonroot` (`uid 65532`, no shell) with only the `/data` volume writable.
-- **Outbound network**: connects only to `https://api.telegram.org` using `RELAY_TELEGRAM_TOKEN` (the token is stripped from transport error logs).
+- **Container isolation**: runs as a static binary on `gcr.io/distroless/static:nonroot` (`uid 65532`, no shell) and stores persistent state only under `/data`. The default Docker and Compose examples above do not set `--read-only` / `read_only: true`, so Docker's container writable layer remains writable unless you explicitly enable a read-only root filesystem.
+- **Outbound network**: connects to `https://api.telegram.org` by default using `RELAY_TELEGRAM_TOKEN` (the token is stripped from transport error logs). A test-only `RELAY_TELEGRAM_URL` environment variable can override the Bot API base URL; when set, all Bot API requests—including the bot token in the request URL path—are sent to that configured host, so leave it unset in production.
 - **SQLite database (`/data/relay.db`)**: stores pairing codes, Telegram `chat_id`, `node_id`, node `name`, `host`, `nomctl` version, 32-byte HMAC `secret`, `created`/`last_seen` timestamps, `silent`/`blocked` flags, the latest heartbeat `summary` JSON, `mutes`, and `last_sent` timestamps. Alert message text is forwarded and **not** stored; node IP addresses are **not** stored in the database.
 - **Network visibility**: sees each paired node's public IP address in memory for per-IP rate limiting (and your reverse proxy may log client IPs).
 - **Zero access to nodes**: communication is strictly one-way push from node to relay. The relay has no SSH, RPC, or inbound network access to any Zenon node.

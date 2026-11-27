@@ -258,7 +258,7 @@ It is informational: one Telegram message when an update appears, no reminders, 
 
 ## The relay
 
-The relay is a container (`ghcr.io/0x3639/nomctl-relay:latest`); upgrade it by redeploying on Coolify or pulling the new image and recreating the container with Docker / Docker Compose. Back up `/data/relay.db` first; the schema migrates itself and pairings survive in the volume. See [Relay upgrades](/alerts/relay#upgrading).
+The relay is a container (`ghcr.io/0x3639/nomctl-relay:latest`); upgrade it by redeploying on Coolify or pulling the new image and recreating the container with Docker / Docker Compose. Because `/data/relay.db` uses SQLite WAL mode, take a consistent snapshot before upgrading—either stop the relay and copy `relay.db`, `relay.db-wal`, and `relay.db-shm` together, or use SQLite's online backup (do not copy `relay.db` alone while running). Startup creates missing tables but does not automatically migrate existing table schemas; pairings survive in the volume across compatible upgrades. See [Relay upgrades](/alerts/relay#upgrading).
 
 ## Health after changes
 

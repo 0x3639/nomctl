@@ -21,7 +21,7 @@ Settings come from `NOMCTL_*` environment variables; command-line flags override
 | `NOMCTL_PILLAR_NAME` | unset | Pillar shown by `status`/`top` when alerts are not set up (the alerts config takes precedence) |
 | `NOMCTL_REPO` | `0x3639/nomctl` | GitHub repository `nomctl upgrade` downloads releases from |
 | `NOMCTL_GITHUB_TOKEN` | unset | Optional GitHub token with Contents read access to `zenon-network/go-zenon-releases`; required while private, redacted from logs |
-| `NOMCTL_UPDATE_CHECK` | `true` | Check GitHub for newer nomctl and go-zenon in `status`/`top`, heartbeats, and `update_available` (cached 1 h; add a systemd drop-in to disable it on `nomctl-alerts.service`) |
+| `NOMCTL_UPDATE_CHECK` | `true` | Check GitHub for newer nomctl and go-zenon in `status`/`top`, heartbeats, and `update_available` (cached 1 h; add a systemd drop-in and reload/restart `nomctl-alerts.service` to disable it on the daemon) |
 | `NOMCTL_BOOTSTRAP_URL` | the snapshot published for this release | Snapshot `.zip` for [`nomctl bootstrap`](/guide/bootstrap); a `.hash` sidecar must sit next to it |
 | `NOMCTL_RPC_TIMEOUT` | `3s` | Per-call timeout for the node's JSON-RPC; raise it on slow disks |
 | `NOMCTL_ORCHESTRATOR_SERVICE` | `orchestrator` | systemd unit for [`nomctl orchestrator`](/guide/orchestrator) |

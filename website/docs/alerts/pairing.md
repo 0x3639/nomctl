@@ -21,7 +21,7 @@ Open the nomctl alerts bot in Telegram (or your own bot if you [run your own rel
 
 Once paired, your node sends a heartbeat to **alerts.zenon.info** every 30 seconds and forwards alerts through it. The relay operator can see your node's **public IP address**, host name, node name and status summary. The IP address is used only to rate-limit pairing and is not stored in the relay database, but it is visible to the relay and may appear in the logs of the proxy in front of it.
 
-If your pillar's IP address must stay private, [run your own relay](/alerts/relay) and point nodes at it with `NOMCTL_RELAY_URL`, or do not pair.
+If your pillar's IP address must stay private, [run your own relay](/alerts/relay) and point nodes at it with `--relay` (or `sudo NOMCTL_RELAY_URL=...`), or do not pair.
 
 :::
 
@@ -49,7 +49,7 @@ Flags skip the prompts, which is how to script it:
 sudo nomctl alerts setup --code AB3K7QWX --name pillar-1 --accept-privacy-notice
 ```
 
-Released binaries default to the community relay at `https://alerts.zenon.info`. Pass `--relay https://alerts.example.org` or set `NOMCTL_RELAY_URL` to use your own relay.
+Released binaries default to the community relay at `https://alerts.zenon.info`. Pass `--relay https://alerts.example.org` to use your own relay. Setting `NOMCTL_RELAY_URL` in your shell does not work with `sudo` under its default `env_reset` policy unless passed through explicitly (for example, `sudo --preserve-env=NOMCTL_RELAY_URL nomctl alerts setup` or `sudo NOMCTL_RELAY_URL=https://alerts.example.org nomctl alerts setup`).
 
 ## 4. Verify and customize
 
@@ -105,13 +105,13 @@ Setup installs three systemd units:
 
 | Unit | Runs as | Network | Purpose |
 |---|---|---|---|
-| `nomctl-alerts.service` | `nomctl` (locked system user, no capabilities) | Outbound HTTPS only; no listening ports | Evaluates rules every 30 s, keeps 30 min of history, sends signed heartbeats and alerts |
-| `nomctl-alerts-probe.service` | `root` (oneshot) | **None** (`PrivateNetwork=true`) | Records open file count, I/O bytes, data-dir disk space, and local RPC URL to `/run/nomctl-system/process-probe.json` |
+| `nomctl-alerts.service` | `nomctl` (locked system user, no capabilities) | Local HTTP (`znnd` RPC) and outbound HTTPS (relay, GitHub); no listening ports | Evaluates rules every 30 s, keeps 30 min of history, sends signed heartbeats and alerts |
+| `nomctl-alerts-probe.service` | `root` (oneshot) | No direct host IP network (`PrivateNetwork=true`) | Records open file count, I/O bytes, data-dir disk space, and local RPC URL to `/run/nomctl-system/process-probe.json` |
 | `nomctl-alerts-probe.timer` | — | — | Runs `nomctl-alerts-probe.service` every 30 s |
 
 ### Why privileges are split
 
-The alerts daemon talks to the internet every 30 seconds from the machine that holds the pillar's wallet, so it does not run as root. Counting another user's open files needs `CAP_SYS_PTRACE`, which would also allow reading `znnd`'s process memory. Rather than grant that to a network-facing daemon, the offline root probe collects those counters and writes a small JSON file every 30 seconds for the daemon to read. `nomctl alerts status` shows the user the daemon runs as and whether the probe timer is installed.
+The alerts daemon talks to the internet every 30 seconds from the machine that holds the pillar's wallet, so it does not run as root. Counting another user's open files needs `CAP_SYS_PTRACE`, which would also allow reading `znnd`'s process memory. Rather than grant that to a network-facing daemon, a separate root probe with `PrivateNetwork=true` collects those counters and writes a small JSON file every 30 seconds for the daemon to read. `nomctl alerts status` shows the user the daemon runs as and whether the probe timer is installed.
 
 ### Systems `nomctl-alerts.service` accesses
 
@@ -129,7 +129,7 @@ The daemon unit runs with `NoNewPrivileges=true`, `CapabilityBoundingSet=` (empt
   - Calls only `stats.syncInfo`, `stats.networkInfo`, `stats.processInfo`, `stats.osInfo`, `ledger.getFrontierMomentum`, and (when a pillar name is configured) `embedded.pillar.getByName`. It never calls wallet, signing, or state-changing RPCs.
 - **Outbound network (no inbound ports)**:
   - **Relay** (`https://alerts.zenon.info` or your configured relay): `POST /v1/heartbeat` every 30 s and `POST /v1/alert` on state transitions or 10-minute reminders, signed with HMAC-SHA256.
-  - **GitHub (at most once per hour when `NOMCTL_UPDATE_CHECK=true`)**: `HEAD https://github.com/<NOMCTL_REPO>/releases/latest` and `git ls-remote <NOMCTL_REPO_URL> refs/heads/<NOMCTL_BRANCH_NAME>` to populate update indicators on heartbeats and the optional `update_available` rule. Because `nomctl-alerts.service` defaults to `NOMCTL_UPDATE_CHECK=true`, add a systemd drop-in with `Environment=NOMCTL_UPDATE_CHECK=false` if the daemon should not contact GitHub.
+  - **GitHub (at most once per hour when `NOMCTL_UPDATE_CHECK=true`)**: `HEAD https://github.com/<NOMCTL_REPO>/releases/latest` and `git ls-remote <NOMCTL_REPO_URL> refs/heads/<NOMCTL_BRANCH_NAME>` to populate update indicators on heartbeats and the optional `update_available` rule. Because `nomctl-alerts.service` defaults to `NOMCTL_UPDATE_CHECK=true`, add a systemd drop-in with `Environment=NOMCTL_UPDATE_CHECK=false` (for example, via `sudo systemctl edit nomctl-alerts.service`), then reload systemd and restart the service (`sudo systemctl daemon-reload && sudo systemctl restart nomctl-alerts.service`) so an already-running daemon picks up the new environment.
 
 ### Systems `nomctl-alerts-probe.service` accesses
 
@@ -146,9 +146,9 @@ Every 30-second heartbeat carries the node's status summary used by `/nodes`: sy
 
 ### What it cannot access
 
-- **`nomctl-alerts.service` cannot read `/root`, `/root/.znn`, wallet/producer keys, `config.json`, or `znnd` process memory** (`ProtectHome=true`, unprivileged user, zero capabilities). It cannot modify `/etc`, `/usr`, `/backup`, or `/run/nomctl-system`, cannot start/stop `go-zenon.service`, never holds the Telegram bot token, and accepts no inbound commands from the relay.
-- **`nomctl-alerts-probe.service` has zero network access** (`PrivateNetwork=true`), cannot write outside `/run/nomctl-system`, and never reads `/root/.znn/wallet/`, producer keys/passwords, or chain database contents.
-- Because `ProtectHome=true` hides `/root/.znn` from the unprivileged daemon, the opt-in `wallet_backup_missing` rule cannot read a producer key or `config.json` located under `/root/.znn`; it only applies when `NOMCTL_ZNN_DIR` lives outside `/root` and is readable by the daemon.
+- **`nomctl-alerts.service` cannot read `/root` or `/home` (`ProtectHome=true`), root-only files such as mode-`0600` `config.json` or wallet/producer keys under protected or root-owned paths, or `znnd` process memory** (unprivileged `nomctl` user, zero capabilities). Its writable paths are limited to `/run/nomctl` and its private `/tmp` and `/var/tmp` directories (`PrivateTmp=true`); it cannot modify `/etc`, `/usr`, `/backup`, or `/run/nomctl-system`, cannot start/stop `go-zenon.service`, never holds the Telegram bot token, and accepts no inbound commands from the relay.
+- **`nomctl-alerts-probe.service` has no direct host IP network access** (`PrivateNetwork=true`; local filesystem Unix sockets remain accessible, which `systemctl show` uses), and its writable paths are limited to `/run/nomctl-system` plus its private `/tmp` and `/var/tmp` directories (`PrivateTmp=true`). Because it runs as `root` with `ProtectHome=read-only`, `/root` is visible and read-only to the process, though the probe itself only reads RPC settings from `config.json` and disk/process counters and does not read `/root/.znn/wallet/`, producer keys/passwords, or chain database contents.
+- Because `ProtectHome=true` hides `/root/.znn` from the unprivileged daemon, the opt-in `wallet_backup_missing` rule cannot read a producer key or `config.json` located under `/root/.znn`; it only applies when `NOMCTL_ZNN_DIR` lives outside protected home directories and its `config.json` is readable by `nomctl` (keep `config.json` root-only `0600` when it holds a producer password).
 
 ## If something fails during setup
 
