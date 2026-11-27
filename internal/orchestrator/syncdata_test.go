@@ -1356,4 +1356,46 @@ esac
 			}
 		}
 	})
+
+	// 12. Missing systemctl on remote PATH must fail closed before modifying live directories.
+	t.Run("missing systemctl fails closed before modifying live dirs", func(t *testing.T) {
+		tmp := t.TempDir()
+		remoteDir := filepath.Join(tmp, ".orchestrator")
+		stageDir := filepath.Join(remoteDir, ".sync-copy-stage-nosys")
+		backupDir := filepath.Join(remoteDir, "sync-backup-before-copy-nosys")
+		if err := os.MkdirAll(filepath.Join(remoteDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(remoteDir, "events", "v"), []byte("old-live"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(stageDir, "events"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, "events", "v"), []byte("new-staged"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// Build a minimal PATH with standard POSIX tools and explicitly no systemctl.
+		minBin := filepath.Join(tmp, "minbin")
+		if err := os.MkdirAll(minBin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range []string{"mkdir", "rm", "mv", "rmdir", "awk", "tr", "sleep"} {
+			if p, err := exec.LookPath(tool); err == nil {
+				if err := os.Symlink(p, filepath.Join(minBin, tool)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		script := remoteCutoverScript(SyncCopyOptions{RemoteDir: remoteDir, RemoteService: "orchestrator"}, stageDir, backupDir, []string{"events"}, "")
+		cmd := exec.Command("sh", "-eu", "-c", script)
+		cmd.Env = []string{"PATH=" + minBin}
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "systemctl not found") {
+			t.Fatalf("expected fail-closed missing systemctl error, err=%v output:\n%s", err, string(out))
+		}
+		if got, _ := os.ReadFile(filepath.Join(remoteDir, "events", "v")); string(got) != "old-live" {
+			t.Fatalf("live events must not be modified when systemctl is absent, got %q", string(got))
+		}
+	})
 }

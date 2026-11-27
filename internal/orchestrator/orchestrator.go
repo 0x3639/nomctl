@@ -241,7 +241,7 @@ func defaultUnitExecPath(name string) (string, error) {
 	}
 	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {
-		return "", nil
+		return "", fmt.Errorf("unit %s has empty ExecStart", name)
 	}
 	p, ok := parseSystemdExecStartPath(trimmed)
 	if !ok {

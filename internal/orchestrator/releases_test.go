@@ -171,7 +171,12 @@ func stubDeployHost(t *testing.T, installed bool, status service.State, unitPath
 	unitExists = func(string) (bool, error) { return curInstalled, nil }
 	unitLoaded = func(string) (bool, error) { return curInstalled, nil }
 	serviceStatus = func(string) (service.State, error) { return curStatus, nil }
-	unitExecPath = func(string) (string, error) { return "", nil }
+	rootDir := filepath.Dir(unitPath)
+	if filepath.Base(rootDir) == "systemd" {
+		rootDir = filepath.Dir(rootDir)
+	}
+	defaultExec := filepath.Join(rootDir, "bin", "orchestrator")
+	unitExecPath = func(string) (string, error) { return defaultExec, nil }
 	stopService = func(name string) error {
 		*calls = append(*calls, "stop "+name)
 		curStatus = service.Inactive
@@ -468,6 +473,28 @@ func TestUpgradeRejectsMismatchedUnitBinaryBeforeStopping(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("service must not be touched on binary mismatch: %v", *calls)
+	}
+
+	// Empty ExecStart must also be rejected before touching the service or binary.
+	unitExecPath = func(string) (string, error) { return "", nil }
+	if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), Release{Tag: "v2"}); err == nil || !strings.Contains(err.Error(), "empty ExecStart") {
+		t.Fatalf("expected empty ExecStart error, got %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("service must not be touched on empty ExecStart: %v", *calls)
+	}
+
+	// Verify defaultUnitExecPath itself fails closed when systemctl reports empty ExecStart.
+	fakeBin := filepath.Join(tmp, "fake-systemctl")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fakeBin, "systemctl"), []byte("#!/bin/sh\necho \"\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := defaultUnitExecPath("orchestrator"); err == nil || !strings.Contains(err.Error(), "empty ExecStart") {
+		t.Fatalf("expected defaultUnitExecPath to reject empty ExecStart, got %v", err)
 	}
 }
 
@@ -1151,8 +1178,8 @@ func TestDeployPendingStateProtectionsAndRecovery(t *testing.T) {
 		cfg.InstallDir = binDir
 		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
 		_, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel)
-		if err == nil || !strings.Contains(err.Error(), "to roll back before retrying") {
-			t.Fatalf("expected rollback guidance when publish-phase write fails, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "reconcile the recorded pending state") {
+			t.Fatalf("expected reconciliation guidance when publish-phase write fails, got %v", err)
 		}
 		if writeCalls < 2 {
 			t.Fatalf("expected publish-phase write to be attempted, writeCalls=%d", writeCalls)
@@ -1163,6 +1190,202 @@ func TestDeployPendingStateProtectionsAndRecovery(t *testing.T) {
 		stagedFiles, _ := filepath.Glob(filepath.Join(binDir, ".nomctl-orchestrator-*"))
 		if len(stagedFiles) != 1 {
 			t.Fatalf("expected retained staged V1 file, got %v", stagedFiles)
+		}
+	})
+
+	t.Run("sync failure after publish-phase state rename leaves visible publish-previous recoverable", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 25, 115, "v2-good")
+		stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		oldSync := syncDirPath
+		t.Cleanup(func() { syncDirPath = oldSync })
+		syncCalls := 0
+		syncDirPath = func(dir string) error {
+			syncCalls++
+			// Call 1: pre-cutover WAL sync; Call 2: post-cutover binary rename sync;
+			// Call 3: sync after phasePublishPrevious state-file rename -> inject failure.
+			if syncCalls == 3 {
+				return errors.New("dir fsync EIO")
+			}
+			return defaultSyncDir(dir)
+		}
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		_, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel)
+		if err == nil || !strings.Contains(err.Error(), "completing publication if recorded or rolling back if cutover remains pending") {
+			t.Fatalf("expected dual-phase reconciliation guidance, got %v", err)
+		}
+		if _, err := os.Stat(binPath + ".previous"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf(".previous must not be renamed before publish state sync succeeds, err=%v", err)
+		}
+		// Once storage recovers, RecoverPendingDeploy sees visible phasePublishPrevious and finishes publication keeping V2.
+		syncDirPath = defaultSyncDir
+		summary, err := RecoverPendingDeploy(cfg)
+		if err != nil {
+			t.Fatalf("RecoverPendingDeploy failed: %v", err)
+		}
+		if !strings.Contains(summary, "Published previous orchestrator binary") {
+			t.Fatalf("unexpected recovery summary: %q", summary)
+		}
+		if got, _ := os.ReadFile(binPath); string(got) != "v2-good" {
+			t.Fatalf("live binary = %q, want v2-good preserved", string(got))
+		}
+		if prev, _ := os.ReadFile(binPath + ".previous"); string(prev) != "v1-live" {
+			t.Fatalf(".previous = %q, want v1-live published", string(prev))
+		}
+	})
+
+	t.Run("rollback retains WAL when dir sync fails after restoring binary (both deploy and recover paths)", func(t *testing.T) {
+		// 1. Deploy-time rollbackBinary sync failure retains cutover WAL and skips phaseRestored/removal.
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 26, 117, "v2-broken")
+		stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		curState := service.Active
+		stopService = func(string) error { curState = service.Inactive; return nil }
+		startService = func(string) error { return errors.New("v2 failed") }
+		serviceStatus = func(string) (service.State, error) { return curState, nil }
+		oldSync := syncDirPath
+		t.Cleanup(func() { syncDirPath = oldSync })
+		syncCalls := 0
+		syncDirPath = func(dir string) error {
+			syncCalls++
+			// Call 1: pre-cutover WAL; Call 2: post-cutover binary; Call 3: rollback restore sync -> fail.
+			if syncCalls == 3 {
+				return errors.New("rollback dir fsync failed")
+			}
+			return defaultSyncDir(dir)
+		}
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil || !strings.Contains(err.Error(), "rollback dir fsync failed") {
+			t.Fatalf("expected rollback dir sync error, got %v", err)
+		}
+		st, err := loadPendingDeployState(binPath)
+		if err != nil || st == nil || st.Phase != phaseCutover {
+			t.Fatalf("WAL must remain in phaseCutover when rollback dir sync fails, got %+v (err=%v)", st, err)
+		}
+		// Retry after sync recovers: syncs dir, restarts V1, clears WAL.
+		syncDirPath = defaultSyncDir
+		startService = func(string) error { curState = service.Active; return nil }
+		if _, err := RecoverPendingDeploy(cfg); err != nil {
+			t.Fatalf("RecoverPendingDeploy after sync recovery failed: %v", err)
+		}
+		if curState != service.Active {
+			t.Fatalf("expected V1 active after recovery, got %v", curState)
+		}
+		if _, err := os.Stat(deployStatePath(binPath)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("WAL should be removed once sync succeeds, err=%v", err)
+		}
+
+		// 2. RecoverPendingRollback sync failure retains cutover WAL until retry succeeds.
+		tmp2 := t.TempDir()
+		binDir2 := filepath.Join(tmp2, "bin")
+		if err := os.MkdirAll(binDir2, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath2 := filepath.Join(binDir2, "orchestrator")
+		staged2 := filepath.Join(binDir2, ".nomctl-orchestrator-v1")
+		if err := os.WriteFile(binPath2, []byte("v2-broken"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(staged2, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := defaultWritePendingDeployState(binPath2, pendingDeployState{
+			Phase:          phaseCutover,
+			Service:        "orchestrator",
+			Repo:           "0x3639/orchestrator",
+			ReleaseTag:     "v2",
+			CandidateSHA:   shaHex([]byte("v2-broken")),
+			PreviousStaged: staged2,
+			PreviousSHA:    shaHex([]byte("v1-live")),
+			WasRunning:     true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		stubDeployHost(t, true, service.Active, filepath.Join(tmp2, "orchestrator.service"))
+		syncDirPath = func(string) error { return errors.New("recover dir fsync failed") }
+		cfg2 := config.Default()
+		cfg2.InstallDir = binDir2
+		cfg2.OrchestratorDir = filepath.Join(tmp2, ".orchestrator")
+		if err := RecoverPendingRollback(cfg2); err == nil || !strings.Contains(err.Error(), "recover dir fsync failed") {
+			t.Fatalf("expected RecoverPendingRollback dir sync error, got %v", err)
+		}
+		st2, err := loadPendingDeployState(binPath2)
+		if err != nil || st2 == nil || st2.Phase != phaseCutover {
+			t.Fatalf("WAL must stay in phaseCutover when RecoverPendingRollback dir sync fails, got %+v (err=%v)", st2, err)
+		}
+		syncDirPath = defaultSyncDir
+		if err := RecoverPendingRollback(cfg2); err != nil {
+			t.Fatalf("RecoverPendingRollback retry failed: %v", err)
+		}
+		if _, err := os.Stat(deployStatePath(binPath2)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("WAL should be removed after retry sync succeeds, err=%v", err)
+		}
+	})
+
+	t.Run("rollbackBinary keeps WAL if restored service is not Active after startService returns nil", func(t *testing.T) {
+		tmp := t.TempDir()
+		binDir := filepath.Join(tmp, "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		binPath := filepath.Join(binDir, "orchestrator")
+		if err := os.WriteFile(binPath, []byte("v1-live"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		srv, rel := makeRelServer(t, "v2", 27, 119, "v2-broken")
+		stubDeployHost(t, true, service.Active, filepath.Join(tmp, "orchestrator.service"))
+		curState := service.Active
+		stopService = func(string) error { curState = service.Inactive; return nil }
+		startAttempts := 0
+		startService = func(string) error {
+			startAttempts++
+			if startAttempts == 1 {
+				return errors.New("v2 failed")
+			}
+			// Simulate restored V1 exiting immediately (startService returns nil, status is Failed).
+			curState = service.Failed
+			return nil
+		}
+		serviceStatus = func(string) (service.State, error) { return curState, nil }
+
+		cfg := config.Default()
+		cfg.InstallDir = binDir
+		cfg.OrchestratorDir = filepath.Join(tmp, ".orchestrator")
+		if _, err := Upgrade(context.Background(), cfg, srv.client(t, "0x3639/orchestrator"), rel); err == nil || !strings.Contains(err.Error(), "restored orchestrator is failed") {
+			t.Fatalf("expected non-active restored service error, got %v", err)
+		}
+		st, err := loadPendingDeployState(binPath)
+		if err != nil || st == nil || st.Phase != phaseRestored {
+			t.Fatalf("WAL must stay in phaseRestored when restored service is not Active, got %+v (err=%v)", st, err)
+		}
+		startService = func(string) error { curState = service.Active; return nil }
+		if _, err := RecoverPendingDeploy(cfg); err != nil {
+			t.Fatalf("RecoverPendingDeploy retry failed: %v", err)
+		}
+		if curState != service.Active {
+			t.Fatalf("expected V1 Active after recovery, got %v", curState)
 		}
 	})
 

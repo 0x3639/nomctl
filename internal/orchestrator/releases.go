@@ -545,7 +545,10 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 		if err != nil {
 			return res, err
 		}
-		if execPath != "" && !sameExecutablePath(execPath, binPath) {
+		if strings.TrimSpace(execPath) == "" {
+			return res, fmt.Errorf("existing %s unit has empty ExecStart; refusing to replace %s without verifying the unit's executable", cfg.OrchestratorService, binPath)
+		}
+		if !sameExecutablePath(execPath, binPath) {
 			return res, fmt.Errorf("existing %s unit executes %s, not configured install target %s; update the unit or set NOMCTL_INSTALL_DIR/NOMCTL_ORCHESTRATOR_BINARY", cfg.OrchestratorService, execPath, binPath)
 		}
 	}
@@ -779,7 +782,9 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 			return keepUnresolved(errors.Join(cause, fmt.Errorf("remove failed orchestrator binary %s: %w", binPath, err)))
 		}
 		if syncErr := syncDirPath(filepath.Dir(binPath)); syncErr != nil {
-			cause = errors.Join(cause, fmt.Errorf("sync install directory after rollback restore: %w", syncErr))
+			// Retain phase=cutover WAL until the directory entry for the restored
+			// binary is durably synced.
+			return errors.Join(cause, fmt.Errorf("sync install directory after rollback restore (pending state retained at %s; run \"sudo nomctl orchestrator recover\" after storage recovers): %w", deployStatePath(binPath), syncErr))
 		}
 		txState.Phase = phaseRestored
 		if stateErr := writePendingState(binPath, txState); stateErr != nil {
@@ -787,7 +792,15 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 		}
 		if installed && wasRunning {
 			slog.Info("Restarting previous " + cfg.OrchestratorService + " after failure…")
-			if startErr := startService(cfg.OrchestratorService); startErr != nil {
+			startErr := startService(cfg.OrchestratorService)
+			if startErr == nil {
+				if st, stErr := serviceStatus(cfg.OrchestratorService); stErr != nil {
+					startErr = fmt.Errorf("verify restored %s is active: %w", cfg.OrchestratorService, stErr)
+				} else if st != service.Active {
+					startErr = fmt.Errorf("restored %s is %s after restart", cfg.OrchestratorService, st)
+				}
+			}
+			if startErr != nil {
 				return errors.Join(cause, fmt.Errorf("restart restored %s failed (run \"sudo nomctl orchestrator recover\" to retry starting): %w", cfg.OrchestratorService, startErr))
 			}
 		}
@@ -832,7 +845,7 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 		txState.Phase = phasePublishPrevious
 		if pubStateErr := writePendingState(binPath, txState); pubStateErr != nil {
 			keepPreviousStaged = true
-			return res, fmt.Errorf("orchestrator %s is running, but recording .previous publication state %s failed (previous binary retained at %s; run \"sudo nomctl orchestrator recover\" to roll back before retrying): %w", release.Tag, deployStatePath(binPath), previousStaged, pubStateErr)
+			return res, fmt.Errorf("orchestrator %s is running, but recording .previous publication state %s failed (previous binary retained at %s; run \"sudo nomctl orchestrator recover\" to reconcile the recorded pending state—completing publication if recorded or rolling back if cutover remains pending): %w", release.Tag, deployStatePath(binPath), previousStaged, pubStateErr)
 		}
 		previousPath = binPath + ".previous"
 		if err := os.Rename(previousStaged, previousPath); err != nil {
@@ -849,7 +862,7 @@ func deployRelease(ctx context.Context, cfg config.Config, client *Client, relea
 	} else {
 		txState.Phase = phaseVerified
 		if verErr := writePendingState(binPath, txState); verErr != nil {
-			return res, fmt.Errorf("orchestrator %s is running, but recording verified install state %s failed (run \"sudo nomctl orchestrator recover\" to roll back before retrying): %w", release.Tag, deployStatePath(binPath), verErr)
+			return res, fmt.Errorf("orchestrator %s is running, but recording verified install state %s failed (run \"sudo nomctl orchestrator recover\" to reconcile the recorded pending state—clearing state if verified was recorded or rolling back if cutover remains pending): %w", release.Tag, deployStatePath(binPath), verErr)
 		}
 		if rmErr := removePendingDeployState(binPath); rmErr != nil {
 			return res, fmt.Errorf("orchestrator %s is running, but clearing pending state %s failed (run \"sudo nomctl orchestrator recover\" to finish cleanup): %w", release.Tag, deployStatePath(binPath), rmErr)
@@ -1361,11 +1374,17 @@ func RecoverPendingRollback(cfg config.Config) error {
 			return errors.Join(stopErr, fmt.Errorf("remove failed orchestrator binary %s: %w", binPath, err))
 		}
 		if err := syncDirPath(filepath.Dir(binPath)); err != nil {
-			stateErr = errors.Join(stateErr, fmt.Errorf("sync install directory after restoring %s: %w", binPath, err))
+			// Retain phase=cutover WAL until the directory entry for the restored
+			// binary is durably synced.
+			return errors.Join(stopErr, fmt.Errorf("sync install directory after restoring %s (pending state retained at %s; retry \"sudo nomctl orchestrator recover\" after storage recovers): %w", binPath, deployStatePath(binPath), err))
 		}
 		pending.Phase = phaseRestored
 		if err := writePendingState(binPath, *pending); err != nil {
 			stateErr = errors.Join(stateErr, fmt.Errorf("record restored rollback state %s: %w", deployStatePath(binPath), err))
+		}
+	} else {
+		if err := syncDirPath(filepath.Dir(binPath)); err != nil {
+			return fmt.Errorf("sync install directory before completing rollback recovery (pending state retained at %s): %w", deployStatePath(binPath), err)
 		}
 	}
 

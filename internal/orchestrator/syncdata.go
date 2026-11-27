@@ -739,19 +739,15 @@ func remotePreflightScript(o SyncCopyOptions) string {
 if [ -L %[1]s ]; then echo "remote orchestrator dir is a symlink" >&2; exit 1; fi
 if [ -e %[1]s ] && [ ! -d %[1]s ]; then echo "remote orchestrator path is not a directory" >&2; exit 1; fi
 if [ -L %[3]s ]; then echo "remote orchestrator config is a symlink" >&2; exit 1; fi
-if command -v systemctl >/dev/null 2>&1; then
-  load=$(systemctl show -p LoadState --value %[2]s)
-  active=$(systemctl show -p ActiveState --value %[2]s)
-  if [ -z "$load" ] || [ -z "$active" ]; then
-    echo "cannot determine state of remote service %[2]s" >&2
-    exit 1
-  fi
-  echo "LOAD=$load"
-  echo "ACTIVE=$active"
-else
-  echo "LOAD=not-found"
-  echo "ACTIVE=inactive"
+command -v systemctl >/dev/null 2>&1 || { echo "systemctl not found on remote host; cannot verify remote service %[2]s state" >&2; exit 1; }
+load=$(systemctl show -p LoadState --value %[2]s)
+active=$(systemctl show -p ActiveState --value %[2]s)
+if [ -z "$load" ] || [ -z "$active" ]; then
+  echo "cannot determine state of remote service %[2]s" >&2
+  exit 1
 fi
+echo "LOAD=$load"
+echo "ACTIVE=$active"
 if [ -e %[3]s ]; then
   if [ ! -f %[3]s ]; then echo "remote orchestrator config is not a regular file" >&2; exit 1; fi
   cfg_size=$(wc -c < %[3]s | tr -d '[:space:]')
@@ -1061,17 +1057,19 @@ for d in %[3]s; do
 done
 `, dirQ, backupQ, dirsList)
 
-	// Check live remote unit existence and active state at cutover time; fail closed on query errors.
-	fmt.Fprintf(&b, `if command -v systemctl >/dev/null 2>&1; then
-  load_state=$(systemctl show -p LoadState --value %[1]s)
-  active_before=$(systemctl show -p ActiveState --value %[1]s)
-  if [ -z "$load_state" ] || [ -z "$active_before" ]; then
-    echo "cannot determine state of remote service %[1]s" >&2
-    exit 1
-  fi
-  if [ "$load_state" != "not-found" ] || [ "$active_before" != "inactive" ]; then
-    unit_found=1
-  fi
+	// Check live remote unit existence and active state at cutover time; fail closed when systemctl is missing or errors.
+	fmt.Fprintf(&b, `if ! command -v systemctl >/dev/null 2>&1; then
+  echo "systemctl not found on remote host; cannot verify remote service %[1]s state" >&2
+  exit 1
+fi
+load_state=$(systemctl show -p LoadState --value %[1]s)
+active_before=$(systemctl show -p ActiveState --value %[1]s)
+if [ -z "$load_state" ] || [ -z "$active_before" ]; then
+  echo "cannot determine state of remote service %[1]s" >&2
+  exit 1
+fi
+if [ "$load_state" != "not-found" ] || [ "$active_before" != "inactive" ]; then
+  unit_found=1
 fi
 if [ "$unit_found" -eq 1 ]; then
   case "$active_before" in
