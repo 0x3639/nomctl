@@ -12,7 +12,7 @@ sudo nomctl upgrade --version v0.5.0
 sudo nomctl upgrade --rollback # restore the previous binary
 ```
 
-`upgrade` finds the latest GitHub release, downloads the archive for the host architecture together with `checksums.txt`, verifies the sha256, and replaces the running binary in one atomic rename. The old binary is kept as `nomctl.previous` next to it for `--rollback`. If `nomctl-alerts.service` is running it is restarted so the daemon uses the new code. Nothing else on the node is touched.
+`upgrade` finds the latest GitHub release, downloads the archive for the host architecture together with `checksums.txt`, verifies the sha256, and replaces the running binary in one atomic rename. The old binary is kept as `nomctl.previous` next to it for `--rollback`. If `nomctl-alerts.service` is installed, `upgrade` reconciles the `nomctl` user, file modes, and all three alerts units (`nomctl-alerts.service`, `nomctl-alerts-probe.service`, `nomctl-alerts-probe.timer`) and restarts `nomctl-alerts.service` so the alerts daemon uses the new code; see [Upgrading the alerts daemon](/alerts/pairing#upgrading-the-alerts-daemon). Nothing else on the node is touched.
 
 From **Install & upgrade → Upgrade nomctl**, a successful installation
 automatically reopens the main menu using the new version. Your launch flags,
@@ -258,7 +258,7 @@ It is informational: one Telegram message when an update appears, no reminders, 
 
 ## The relay
 
-The relay is a container; upgrade it by redeploying the new image on Coolify. Pairings survive in the volume.
+The relay is a container (`ghcr.io/0x3639/nomctl-relay:latest`); upgrade it by redeploying on Coolify or pulling the new image and recreating the container with Docker / Docker Compose. Because `/data/relay.db` uses SQLite WAL mode, take a consistent snapshot before upgrading—either stop the relay and copy `relay.db`, `relay.db-wal`, and `relay.db-shm` together, or use SQLite's online backup (do not copy `relay.db` alone while running). Startup creates missing tables but does not automatically migrate existing table schemas; pairings survive in the volume across compatible upgrades. See [Relay upgrades](/alerts/relay#upgrading).
 
 ## Health after changes
 
